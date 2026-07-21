@@ -59,16 +59,24 @@ jobs:
         run: |
           # With no device and stdin closed it must still produce a report and
           # exit cleanly. A binary that crashes here is not shippable.
+          # The report is written next to the executable (i.e. in out/).
           "./out/${{ matrix.asset }}" --skip-annotate < /dev/null
-          test -f chromiq-io-probe-*.txt && echo "report written OK"
+          if ls out/chromiq-io-probe-*.txt >/dev/null 2>&1; then
+            echo "report written OK"
+          else
+            echo "FAIL: no report produced"; exit 1
+          fi
 
       - name: Smoke-test the binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          & ".\out\${{ matrix.asset }}" --skip-annotate < $null
-          if (-not (Get-ChildItem chromiq-io-probe-*.txt)) { exit 1 }
-          Write-Host "report written OK"
+          $null | & ".\out\${{ matrix.asset }}" --skip-annotate
+          if (Get-ChildItem "out\chromiq-io-probe-*.txt" -ErrorAction SilentlyContinue) {
+            Write-Host "report written OK"
+          } else {
+            Write-Error "no report produced"; exit 1
+          }
 
       - uses: actions/upload-artifact@v4
         with:
