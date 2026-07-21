@@ -23,24 +23,46 @@ jobs:
         include:
           - os: ubuntu-22.04
             asset: chromiq-io-probe-linux
+            universal: false
           - os: windows-latest
             asset: chromiq-io-probe-windows.exe
-          - os: macos-13          # Intel
-            asset: chromiq-io-probe-macos-intel
-          - os: macos-14          # Apple Silicon
-            asset: chromiq-io-probe-macos-arm64
+            universal: false
+          # One fat binary that runs on both Intel and Apple-Silicon macs.
+          - os: macos-14
+            asset: chromiq-io-probe-macos
+            universal: true
     steps:
       - uses: actions/checkout@v4
 
+      # Linux / Windows: a normal single-arch Python is fine.
       - uses: actions/setup-python@v5
+        if: matrix.universal == false
         with:
           python-version: "3.12"
 
+      # macOS: use the python.org universal2 build so PyInstaller can emit a
+      # universal2 (x86_64 + arm64) binary — the same approach ChromIQ uses.
+      # This script is pure standard library, so there are no third-party
+      # wheels to fatten; --target-arch universal2 is all that's needed.
+      - name: Set up universal2 Python (macOS)
+        if: matrix.universal == true
+        run: |
+          curl -fsSL -o /tmp/python.pkg \
+            "https://www.python.org/ftp/python/3.12.7/python-3.12.7-macos11.pkg"
+          sudo installer -pkg /tmp/python.pkg -target /
+          echo "/Library/Frameworks/Python.framework/Versions/3.12/bin" >> "$GITHUB_PATH"
+
       - name: Install PyInstaller
-        run: python -m pip install --upgrade pip pyinstaller
+        run: python3 -m pip install --upgrade pip pyinstaller
 
       - name: Build one-file executable
-        run: pyinstaller --onefile --name probe chromiq_io_probe.py
+        shell: bash
+        run: |
+          if [ "${{ matrix.universal }}" = "true" ]; then
+            pyinstaller --onefile --target-arch universal2 --name probe chromiq_io_probe.py
+          else
+            pyinstaller --onefile --name probe chromiq_io_probe.py
+          fi
 
       - name: Name the artifact
         shell: bash
@@ -52,6 +74,13 @@ jobs:
             mv dist/probe "out/${{ matrix.asset }}"
             chmod +x "out/${{ matrix.asset }}"
           fi
+
+      - name: Verify it really is universal2 (macOS)
+        if: matrix.universal == true
+        run: |
+          lipo -info "out/${{ matrix.asset }}"
+          lipo -info "out/${{ matrix.asset }}" | grep -q "x86_64 arm64" \
+            || { echo "FAIL: binary is not universal2"; exit 1; }
 
       - name: Smoke-test the binary (must run and exit 0)
         if: runner.os != 'Windows'
@@ -119,8 +148,7 @@ jobs:
             | System | File |
             |--------|------|
             | Windows | `chromiq-io-probe-windows.exe` |
-            | macOS (Apple Silicon / M1–M4) | `chromiq-io-probe-macos-arm64` |
-            | macOS (Intel) | `chromiq-io-probe-macos-intel` |
+            | macOS (Intel **and** Apple Silicon) | `chromiq-io-probe-macos` |
             | Linux | `chromiq-io-probe-linux` |
 
             No Python needed. It only **reads** information about connected

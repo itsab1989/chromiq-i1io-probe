@@ -1,5 +1,7 @@
 # ChromIQ — i1iO information collector
 
+<a href="https://ko-fi.com/itsab1989"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support ChromIQ on Ko-fi" height="36"></a>
+
 A tiny, **read-only** tool that collects information about an **X-Rite i1iO
 scanning table** and the computer it's connected to. It exists to help work out
 whether [ChromIQ](https://github.com/itsab1989/ChromIQ) could one day drive the
@@ -36,12 +38,11 @@ your i1iO first.
 | Your system | Download | How to run |
 |-------------|----------|------------|
 | **Windows** | `chromiq-io-probe-windows.exe` | Double-click it. |
-| **macOS** (Apple Silicon, M1–M4) | `chromiq-io-probe-macos-arm64` | See the macOS note below. |
-| **macOS** (Intel) | `chromiq-io-probe-macos-intel` | See the macOS note below. |
+| **macOS** (Intel **and** Apple Silicon) | `chromiq-io-probe-macos` | See the macOS note below. |
 | **Linux** | `chromiq-io-probe-linux` | Make it executable, then run it. |
 
-Not sure which Mac you have?  Apple menu → About This Mac. "Apple M1/M2/M3/M4" =
-arm64; "Intel" = intel.
+The macOS download is a single universal build — it runs on both Intel and
+Apple-Silicon Macs, so there's only one file to pick.
 
 > These downloads are **not code-signed** (signing needs a paid certificate), so
 > your computer will warn you the first time. This is normal and does not mean
