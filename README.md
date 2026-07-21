@@ -1,6 +1,10 @@
 # ChromIQ — i1iO information collector
 
-<a href="https://ko-fi.com/itsab1989"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support ChromIQ on Ko-fi" height="36"></a>
+<p align="center">
+  <a href="https://ko-fi.com/itsab1989"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support ChromIQ on Ko-fi" height="36"></a>
+  <br>
+  <sub>ChromIQ is free and always will be. If it's useful to you, a coffee is a kind way to say thanks — completely optional, and the app stays fully featured either way.</sub>
+</p>
 
 A tiny, **read-only** tool that collects information about an **X-Rite i1iO
 scanning table** and the computer it's connected to. It exists to help work out

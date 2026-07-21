@@ -12,6 +12,9 @@
 - **Saying "no" to the capture no longer silently swallows the walkthrough.**
   The prompt now says what it is about to do and roughly how long it takes, and
   declining explains what was skipped and how to come back to it later.
+- ChromIQ is free and always will be — if it saves you time or ink, a
+  coffee on [Ko-fi](https://ko-fi.com/itsab1989) is a kind way to say
+  thanks.
 
 ## v1.2.0
 
