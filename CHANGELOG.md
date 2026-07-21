@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.2.0
+
+- **macOS USB capture no longer needs Wireshark — or anything installed.**
+  The optional advanced step used to say "install Wireshark plus its ChmodBPF
+  helper". That is no longer necessary: macOS already ships `tcpdump`, and
+  running it under `sudo` removes the need for ChmodBPF entirely. The tool now
+  writes a ready-made `start-usb-capture.command` script you can read and
+  double-click. It records the traffic, then puts every setting back as it
+  found it. Nothing is installed and nothing is left behind.
+- **Capture interfaces are detected, not guessed.** The old instructions named
+  `XHC20`, which simply does not exist on many Macs (an Apple-Silicon machine
+  has `XHC0`/`XHC1`/`XHC2`). The names are now read from the system, all of
+  them are recorded at once, and the report says which ones exist — so it is
+  clear up front whether a capture is possible on that Mac at all.
+- **Clearer downloads.** README and release notes now spell out `chmod +x` and
+  the Finder right-click → Open route, because a downloaded binary that is not
+  marked executable appears to do nothing at all when double-clicked.
+- New `--capture-setup` option writes just the capture script and exits.
+
 ## v1.1.0
 
 - **Ready-to-run downloads — no Python needed.** GitHub Actions now builds

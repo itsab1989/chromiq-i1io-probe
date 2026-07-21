@@ -103,8 +103,15 @@ A window opens and walks you through three short steps:
    instrument is mounted, and which software you use. Press Enter to skip any.
 
 At the end it offers an **optional advanced step** (recording what i1Profiler
-says to the table while you use it). That one needs extra software and more
-time — please feel free to say no. The basic report is already very useful.
+says to the table while you use it). It takes longer, and you are very welcome
+to say no — the basic report is already useful on its own.
+
+**On macOS that step now needs nothing installed.** No Wireshark, no ChmodBPF,
+no drivers: macOS already includes `tcpdump`, so the tool simply writes a
+short, readable `start-usb-capture.command` script that you can double-click.
+It asks for your admin password (macOS requires that to listen to USB
+traffic), records to a `.pcap` file, and puts every setting back the way it
+found it when it finishes. It still only listens — it cannot move the arm.
 
 It then saves a plain-text file such as `chromiq-io-probe-20260721-143052.txt`.
 **Open it, have a look, then attach it to
