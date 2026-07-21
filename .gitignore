@@ -1,0 +1,10 @@
+# Reports the tool produces
+chromiq-io-probe-*.txt
+
+# Python / PyInstaller build leftovers
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+out/

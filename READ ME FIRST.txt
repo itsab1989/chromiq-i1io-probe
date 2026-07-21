@@ -1,0 +1,52 @@
+ChromIQ - i1iO information collector
+====================================
+
+Thank you for helping!  This takes about two minutes.
+
+
+THE SHORT VERSION
+-----------------
+
+1. Plug in your i1iO and switch it on.
+
+2. Double-click the file for your system:
+
+       macOS    ->  Start-macOS.command
+       Windows  ->  Start-Windows.bat
+       Linux    ->  Start-Linux.sh
+
+3. Follow what it says on screen.  It asks you three easy questions
+   at the end - you may skip them.
+
+4. It saves a text file called  chromiq-io-probe-<date>.txt
+   Have a look at it, then attach it to:
+
+       https://github.com/itsab1989/ChromIQ/issues/129
+
+That's it.  You're done.
+
+
+IS IT SAFE?
+-----------
+
+Yes.  It never sends anything to the table and it CANNOT move the arm.
+It only reads information your computer already has about plugged-in
+hardware.  Nothing will move.  Nothing is changed.
+
+
+IF YOUR COMPUTER REFUSES TO OPEN IT
+-----------------------------------
+
+That is normal for downloaded files and does not mean anything is wrong.
+
+   macOS  :  RIGHT-CLICK the file, choose "Open", then "Open" again.
+   Windows:  Click "More info", then "Run anyway".
+   Linux  :  Open a terminal here and run:  bash Start-Linux.sh
+
+
+MORE DETAIL
+-----------
+
+README.md answers everything else - what it collects, what it does
+about your privacy, what to do if it goes wrong, and an optional
+advanced step you are very welcome to skip.

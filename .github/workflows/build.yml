@@ -1,0 +1,124 @@
+name: Build probe bundles
+
+# Produces ready-to-run binaries (no Python needed) for Windows, Linux, and both
+# Intel and Apple-Silicon macs. Push a version tag (e.g. v1.1.0) to build them
+# and publish a GitHub Release with all of them attached. workflow_dispatch just
+# builds them as downloadable run artifacts for testing.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.asset }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            asset: chromiq-io-probe-linux
+          - os: windows-latest
+            asset: chromiq-io-probe-windows.exe
+          - os: macos-13          # Intel
+            asset: chromiq-io-probe-macos-intel
+          - os: macos-14          # Apple Silicon
+            asset: chromiq-io-probe-macos-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller
+        run: python -m pip install --upgrade pip pyinstaller
+
+      - name: Build one-file executable
+        run: pyinstaller --onefile --name probe chromiq_io_probe.py
+
+      - name: Name the artifact
+        shell: bash
+        run: |
+          mkdir -p out
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            mv dist/probe.exe "out/${{ matrix.asset }}"
+          else
+            mv dist/probe "out/${{ matrix.asset }}"
+            chmod +x "out/${{ matrix.asset }}"
+          fi
+
+      - name: Smoke-test the binary (must run and exit 0)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          # With no device and stdin closed it must still produce a report and
+          # exit cleanly. A binary that crashes here is not shippable.
+          "./out/${{ matrix.asset }}" --skip-annotate < /dev/null
+          test -f chromiq-io-probe-*.txt && echo "report written OK"
+
+      - name: Smoke-test the binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & ".\out\${{ matrix.asset }}" --skip-annotate < $null
+          if (-not (Get-ChildItem chromiq-io-probe-*.txt)) { exit 1 }
+          Write-Host "report written OK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: out/${{ matrix.asset }}
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Also bundle the readable scripts (for people who prefer source)
+        run: |
+          pack="chromiq-i1io-probe-scripts"
+          mkdir -p "$pack"
+          cp chromiq_io_probe.py "READ ME FIRST.txt" README.md \
+             Start-macOS.command Start-Linux.sh Start-Windows.bat "$pack/"
+          zip -r "artifacts/${pack}.zip" "$pack"
+          ls -la artifacts
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          body: |
+            Ready-to-run builds of the ChromIQ i1iO information collector.
+
+            **Just want to run it?** Download the file for your system:
+
+            | System | File |
+            |--------|------|
+            | Windows | `chromiq-io-probe-windows.exe` |
+            | macOS (Apple Silicon / M1–M4) | `chromiq-io-probe-macos-arm64` |
+            | macOS (Intel) | `chromiq-io-probe-macos-intel` |
+            | Linux | `chromiq-io-probe-linux` |
+
+            No Python needed. It only **reads** information about connected
+            hardware — it never sends anything to the table and cannot move the
+            arm. See the README for what it collects and how to get past the
+            "unidentified developer" warning (these builds are not code-signed).
+
+            Prefer to read the source before running? Grab
+            `chromiq-i1io-probe-scripts.zip` instead.
