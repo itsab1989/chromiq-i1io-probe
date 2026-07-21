@@ -153,8 +153,29 @@ jobs:
 
             No Python needed. It only **reads** information about connected
             hardware — it never sends anything to the table and cannot move the
-            arm. See the README for what it collects and how to get past the
-            "unidentified developer" warning (these builds are not code-signed).
+            arm.
+
+            ### Running it on macOS or Linux
+
+            Downloaded files aren't marked as runnable, so a plain double-click
+            may do nothing. On **macOS** try Finder first: **right-click** the
+            file → **Open** → **Open** again in the dialog. If that doesn't
+            work — or you're on **Linux** — open Terminal and run:
+
+            ```bash
+            cd ~/Downloads
+            chmod +x chromiq-io-probe-macos      # or chromiq-io-probe-linux
+            ./chromiq-io-probe-macos
+            ```
+
+            `chmod +x` just marks the file as runnable; the second line starts
+            it. On **Windows** simply double-click the `.exe` and choose
+            **More info → Run anyway**.
+
+            These builds are **not code-signed** (that needs a paid
+            certificate), so your system will warn you once — that's expected.
+            On macOS you may also need **System Settings → Privacy & Security →
+            Open Anyway**. See the README for what the tool collects.
 
             Prefer to read the source before running? Grab
             `chromiq-i1io-probe-scripts.zip` instead.

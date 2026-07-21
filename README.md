@@ -35,25 +35,56 @@ Download the one file for your system from the
 [**latest release**](../../releases/latest), then run it. Plug in and switch on
 your i1iO first.
 
-| Your system | Download | How to run |
-|-------------|----------|------------|
-| **Windows** | `chromiq-io-probe-windows.exe` | Double-click it. |
-| **macOS** (Intel **and** Apple Silicon) | `chromiq-io-probe-macos` | See the macOS note below. |
-| **Linux** | `chromiq-io-probe-linux` | Make it executable, then run it. |
+| Your system | Download |
+|-------------|----------|
+| **Windows** | `chromiq-io-probe-windows.exe` |
+| **macOS** (Intel **and** Apple Silicon) | `chromiq-io-probe-macos` |
+| **Linux** | `chromiq-io-probe-linux` |
 
 The macOS download is a single universal build — it runs on both Intel and
 Apple-Silicon Macs, so there's only one file to pick.
 
-> These downloads are **not code-signed** (signing needs a paid certificate), so
-> your computer will warn you the first time. This is normal and does not mean
-> anything is wrong:
->
-> - **Windows:** click **More info** → **Run anyway**.
-> - **macOS:** **right-click** the file → **Open** → **Open**. If it still
->   refuses, go to **System Settings → Privacy & Security** and click
->   **Open Anyway**. You may also need to run `chmod +x` on it (see below).
-> - **macOS / Linux from a terminal:** make it runnable first —
->   `chmod +x chromiq-io-probe-*` — then `./chromiq-io-probe-...`
+### Windows
+
+Double-click the `.exe`. Windows will warn you once — click **More info** →
+**Run anyway**.
+
+### macOS
+
+Downloaded files aren't marked as runnable, so **double-clicking may appear to
+do nothing at all**. Two ways round it:
+
+**In Finder:** **right-click** the file → **Open** → **Open** again in the
+dialog that appears. (Right-click → Open is what gets past the warning;
+double-click alone won't.) If macOS still refuses, go to **System Settings →
+Privacy & Security**, scroll down, and click **Open Anyway** — then open it
+again.
+
+**Or in Terminal** (this is the reliable route):
+
+```bash
+cd ~/Downloads
+chmod +x chromiq-io-probe-macos
+./chromiq-io-probe-macos
+```
+
+`chmod +x` simply marks the file as runnable — downloads never are by default.
+The second line starts it.
+
+### Linux
+
+Same idea, from a terminal:
+
+```bash
+cd ~/Downloads
+chmod +x chromiq-io-probe-linux
+./chromiq-io-probe-linux
+```
+
+> These downloads are **not code-signed** (signing needs a paid certificate),
+> so your computer will warn you the first time. That's normal and doesn't mean
+> anything is wrong — the full source is in this repo if you'd like to check it
+> first.
 
 Prefer to **read the source before running anything**? That's the best instinct.
 Download `chromiq-i1io-probe-scripts.zip` from the release instead (or clone this
