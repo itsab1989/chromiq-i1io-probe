@@ -811,20 +811,42 @@ CAPTURE_HELP = {
   Then come back here and follow the prompts.""",
 }
 
-# Deliberately ordered from safest to most revealing, and each step is one
-# single action so it maps to a clean, isolated slice of the capture.
+# These follow i1Profiler's ACTUAL i1iO workflow, taken from its own on-screen
+# instructions: place chart -> press Measure (it calibrates and the arm slides
+# out) -> the operator GRABS THE ARM BY HAND and aligns the cross hairs on the
+# top-left, bottom-left and bottom-right corners -> it then scans row by row.
+#
+# Two things an earlier version asked for are deliberately gone, because
+# i1Profiler exposes no way to do them: there is no "go home" button (the arm
+# parks itself) and no electrostatic-foil toggle (the static mat just holds the
+# paper). Asking a helper for impossible steps wastes their time and makes the
+# whole tool look uninformed.
+#
+# The hand-positioning steps are still valuable: while the operator drags the
+# arm, the host is polling the table for its position, so that is exactly where
+# the position-reporting side of the protocol shows up.
 CAPTURE_STEPS = [
-    ("Connect", "In i1Profiler, let it detect the i1iO. Do nothing else yet."),
-    ("Home", "Send the arm to its home position (and nothing else)."),
-    ("Idle", "Leave everything completely untouched for 10 seconds."),
-    ("Move A", "Move the arm to the TOP-LEFT corner of a chart. Stop there."),
-    ("Move B", "Move the arm to the BOTTOM-LEFT corner. Stop there."),
-    ("Move C", "Move the arm to the BOTTOM-RIGHT corner. Stop there."),
-    ("Foil on", "Turn the electrostatic foil ON (hold the paper)."),
-    ("Foil off", "Turn the electrostatic foil OFF."),
-    ("Spot", "Take ONE single spot measurement, anywhere."),
-    ("Strip", "Scan ONE single row/strip of a chart."),
-    ("Home again", "Send the arm home once more."),
+    ("Connect",
+     "Start i1Profiler and let it find the table. Do nothing else yet."),
+    ("Idle",
+     "Leave everything completely untouched for about 10 seconds."),
+    ("Measure pressed",
+     "Place a chart on the table, then press \"Measure\". The device\n"
+     "    calibrates itself and the arm slides out to its ready position."),
+    ("Align top-left",
+     "Grab the arm by hand and line the cross hairs up on the TOP-LEFT\n"
+     "    corner patch, then confirm it."),
+    ("Align bottom-left",
+     "Same again for the BOTTOM-LEFT corner patch."),
+    ("Align bottom-right",
+     "Same again for the BOTTOM-RIGHT corner patch."),
+    ("Scanning",
+     "Let it scan at least the first two rows, then stop or cancel it."),
+    ("Spot measurement",
+     "If your setup offers Spot mode, take ONE single spot reading.\n"
+     "    If it does not, just type 'skip'."),
+    ("Finished",
+     "Let it finish or cancel, and wait until the arm has parked itself."),
 ]
 
 
@@ -843,8 +865,25 @@ def annotate_session() -> None:
     else:
         print(CAPTURE_HELP.get(system, CAPTURE_HELP["Linux"]))
 
-    if ask("\nCapture running? Type 'yes' to begin, anything else to skip: ").lower() not in ("y", "yes"):
-        section("Stage 2 — annotated capture", "[skipped by operator]")
+    # Spell out what saying "no" costs. The old wording ("anything else to
+    # skip") never said WHAT was being skipped, so people dropped the entire
+    # i1Profiler walkthrough — the most valuable part — without realising it
+    # existed, and with no hint of how to get back to it.
+    print("\n" + "-" * 68)
+    print("Next: I would walk you through " + str(len(CAPTURE_STEPS)) + " short operations in i1Profiler")
+    print("(connect, align the arm on the chart corners, scan a couple of")
+    print("rows) and time each one, so the recording can be split up later.")
+    print("It takes about 10 minutes and needs the capture to be running.")
+    print("-" * 68)
+
+    if ask("\nIs the capture running — shall I start the walkthrough? (yes / no): ")\
+            .lower() not in ("y", "yes"):
+        print("\n  Skipping the walkthrough — that is absolutely fine.")
+        print("  Your main report is unaffected and still worth sending.")
+        print("  To do it another time, run this tool again and choose the")
+        print("  advanced step (or start it directly with  --annotate ).\n")
+        section("Stage 2 — annotated capture",
+                "[walkthrough skipped by operator — no capture running]")
         return
 
     t0 = time.time()
@@ -862,7 +901,10 @@ def annotate_session() -> None:
             log.append(f"{name}: SKIPPED")
             print("    skipped\n")
             continue
-        log.append(f"{name}: t={start:8.3f}s .. {end:8.3f}s   ({instruction})")
+        # Instructions may span lines on screen; the timeline stays one line
+        # per step so it can be read against the capture without unpicking it.
+        flat = " ".join(instruction.split())
+        log.append(f"{name}: t={start:8.3f}s .. {end:8.3f}s   ({flat})")
         print(f"    recorded {start:.3f}s .. {end:.3f}s\n")
 
     notes = ask("Anything odd happen? (free text, Enter to skip): ")

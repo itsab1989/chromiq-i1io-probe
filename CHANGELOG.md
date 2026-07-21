@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.2.1
+
+- **The guided walkthrough now matches what i1Profiler can actually do.** It
+  previously asked for two things the software offers no way to do: sending the
+  arm to a home position, and switching the electrostatic foil on and off. The
+  arm parks itself and the static mat holds the paper on its own — neither is
+  under the operator's control. The steps now follow i1Profiler's real
+  sequence: press Measure, then align the arm **by hand** on the top-left,
+  bottom-left and bottom-right corner patches, then let it scan.
+- **Saying "no" to the capture no longer silently swallows the walkthrough.**
+  The prompt now says what it is about to do and roughly how long it takes, and
+  declining explains what was skipped and how to come back to it later.
+
 ## v1.2.0
 
 - **macOS USB capture no longer needs Wireshark — or anything installed.**
