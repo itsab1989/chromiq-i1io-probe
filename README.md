@@ -163,6 +163,10 @@ Useful options:
   aren't useful for this work).
 - `--skip-annotate` — never offer the advanced capture step.
 - `--annotate` — go straight into the advanced capture step.
+- `--analyze [FILE …]` — read a USB capture and print a plain verdict (did it
+  record real traffic to the table?) plus a command timeline, so you can check
+  a capture is good before sending it. With no path it finds the newest capture
+  next to the tool. Reads only; sends nothing to the device.
 
 ---
 

@@ -1,6 +1,13 @@
 # Reports the tool produces
 chromiq-io-probe-*.txt
 
+# Capture artefacts (contain the user's raw USB traffic — never commit)
+*.pcap
+io-capture-*
+tcpdump-*.log
+start-usb-capture.command
+capture-colormunki.command
+
 # Python / PyInstaller build leftovers
 __pycache__/
 *.pyc

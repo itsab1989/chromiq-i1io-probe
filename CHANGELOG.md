@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.3.0
+
+- **New `--analyze` step: check a capture before you send it.** After recording
+  the table's USB traffic you were left with a large binary file and no way to
+  know whether it captured anything useful. `--analyze` reads a `.pcap` you
+  already made — it sends **nothing** to the table and cannot move the arm — and
+  prints a plain verdict (*"real device traffic captured, good to send"* or
+  *"wrong bus, or no measurement was taken"*), which device was seen, and a
+  command timeline. With no path it finds the newest capture next to the tool.
+- The timeline is **device-agnostic** — it assumes no command codes and just
+  shows the raw USB control commands and how much data the device streamed,
+  which is what an implementer needs. (The underlying analysis was validated on
+  real hardware and matched byte-for-byte to ArgyllCMS's own instrument driver.)
+- ChromIQ is free and always will be — if it saves you time or ink, a
+  coffee on [Ko-fi](https://ko-fi.com/itsab1989) is a kind way to say thanks.
+
 ## v1.2.1
 
 - **The guided walkthrough now matches what i1Profiler can actually do.** It

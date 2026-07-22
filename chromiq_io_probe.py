@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import getpass
+import glob
 import hashlib
 import json
 import os
@@ -48,6 +49,7 @@ import platform
 import re
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -916,6 +918,191 @@ def annotate_session() -> None:
 
 
 # --------------------------------------------------------------------------
+# capture analysis — turn a raw .pcap into a plain verdict + command timeline
+#
+# The "analysis half" of the workflow. It NEVER touches a device; it only reads
+# a capture file the user already made. It is deliberately DEVICE-AGNOSTIC — it
+# assumes no vendor opcodes, because the whole purpose is unknown instruments.
+# It reports the raw USB command structure (control setups + bulk volume) so an
+# implementer can see what the device's own software said to it, and so the
+# person who made the capture can confirm it actually holds traffic before they
+# send a multi-megabyte file for nothing.
+#
+# Only the macOS (Darwin) format is decoded in detail — it is the only one
+# validated against real hardware (a ColorMunki via ChromIQ, matched byte-for-
+# byte to Argyll's munki driver). Linux (usbmon) and Windows (USBPcap) captures
+# are still reported as valid with counts, plus an honest "timeline not decoded
+# on this platform yet"; the file itself is complete and worth sending.
+# --------------------------------------------------------------------------
+
+LINKTYPE_USB_LINUX = 189
+LINKTYPE_USB_LINUX_MMAPPED = 220
+LINKTYPE_USBPCAP = 249
+LINKTYPE_USB_DARWIN = 266
+
+_LINKTYPE_NAMES = {
+    LINKTYPE_USB_LINUX: "Linux usbmon",
+    LINKTYPE_USB_LINUX_MMAPPED: "Linux usbmon",
+    LINKTYPE_USBPCAP: "Windows USBPcap",
+    LINKTYPE_USB_DARWIN: "macOS (Darwin USB)",
+}
+
+# Darwin USB header layout (40 bytes), reverse-engineered from real captures and
+# confirmed against Argyll's munki driver:
+#   [2]       header length (0x28 = 40)
+#   [3]       0 = submit (host->device), 1 = complete (device->host)
+#   [4:8]     data length, little-endian
+#   [0x10:14] URB sequence id (a submit and its completion share it)
+#   [0x24:26] idVendor LE   [0x26:28] idProduct LE
+#   [40:]     payload; for a control submit this begins with the 8-byte setup
+_DARWIN_HDR = 40
+
+
+def _read_pcap(path):
+    """Return (linktype, [(ts, data), ...]). Raise ValueError if not a pcap."""
+    with open(path, "rb") as fh:
+        blob = fh.read()
+    if len(blob) < 24:
+        raise ValueError("file too short to be a capture")
+    magic = blob[:4]
+    if magic in (b"\xd4\xc3\xb2\xa1", b"\x4d\x3c\xb2\xa1"):
+        endian = "<"
+    elif magic in (b"\xa1\xb2\xc3\xd4", b"\xa1\xb2\x3c\x4d"):
+        endian = ">"
+    else:
+        raise ValueError("not a pcap file")
+    nano = magic in (b"\x4d\x3c\xb2\xa1", b"\xa1\xb2\x3c\x4d")
+    linktype = struct.unpack(endian + "I", blob[20:24])[0]
+    off, recs = 24, []
+    while off + 16 <= len(blob):
+        ts_s, ts_u, incl, _orig = struct.unpack(endian + "IIII", blob[off:off + 16])
+        off += 16
+        if incl > len(blob) - off:                 # truncated final record
+            break
+        recs.append((ts_s + ts_u / (1e9 if nano else 1e6), blob[off:off + incl]))
+        off += incl
+    return linktype, recs
+
+
+def _fmt_ascii(data):
+    return "".join(chr(b) if 32 <= b < 127 else "." for b in data)
+
+
+def _analyze_darwin(recs):
+    """Device-agnostic summary: (devices, cmd_counts, timeline, bulk_bytes)."""
+    submits = {}                            # seq -> (bRequest, dir_in, wLen, ts)
+    cmd_counts = {}                         # bRequest -> count
+    devices = {}                            # (vid, pid) -> packet count
+    timeline = []
+    bulk_bytes = 0
+    t0 = recs[0][0] if recs else 0.0
+    for ts, data in recs:
+        if len(data) < _DARWIN_HDR:
+            continue
+        direction = data[3]                 # 0 submit, 1 complete
+        dlen = struct.unpack("<I", data[4:8])[0]
+        seq = struct.unpack("<I", data[0x10:0x14])[0]
+        vid = struct.unpack("<H", data[0x24:0x26])[0]
+        pid = struct.unpack("<H", data[0x26:0x28])[0]
+        if vid or pid:
+            devices[(vid, pid)] = devices.get((vid, pid), 0) + 1
+        payload = data[_DARWIN_HDR:]
+        # A control submit begins with an 8-byte setup packet. Validate both the
+        # bmRequestType field (type 0..2 = std/class/vendor, recipient 0..3) AND
+        # the USB length invariant — the payload is exactly the 8-byte setup (IN,
+        # data returns in the completion) or setup + wLength outbound bytes (OUT).
+        # This rejects bulk transfers whose first byte merely looks like a setup.
+        # Neither check assumes any specific vendor opcode.
+        if (direction == 0 and len(payload) >= 8
+                and ((payload[0] >> 5) & 3) <= 2 and (payload[0] & 0x1f) <= 3):
+            wlen = struct.unpack("<H", payload[6:8])[0]
+            if len(payload) in (8, 8 + wlen):
+                breq = payload[1]
+                dir_in = bool(payload[0] & 0x80)
+                submits[seq] = (breq, dir_in, wlen, ts)
+                cmd_counts[breq] = cmd_counts.get(breq, 0) + 1
+        elif direction == 1:
+            info = submits.get(seq)
+            if info:
+                if len(timeline) < 30:
+                    breq, dir_in, wlen, tsub = info
+                    resp = payload[:dlen] if dlen else payload
+                    timeline.append((tsub - t0, breq, dir_in, wlen, resp[:16]))
+            elif dlen >= 64:                # completion with no control setup
+                bulk_bytes += dlen          # = streamed bulk (e.g. sensor data)
+    return devices, cmd_counts, timeline, bulk_bytes
+
+
+def find_captures():
+    """Newest io-capture-*.pcap set sitting next to the tool (or Desktop)."""
+    for directory in candidate_dirs():
+        hits = glob.glob(os.path.join(directory, "io-capture-*.pcap"))
+        if hits:
+            newest = max(os.path.getmtime(h) for h in hits)
+            recent = [h for h in hits if newest - os.path.getmtime(h) < 60]
+            return sorted(recent) or sorted(hits)
+    return []
+
+
+def summarize_captures(paths):
+    """Plain-language verdict + command timeline for one or more captures."""
+    out = ["=" * 68, "  USB capture check", "=" * 68, "",
+           "  Reads capture files you already made — it sends NOTHING to any",
+           "  device. It confirms a capture really holds instrument traffic",
+           "  before you send it, and prints the command timeline.", ""]
+    any_real = False
+    for path in paths:
+        out.append("  " + os.path.basename(path))
+        try:
+            linktype, recs = _read_pcap(path)
+        except (OSError, ValueError) as exc:
+            out += [f"     not a readable capture: {exc}", ""]
+            continue
+        name = _LINKTYPE_NAMES.get(linktype, f"linktype {linktype}")
+        total = sum(len(d) for _, d in recs)
+        out.append(f"     format: {name}   packets: {len(recs)}   bytes: {total:,}")
+        if linktype != LINKTYPE_USB_DARWIN:
+            if recs:
+                out += ["     Valid capture. A detailed timeline is decoded for macOS",
+                        "     captures for now; this file is complete — send it in."]
+                any_real = any_real or total > 4096
+            else:
+                out.append("     Empty — nothing was recorded on this bus.")
+            out.append("")
+            continue
+        devices, cmds, timeline, bulk = _analyze_darwin(recs)
+        if devices:
+            devstr = ", ".join(f"{v:04x}:{p:04x}" for v, p in
+                               sorted(devices, key=lambda k: -devices[k]))
+            out.append(f"     device(s) on this bus: {devstr}")
+        n_cmd = sum(cmds.values())
+        out.append(f"     control commands: {n_cmd}   distinct opcodes: "
+                   f"{len(cmds)}   bulk data: {bulk:,} bytes")
+        real = bool(devices) and (n_cmd > 0 or bulk > 2048)
+        any_real = any_real or real
+        if timeline:
+            out.append("     timeline (device-agnostic — no opcode is assumed):")
+            for tsec, breq, dir_in, wlen, resp in timeline:
+                out.append(f"        {tsec:7.3f}s  req=0x{breq:02X} "
+                           f"{'IN ' if dir_in else 'OUT'} wLen={wlen:<4} -> "
+                           f"{resp.hex(' ')}  |{_fmt_ascii(resp)}|")
+        out.append("     VERDICT: " + (
+            "OK — real device traffic captured. Good to send."
+            if real else
+            "little/no device traffic — wrong bus, or no measurement was taken."))
+        out.append("")
+    out.append("-" * 68)
+    out.append("  Overall: " + (
+        "at least one file holds real instrument traffic."
+        if any_real else
+        "no clear instrument traffic found in any file."))
+    if not any_real:
+        out.append("  Re-run the capture and TAKE A MEASUREMENT while it records.")
+    out.append("=" * 68)
+    return "\n".join(out)
+
+
+# --------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------
 
@@ -934,6 +1121,10 @@ def main() -> int:
                         help="keep serial numbers and paths as-is")
     parser.add_argument("--capture-setup", action="store_true",
                         help="(macOS) just write the USB capture script and exit")
+    parser.add_argument("--analyze", nargs="*", default=None, metavar="PCAP",
+                        help="read a USB capture (.pcap) and print a plain "
+                             "verdict + command timeline; with no path, finds "
+                             "the newest capture next to the tool")
     parser.add_argument("-o", "--output", default=None, help="output file path")
     args = parser.parse_args()
     REDACT = not args.no_redact
@@ -944,6 +1135,16 @@ def main() -> int:
                   "Linux (usbmon) and Windows (USBPcap).")
             return 1
         print(prepare_macos_capture())
+        return 0
+
+    if args.analyze is not None:
+        paths = args.analyze or find_captures()
+        if not paths:
+            print("No capture file given or found next to the tool.\n"
+                  "Make one first with --capture-setup, or pass a path:\n"
+                  "    --analyze path/to/capture.pcap")
+            return 1
+        print(summarize_captures(paths))
         return 0
 
     print("=" * 68)
@@ -974,7 +1175,7 @@ def main() -> int:
         print()
 
     hardware = {
-        "probe_version": "1.2",
+        "probe_version": "1.3",
         "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "platform": platform.platform(),
         "system": platform.system(),
