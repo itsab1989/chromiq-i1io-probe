@@ -28,7 +28,7 @@ jobs:
             asset: chromiq-io-probe-windows.exe
             universal: false
           # One fat binary that runs on both Intel and Apple-Silicon macs.
-          - os: macos-14
+          - os: macos-latest
             asset: chromiq-io-probe-macos
             universal: true
     steps:
