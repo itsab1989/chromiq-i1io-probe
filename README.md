@@ -1,39 +1,47 @@
-# ChromIQ — i1iO information collector
+# ChromIQ: i1iO information collector
 
 <p align="center">
   <a href="https://ko-fi.com/itsab1989"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support ChromIQ on Ko-fi" height="36"></a>
   <br>
-  <sub>ChromIQ is free and always will be. If it's useful to you, a coffee is a kind way to say thanks — completely optional, and the app stays fully featured either way.</sub>
+  <sub>ChromIQ is free and always will be. If it's useful to you, a coffee is a kind way to say thanks. It is completely optional, and the app stays fully featured either way.</sub>
 </p>
 
 A tiny, **read-only** tool that collects information about an **X-Rite i1iO
 scanning table** and the computer it's connected to. It exists to help work out
 whether [ChromIQ](https://github.com/itsab1989/ChromIQ) could one day drive the
-i1iO directly — see [ChromIQ issue #129](https://github.com/itsab1989/ChromIQ/issues/129).
+i1iO directly. See [ChromIQ issue #129](https://github.com/itsab1989/ChromIQ/issues/129).
 
 It takes about **two minutes**, and you do **not** need to be technical.
+
+> **Important for owners of an i1Pro 2 or an i1iO 2:** i1Profiler **3.8.7**
+> (July 2026) removed support for the i1Pro 2 and the i1iO 2. Please stay on
+> **i1Profiler 3.8.6 or older**, and do not let it update itself.
 
 ---
 
 ## Is this safe?
 
-**Yes — this is the important part, so here it is plainly:**
+**Yes. This is the important part, so here it is plainly:**
 
 - It **never sends anything to the table.** Not one byte.
 - It **cannot move the arm.** It does not even open a connection to the device.
-- It changes nothing, and needs no special setup or calibration.
+  (Opening it could take it away from X-Rite's own software, so the tool never
+  does that.)
+- It **changes no settings.** In particular it never switches System Integrity
+  Protection (SIP) on or off on a Mac; it only reads whether it is on.
 
 All it does is read information your operating system already keeps about
-plugged-in hardware — the same kind of thing you'd see in Device Manager or
-System Information — plus a few facts about the X-Rite software you have
+plugged-in hardware (the same kind of thing you'd see in Device Manager or
+System Information), plus a few facts about the X-Rite software you have
 installed. You can run it with the arm parked. Nothing will move.
 
-Serial numbers are scrambled and personal paths removed by default. You can
-open the report it produces and read every line before sending it.
+The only exception is the optional recording step on a Mac, and only if you
+say yes to it: it then briefly switches on the Mac's USB recording interfaces
+and switches them off again when it finishes. Details below.
 
 ---
 
-## How to run it — the easy way (no Python needed)
+## How to run it: the easy way (no Python needed)
 
 Download the one file for your system from the
 [**latest release**](../../releases/latest), then run it. Plug in and switch on
@@ -45,12 +53,12 @@ your i1iO first.
 | **macOS** (Intel **and** Apple Silicon) | `chromiq-io-probe-macos` |
 | **Linux** | `chromiq-io-probe-linux` |
 
-The macOS download is a single universal build — it runs on both Intel and
-Apple-Silicon Macs, so there's only one file to pick.
+The macOS download is a single universal build. It runs on both Intel and
+Apple Silicon Macs, so there's only one file to pick.
 
 ### Windows
 
-Double-click the `.exe`. Windows will warn you once — click **More info** →
+Double-click the `.exe`. Windows will warn you once: click **More info**, then
 **Run anyway**.
 
 ### macOS
@@ -58,10 +66,10 @@ Double-click the `.exe`. Windows will warn you once — click **More info** →
 Downloaded files aren't marked as runnable, so **double-clicking may appear to
 do nothing at all**. Two ways round it:
 
-**In Finder:** **right-click** the file → **Open** → **Open** again in the
-dialog that appears. (Right-click → Open is what gets past the warning;
-double-click alone won't.) If macOS still refuses, go to **System Settings →
-Privacy & Security**, scroll down, and click **Open Anyway** — then open it
+**In Finder:** **right-click** the file, choose **Open**, then **Open** again in
+the dialog that appears. (Right-click and Open is what gets past the warning;
+double-click alone won't.) If macOS still refuses, go to **System Settings >
+Privacy & Security**, scroll down, and click **Open Anyway**, then open it
 again.
 
 **Or in Terminal** (this is the reliable route):
@@ -72,7 +80,7 @@ chmod +x chromiq-io-probe-macos
 ./chromiq-io-probe-macos
 ```
 
-`chmod +x` simply marks the file as runnable — downloads never are by default.
+`chmod +x` simply marks the file as runnable (downloads never are by default).
 The second line starts it.
 
 ### Linux
@@ -87,12 +95,12 @@ chmod +x chromiq-io-probe-linux
 
 > These downloads are **not code-signed** (signing needs a paid certificate),
 > so your computer will warn you the first time. That's normal and doesn't mean
-> anything is wrong — the full source is in this repo if you'd like to check it
+> anything is wrong. The full source is in this repo if you'd like to check it
 > first.
 
 Prefer to **read the source before running anything**? That's the best instinct.
 Download `chromiq-i1io-probe-scripts.zip` from the release instead (or clone this
-repo). It's a short, plain Python file plus double-click launchers — see
+repo). It's a short, plain Python file plus double-click launchers. See
 ["Running from source"](#running-from-source) below.
 
 ---
@@ -103,23 +111,119 @@ A window opens and walks you through three short steps:
 
 1. **It looks for your i1iO** and tells you straight away whether it found it.
 2. **It collects the details** (a few seconds, nothing needed from you).
-3. **It asks three easy questions** — which iO generation you have, which
-   instrument is mounted, and which software you use. Press Enter to skip any.
+3. **It asks three easy questions**: which iO generation you have, which
+   instrument is mounted, and which software (and version) you use. Press
+   Enter to skip any.
 
-At the end it offers an **optional advanced step** (recording what i1Profiler
-says to the table while you use it). It takes longer, and you are very welcome
-to say no — the basic report is already useful on its own.
+At the end it offers an **optional extra**: recording what i1Profiler says to
+the table while you use it. You are very welcome to say no; the basic report
+is already useful on its own.
 
-**On macOS that step now needs nothing installed.** No Wireshark, no ChmodBPF,
-no drivers: macOS already includes `tcpdump`, so the tool simply writes a
-short, readable `start-usb-capture.command` script that you can double-click.
-It asks for your admin password (macOS requires that to listen to USB
-traffic), records to a `.pcap` file, and puts every setting back the way it
-found it when it finishes. It still only listens — it cannot move the arm.
-
-It then saves a plain-text file such as `chromiq-io-probe-20260721-143052.txt`.
+It then saves a plain-text file such as `chromiq-io-probe-20261111-143052.txt`.
 **Open it, have a look, then attach it to
 [issue #129](https://github.com/itsab1989/ChromIQ/issues/129).** That's it.
+
+---
+
+## The optional recording, honestly
+
+A recording of the USB traffic between i1Profiler and the table is the most
+useful thing anyone can send us. It is also the hardest part, and on a Mac it
+is often not possible at all. Here is the real situation.
+
+### On a Mac
+
+macOS can record USB traffic with its own `tcpdump` program, but **only when
+System Integrity Protection (SIP) is fully switched off**. That has been the
+case since macOS Catalina. Switching off single parts of SIP does not work.
+The recording interfaces are called `XHC0`, `XHC1` and `XHC2` on Apple Silicon
+Macs (`XHC20` on Intel Macs), and they only appear once SIP is off.
+
+So the tool first checks, without changing anything:
+
+- whether SIP is on or off (`csrutil status`),
+- whether the Mac has Apple Silicon or Intel,
+- which `XHC` recording interfaces exist,
+- and on which bus the table probably is (a guess from its Location ID).
+
+**If SIP is on** (as on nearly every Mac, and rightly so), the tool says up
+front that a recording is not possible here and why, and shows the three real
+ways to make one (below).
+
+**If SIP is off and the interfaces exist**, it offers a guided recording:
+
+1. macOS asks for your password through its own `sudo` prompt. The tool never
+   sees or stores it.
+2. It switches on the `XHC` interfaces that were off (`sudo ifconfig XHC2 up`
+   and so on) and starts the system's own `tcpdump` on every one of them,
+   because which bus the table is on is only a guess.
+3. You do a few short steps in i1Profiler: replug the table, start i1Profiler,
+   press Measure once, cancel. About 3 minutes. A longer part (aligning the
+   arm, scanning two rows) is offered afterwards, if you have the time.
+4. It stops recording, **switches the interfaces off again** (also after
+   Ctrl-C), and checks each recording. If every data byte in it is zero, it
+   says so plainly: that has been seen on an Apple Silicon Mac before.
+5. It makes a copy holding only the X-Rite devices' traffic. That copy is the
+   one to send. The full recordings can hold everything else on those USB
+   buses, possibly including what you typed on a USB keyboard, so the tool
+   offers to delete them.
+6. It reminds you to switch SIP back on.
+
+How well this works on Apple Silicon is only partly known: one public report
+from 2026 says it works (with `sudo ifconfig XHC2 up` and recording on `XHC2`),
+while a 2021 report saw recordings in which every data byte was zero. That is
+why the tool checks.
+
+### The three ways to make a recording
+
+**1. A Windows PC with an Intel or AMD processor (the easiest way).** Install
+the free [Wireshark](https://www.wireshark.org) and tick **USBPcap** when its
+installer offers it. Then run this tool on that PC and choose the recording
+step; it tells you what to do and times each step.
+Which Windows works: the X-Rite driver for the i1Pro 2 and the i1iO 2 needs
+**Windows 10 with i1Profiler 3.8.5**, or **Windows 11 version 24H2 or older
+with i1Profiler 3.8.6**. X-Rite says the driver is blocked on Windows 11
+version 25H2 and newer.
+**A Windows virtual machine on an Apple Silicon Mac does not work**: there is
+no i1Pro or i1iO driver for Windows on ARM.
+
+**2. Switch SIP off on the Mac, only for the recording.** The honest risk:
+while SIP is off, macOS no longer protects its own system files, so harmful
+software could change them more easily. Keep it off only for the recording and
+switch it back on straight after.
+
+To switch SIP off on an **Apple Silicon** Mac:
+
+1. Choose Apple menu > Shut Down, and wait until the Mac is off.
+2. Press and hold the power button until "Loading startup options" appears.
+3. Click **Options**, then **Continue**. If asked, choose your user and type
+   your password.
+4. In the menu bar choose **Utilities > Terminal**.
+5. Type `csrutil disable` and press Return. If it asks, answer `y` and type
+   your user name and password.
+6. Choose Apple menu > Restart.
+
+On an **Intel** Mac, steps 1 to 3 are instead: choose Apple menu > Restart and
+straight away hold **Command and R** until the Apple logo appears; then choose
+your user if asked. Steps 4 to 6 are the same.
+
+To switch SIP **back on** afterwards (please do not forget): do steps 1 to 4
+again, type `csrutil enable`, press Return, answer `y` if asked, and restart.
+To check, open Terminal and type `csrutil status`; it should say "enabled".
+
+**3. A hardware USB sniffer.** A small box that goes into the cable between
+the computer and the table and records what passes through. It changes nothing
+on the Mac. Examples: [Cynthion](https://greatscottgadgets.com/cynthion/) with
+the free Packetry program (about 210 EUR), or Taradov's open-hardware USB
+Sniffer (about 35 USD; its software is ready-made only for Windows and Linux).
+Only worth it if you already own one or enjoy this kind of thing. The tool can
+still time your i1Profiler steps for such a recording.
+
+### On Linux
+
+Load `usbmon` (`sudo modprobe usbmon`) and record with
+`sudo tcpdump -i usbmon<BUS> -w io-capture.pcap` while the tool times the
+steps. Note that i1Profiler itself does not run on Linux.
 
 ---
 
@@ -127,21 +231,29 @@ It then saves a plain-text file such as `chromiq-io-probe-20260721-143052.txt`.
 
 So you know exactly what you're sending:
 
-- Your operating system name and version.
-- Connected X-Rite USB devices — identifiers, hardware revision, how they're
-  wired together, and their USB descriptors.
+- Your operating system name and version, and the processor type (for example
+  "Apple Silicon (Apple M1)").
+- The list of USB devices the system knows about, how they are wired together
+  (hubs and Location IDs), and for the X-Rite devices their USB descriptors and
+  interfaces as the system recorded them. This is the same kind of list 1.3
+  collected; on current macOS 1.3 simply got an empty one.
 - Which X-Rite driver software and i1Profiler version is installed.
-- **i1Profiler chart *metadata*** — the names and patch *counts* of the iO test
+- On a Mac: whether SIP is on or off, and which USB recording interfaces exist.
+- **i1Profiler chart *metadata***: the names and patch *counts* of the iO test
   charts, and any patch-size figures stated in i1Profiler's own help text. This
   reports facts *about* those files (names, counts, short number snippets); it
   does **not** copy X-Rite's chart data.
 - Your three answers.
-- If you did the optional step: a list of timestamps of what you were doing.
+- If you did the optional step: a list of timestamps of what you were doing,
+  and on a Mac the result of the recording check.
 
 > A note on any patch sizes it may quote: i1Profiler's help text tends to state
 > the numbers for the **i1Pro 3 PLUS** (the large-aperture instrument), which
 > are bigger than a regular i1Pro / Pro 2 / Pro 3 would use. So read those as
 > "for the PLUS" unless it says otherwise.
+
+A recording file (`.pcap`) is separate from the report. The X-Rite-only copy
+holds nothing but the table's and the instrument's USB traffic.
 
 ---
 
@@ -159,36 +271,44 @@ Or use the double-click launchers in the scripts bundle: `Start-macOS.command`,
 
 Useful options:
 
-- `--no-redact` — keep serial numbers and paths as-is (there's no need to; they
+- `--no-redact`: keep serial numbers and paths as-is (there's no need to; they
   aren't useful for this work).
-- `--skip-annotate` — never offer the advanced capture step.
-- `--annotate` — go straight into the advanced capture step.
-- `--analyze [FILE …]` — read a USB capture and print a plain verdict (did it
-  record real traffic to the table?) plus a command timeline, so you can check
-  a capture is good before sending it. With no path it finds the newest capture
-  next to the tool. Reads only; sends nothing to the device.
+- `--skip-annotate`: never offer the recording step.
+- `--annotate` (or `--record`): go straight to the recording step.
+- `--capture-setup` (macOS): say whether this Mac can record USB traffic, and
+  how, then exit. Changes nothing.
+- `--analyze [FILE ...]`: read a USB recording (`.pcap` or `.pcapng`) and print
+  a plain verdict (did it record real traffic to the table, or only zeros?)
+  plus a command timeline, so you can check a recording before sending it. With
+  no path it finds the newest recording next to the tool. Reads only; sends
+  nothing to the device.
+
+The tests need nothing but Python: `python3 -m unittest discover -s tests -v`.
 
 ---
 
 ## Privacy
 
-By default the tool replaces serial numbers with a short scrambled code and
-removes your username and home-folder path. It does not collect documents,
-images, profiles, measurements, or anything personal — only descriptions of
-connected hardware and which X-Rite software is installed. If you spot anything
-in the report you'd rather not share, just delete it before sending.
+By default the tool replaces serial numbers with a short scrambled code
+(including the copy macOS hides inside `UsbDeviceSignature`, which 1.3 missed)
+and removes your username and home-folder path. It does not collect documents,
+images, profiles, measurements, or anything personal: only descriptions of
+connected hardware, the processor type, the SIP state, and which X-Rite
+software is installed. If you spot anything in the report you'd rather not
+share, just delete it before sending.
 
 ---
 
 ## Building the binaries yourself
 
 The release binaries are built by GitHub Actions (`.github/workflows/build.yml`)
-on Windows, Linux, and Intel + Apple-Silicon macOS runners, using PyInstaller.
-Push a `v*` tag to build them and publish a release. There is nothing to
-cross-compile and no hidden steps — it's just `pyinstaller --onefile` on each OS.
+on Windows, Linux, and macOS runners (one universal Intel + Apple Silicon
+build), using PyInstaller. Push a `v*` tag to build them and publish a release.
+There is nothing to cross-compile and no hidden steps: it's just
+`pyinstaller --onefile` on each OS.
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).

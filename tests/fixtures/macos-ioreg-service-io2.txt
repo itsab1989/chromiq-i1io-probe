@@ -1,0 +1,56 @@
++-o Eye-One iO@02210000  <class IOUSBHostDevice, id 0x10000298c, registered, matched, active, busy 0 (21 ms), retain 17>
+    {
+      "idProduct" = 8196
+      "bcdDevice" = 1024
+      "locationID" = 35717120
+      "USB Product Name" = "Eye-One iO"
+      "idVendor" = 2417
+      "kUSBSerialNumberString" = "FAKESERIAL123"
+    }
+    
+  +-o IOUSBHostInterface@0  <class IOUSBHostInterface, id 0x1000029a0, registered, matched, active, busy 0 (5 ms), retain 7>
+    | {
+    |   "bInterfaceNumber" = 0
+    |   "bAlternateSetting" = 0
+    |   "bInterfaceClass" = 255
+    |   "bInterfaceSubClass" = 0
+    |   "bInterfaceProtocol" = 0
+    |   "bNumEndpoints" = 2
+    |   "bConfigurationValue" = 1
+    |   "idVendor" = 2417
+    |   "idProduct" = 8196
+    |   "locationID" = 35717120
+    | }
+    | 
+    +-o AppleUSBHostInterfaceUserClient  <class AppleUSBHostInterfaceUserClient, id 0x1000029b0, !registered, !matched, active, busy 0, retain 6>
+        {
+          "IOUserClientCreator" = "pid 123, X-Rite Device Ser"
+        }
+        
++-o eye-one@02230000  <class IOUSBHostDevice, id 0x100002997, registered, matched, active, busy 0 (22 ms), retain 18>
+    {
+      "idProduct" = 8192
+      "locationID" = 35848192
+      "USB Product Name" = "eye-one"
+      "idVendor" = 2417
+    }
+    
+  +-o IOUSBHostInterface@0  <class IOUSBHostInterface, id 0x1000029c0, registered, matched, active, busy 0 (5 ms), retain 7>
+      {
+        "bInterfaceNumber" = 0
+        "bAlternateSetting" = 0
+        "bInterfaceClass" = 255
+        "bInterfaceSubClass" = 0
+        "bInterfaceProtocol" = 0
+        "bNumEndpoints" = 3
+        "idVendor" = 2417
+        "idProduct" = 8192
+        "locationID" = 35848192
+      }
+      
++-o Generic Keyboard@01110000  <class IOUSBHostDevice, id 0x100000970, registered, matched, active, busy 0 (811 ms), retain 29>
+    {
+      "idProduct" = 4660
+      "locationID" = 17891328
+      "idVendor" = 1155
+    }

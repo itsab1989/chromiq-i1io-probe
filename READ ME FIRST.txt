@@ -44,9 +44,17 @@ That is normal for downloaded files and does not mean anything is wrong.
    Linux  :  Open a terminal here and run:  bash Start-Linux.sh
 
 
+IMPORTANT FOR i1Pro 2 AND i1iO 2 OWNERS
+---------------------------------------
+
+i1Profiler 3.8.7 (July 2026) removed support for the i1Pro 2 and the
+i1iO 2.  Stay on i1Profiler 3.8.6 or older and do not let it update.
+
+
 MORE DETAIL
 -----------
 
-README.md answers everything else - what it collects, what it does
+README.md answers everything else: what it collects, what it does
 about your privacy, what to do if it goes wrong, and an optional
-advanced step you are very welcome to skip.
+recording step you are very welcome to skip.  On a Mac the tool tells
+you honestly whether a recording is possible there at all.

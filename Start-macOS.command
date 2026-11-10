@@ -1,12 +1,12 @@
 #!/bin/bash
-# ChromIQ i1iO probe — macOS launcher. Double-click this file.
+# ChromIQ i1iO probe: macOS launcher. Double-click this file.
 
 # A double-clicked .command starts in the user's home folder, not here.
 cd "$(dirname "$0")" || exit 1
 
 clear
 echo
-echo "  ChromIQ — i1iO information collector (macOS)"
+echo "  ChromIQ: i1iO information collector (macOS)"
 echo
 
 # /usr/bin/python3 exists on every Mac, but on a machine without the Xcode

@@ -1,5 +1,5 @@
 #!/bin/bash
-# ChromIQ i1iO probe — Linux launcher.
+# ChromIQ i1iO probe: Linux launcher.
 #
 # Double-click this if your file manager allows it, otherwise open a terminal
 # in this folder and run:   bash Start-Linux.sh
@@ -8,7 +8,7 @@ cd "$(dirname "$0")" || exit 1
 
 clear
 echo
-echo "  ChromIQ — i1iO information collector (Linux)"
+echo "  ChromIQ: i1iO information collector (Linux)"
 echo
 
 if ! command -v python3 >/dev/null 2>&1; then
@@ -28,7 +28,7 @@ fi
 # it is not already there, and never make the run depend on it succeeding.
 if ! lsmod 2>/dev/null | grep -q usbmon; then
     echo "  (optional) Loading the usbmon module improves the report."
-    echo "  You may be asked for your password. Skipping is fine — press"
+    echo "  You may be asked for your password. Skipping is fine: press"
     echo "  Ctrl-C at the password prompt if you would rather not."
     sudo modprobe usbmon 2>/dev/null || true
     echo

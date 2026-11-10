@@ -1,0 +1,60 @@
+{
+  "SPUSBHostDataType" : [
+    {
+      "_items" : [
+        {
+          "_items" : [
+            {
+              "_name" : "Generic Keyboard",
+              "USBDeviceKeyLinkSpeed" : "12 Mb/s",
+              "USBDeviceKeyProductID" : "0x1234",
+              "USBDeviceKeyVendorID" : "0x0483",
+              "USBKeyLocationID" : "0x01110000"
+            }
+          ],
+          "_name" : "USB2.0 Hub",
+          "USBDeviceKeyProductID" : "0x0610",
+          "USBDeviceKeyVendorID" : "0x05e3",
+          "USBKeyLocationID" : "0x01100000"
+        }
+      ],
+      "_name" : "USB 3.1 Bus",
+      "Driver" : "AppleT8103USBXHCI",
+      "USBKeyLocationID" : "0x01000000"
+    },
+    {
+      "_items" : [
+        {
+          "_items" : [
+            {
+              "_name" : "Eye-One iO",
+              "USBDeviceKeyLinkSpeed" : "12 Mb/s",
+              "USBDeviceKeyProductID" : "0x2004",
+              "USBDeviceKeyProductVersion" : "0x0400",
+              "USBDeviceKeySerialNumber" : "FAKESERIAL123",
+              "USBDeviceKeyVendorID" : "0x0971",
+              "USBDeviceKeyVendorName" : "GretagMacbeth AG",
+              "USBKeyLocationID" : "0x02210000"
+            },
+            {
+              "_name" : "eye-one",
+              "USBDeviceKeyLinkSpeed" : "12 Mb/s",
+              "USBDeviceKeyProductID" : "0x2000",
+              "USBDeviceKeyProductVersion" : "0x0300",
+              "USBDeviceKeyVendorID" : "0x0971",
+              "USBDeviceKeyVendorName" : "GretagMacbeth",
+              "USBKeyLocationID" : "0x02230000"
+            }
+          ],
+          "_name" : "General Purpose USB Hub",
+          "USBDeviceKeyProductID" : "0x2036",
+          "USBDeviceKeyVendorID" : "0x0451",
+          "USBKeyLocationID" : "0x02200000"
+        }
+      ],
+      "_name" : "USB 3.0 Bus",
+      "Driver" : "AppleEmbeddedUSBXHCIFL1100",
+      "USBKeyLocationID" : "0x02000000"
+    }
+  ]
+}

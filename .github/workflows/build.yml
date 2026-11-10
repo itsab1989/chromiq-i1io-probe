@@ -41,7 +41,7 @@ jobs:
           python-version: "3.12"
 
       # macOS: use the python.org universal2 build so PyInstaller can emit a
-      # universal2 (x86_64 + arm64) binary — the same approach ChromIQ uses.
+      # universal2 (x86_64 + arm64) binary, the same approach ChromIQ uses.
       # This script is pure standard library, so there are no third-party
       # wheels to fatten; --target-arch universal2 is all that's needed.
       - name: Set up universal2 Python (macOS)
@@ -51,6 +51,14 @@ jobs:
             "https://www.python.org/ftp/python/3.12.7/python-3.12.7-macos11.pkg"
           sudo installer -pkg /tmp/python.pkg -target /
           echo "/Library/Frameworks/Python.framework/Versions/3.12/bin" >> "$GITHUB_PATH"
+
+      # Standard library only, so the tests need nothing installed. A red
+      # test stops the build, and with it the release.
+      - name: Run the tests
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then PY=python; else PY=python3; fi
+          $PY -m unittest discover -s tests -v
 
       - name: Install PyInstaller
         run: python3 -m pip install --upgrade pip pyinstaller
@@ -152,15 +160,62 @@ jobs:
             | Linux | `chromiq-io-probe-linux` |
 
             No Python needed. It only **reads** information about connected
-            hardware — it never sends anything to the table and cannot move the
-            arm.
+            hardware: it never sends anything to the table, cannot move the
+            arm, and changes no settings.
+
+            > **Owners of an i1Pro 2 or an i1iO 2:** i1Profiler 3.8.7 (July 2026)
+            > removed support for both. Stay on i1Profiler 3.8.6 or older and do
+            > not let it update itself.
+
+            ### What's new in 1.4
+
+            - **Fixed: "NO X-RITE DEVICES SEEN" on current macOS** although the
+              table was plugged in. macOS now lists USB devices under a new name
+              (`SPUSBHostDataType`); 1.3 asked under the old one and got an empty
+              list. 1.4 asks both and also reads the IOKit registry.
+            - **Fixed: a wrong device name.** USB ID 0971:2001 was labelled
+              "i1Pro 2 / i1Pro 3 family", but a real i1Pro 2 reports 0971:2000.
+              Only IDs seen in real reports are named now; the rest say "unknown".
+            - **More of the USB description**, still without ever opening the
+              device: interfaces, which software has them open, and the hub
+              inside the table. Endpoint details need a recording, and the report
+              says so.
+            - **The recording step on a Mac now tells the truth.** Earlier
+              versions said macOS already had everything needed. In fact macOS
+              only allows USB recording with System Integrity Protection (SIP)
+              fully off. 1.4 checks that (read only) and says plainly whether a
+              recording is possible. If not, it explains why and shows the three
+              real ways: a Windows PC with an Intel or AMD processor (easiest), SIP
+              off on the Mac for the recording (exact steps, the risk, and how to
+              switch it back on), or a hardware USB sniffer. If it is possible, it
+              guides a short recording with the system's own `tcpdump`, switches
+              the recording interfaces off again afterwards, checks the recording
+              is not all zeros, makes an X-Rite-only copy to send, and reminds you
+              to switch SIP back on. The tool never changes SIP itself.
+            - `--analyze` now also flags all-zero recordings and reads `.pcapng`.
+            - A serial number that macOS hides in `UsbDeviceSignature` is now
+              hashed like the others.
+
+            ### What has NOT been tested
+
+            - **A recording against a real i1iO.** No i1iO was available while
+              building this release.
+            - **Any recording on a Mac with SIP switched off.** The recording path
+              was tested only with stand-in programs in place of `sudo`,
+              `ifconfig` and `tcpdump`, including a made-up all-zero recording.
+            - Whether a recording on Apple Silicon holds real data. One public
+              report says yes, an older one saw only zeros; the tool checks and
+              tells you.
+
+            The device detection was tested against a real Mac's USB devices and
+            against an anonymised copy of a volunteer's report.
 
             ### Running it on macOS or Linux
 
             Downloaded files aren't marked as runnable, so a plain double-click
             may do nothing. On **macOS** try Finder first: **right-click** the
-            file → **Open** → **Open** again in the dialog. If that doesn't
-            work — or you're on **Linux** — open Terminal and run:
+            file, choose **Open**, then **Open** again in the dialog. If that
+            doesn't work, or you're on **Linux**, open Terminal and run:
 
             ```bash
             cd ~/Downloads
@@ -170,17 +225,17 @@ jobs:
 
             `chmod +x` just marks the file as runnable; the second line starts
             it. On **Windows** simply double-click the `.exe` and choose
-            **More info → Run anyway**.
+            **More info**, then **Run anyway**.
 
             These builds are **not code-signed** (that needs a paid
-            certificate), so your system will warn you once — that's expected.
-            On macOS you may also need **System Settings → Privacy & Security →
+            certificate), so your system will warn you once. That's expected.
+            On macOS you may also need **System Settings > Privacy & Security >
             Open Anyway**. See the README for what the tool collects.
 
             Prefer to read the source before running? Grab
             `chromiq-i1io-probe-scripts.zip` instead.
 
             ---
-            ☕ ChromIQ is free and always will be. If it's useful to you, a coffee is a kind way to say thanks — completely optional, and the app stays fully featured either way.
+            ☕ ChromIQ is free and always will be. If it's useful to you, a coffee is a kind way to say thanks. It is completely optional, and the app stays fully featured either way.
 
             [![Support ChromIQ on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/itsab1989)

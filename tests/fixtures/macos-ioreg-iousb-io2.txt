@@ -1,0 +1,126 @@
++-o Root  <class IORegistryEntry, id 0x100000100, retain 32>
+  | {
+  |   "IOKitBuildVersion" = "Darwin Kernel Version 25.6.0: (anonymised fixture)"
+  |   "OS Build Version" = "25G83"
+  | }
+  |
+  +-o AppleT8103USBXHCI@01000000  <class AppleT8103USBXHCI, id 0x1000002f4, registered, matched, active, busy 0 (1962 ms), retain 447>
+  | | {
+  | |   "IOClass" = "AppleT8103USBXHCI"
+  | |   "locationID" = 16777216
+  | |   "UsbHostControllerProtocolRevision" = "3.1"
+  | | }
+  | |
+  | +-o USB2.0 Hub@01100000  <class IOUSBHostDevice, id 0x100000952, registered, matched, active, busy 0 (821 ms), retain 30>
+  | | | {
+  | | |   "USBSpeed" = 2
+  | | |   "idProduct" = 1552
+  | | |   "bDeviceClass" = 9
+  | | |   "locationID" = 17825792
+  | | |   "USB Product Name" = "USB2.0 Hub"
+  | | |   "idVendor" = 1507
+  | | | }
+  | | |
+  | | +-o Generic Keyboard@01110000  <class IOUSBHostDevice, id 0x100000970, registered, matched, active, busy 0 (811 ms), retain 29>
+  | |     {
+  | |       "USBSpeed" = 1
+  | |       "idProduct" = 4660
+  | |       "bDeviceClass" = 0
+  | |       "locationID" = 17891328
+  | |       "USB Product Name" = "Generic Keyboard"
+  | |       "idVendor" = 1155
+  | |     }
+  | |
+  +-o AppleEmbeddedUSBXHCIFL1100@02000000  <class AppleEmbeddedUSBXHCIFL1100, id 0x100000734, registered, matched, active, busy 0 (63 ms), retain 77>
+  | | {
+  | |   "IOClass" = "AppleEmbeddedUSBXHCIFL1100"
+  | |   "locationID" = 33554432
+  | |   "IONameMatch" = "usb-xhci,FL1100"
+  | |   "UsbHostControllerProtocolRevision" = "3.0"
+  | | }
+  | |
+  | +-o General Purpose USB Hub@02200000  <class IOUSBHostDevice, id 0x10000297d, registered, matched, active, busy 0 (55 ms), retain 29>
+  |   | {
+  |   |   "USBSpeed" = 1
+  |   |   "UsbLinkSpeed" = 12000000
+  |   |   "idProduct" = 8246
+  |   |   "iManufacturer" = 0
+  |   |   "bDeviceClass" = 9
+  |   |   "bcdDevice" = 257
+  |   |   "bMaxPacketSize0" = 8
+  |   |   "iProduct" = 1
+  |   |   "iSerialNumber" = 0
+  |   |   "bNumConfigurations" = 1
+  |   |   "UsbDeviceSignature" = <510436200101090000090000>
+  |   |   "locationID" = 35651584
+  |   |   "bDeviceSubClass" = 0
+  |   |   "bcdUSB" = 272
+  |   |   "USB Product Name" = "General Purpose USB Hub"
+  |   |   "USB Address" = 1
+  |   |   "bDeviceProtocol" = 0
+  |   |   "UsbExclusiveOwner" = "AppleUSB20Hub"
+  |   |   "kUSBCurrentConfiguration" = 1
+  |   |   "idVendor" = 1105
+  |   |   "kUSBProductString" = "General Purpose USB Hub"
+  |   | }
+  |   |
+  |   +-o Eye-One iO@02210000  <class IOUSBHostDevice, id 0x10000298c, registered, matched, active, busy 0 (21 ms), retain 17>
+  |   |   {
+  |   |     "USBSpeed" = 1
+  |   |     "UsbLinkSpeed" = 12000000
+  |   |     "idProduct" = 8196
+  |   |     "iManufacturer" = 1
+  |   |     "bDeviceClass" = 0
+  |   |     "bcdDevice" = 1024
+  |   |     "bMaxPacketSize0" = 8
+  |   |     "iProduct" = 2
+  |   |     "iSerialNumber" = 3
+  |   |     "bNumConfigurations" = 1
+  |   |     "UsbDeviceSignature" = <71090420000446414b45534e000000ffffff>
+  |   |     "locationID" = 35717120
+  |   |     "bDeviceSubClass" = 0
+  |   |     "bcdUSB" = 272
+  |   |     "kUSBSerialNumberString" = "FAKESERIAL123"
+  |   |     "USB Product Name" = "Eye-One iO"
+  |   |     "USB Address" = 2
+  |   |     "bDeviceProtocol" = 0
+  |   |     "kUSBCurrentConfiguration" = 1
+  |   |     "USB Vendor Name" = "GretagMacbeth AG"
+  |   |     "idVendor" = 2417
+  |   |     "kUSBProductString" = "Eye-One iO"
+  |   |     "USB Serial Number" = "FAKESERIAL123"
+  |   |     "kUSBVendorString" = "GretagMacbeth AG"
+  |   |   }
+  |   |
+  |   +-o eye-one@02230000  <class IOUSBHostDevice, id 0x100002997, registered, matched, active, busy 0 (22 ms), retain 18>
+  |       {
+  |         "USBSpeed" = 1
+  |         "UsbLinkSpeed" = 12000000
+  |         "idProduct" = 8192
+  |         "iManufacturer" = 1
+  |         "bDeviceClass" = 0
+  |         "bcdDevice" = 768
+  |         "bMaxPacketSize0" = 64
+  |         "iProduct" = 2
+  |         "iSerialNumber" = 0
+  |         "bNumConfigurations" = 1
+  |         "UsbDeviceSignature" = <710900200003000000ff0000>
+  |         "USB Product Name" = "eye-one"
+  |         "locationID" = 35848192
+  |         "bDeviceSubClass" = 0
+  |         "bcdUSB" = 272
+  |         "USB Address" = 3
+  |         "kUSBCurrentConfiguration" = 1
+  |         "bDeviceProtocol" = 0
+  |         "USB Vendor Name" = "GretagMacbeth"
+  |         "idVendor" = 2417
+  |         "kUSBProductString" = "eye-one"
+  |         "kUSBVendorString" = "GretagMacbeth"
+  |       }
+  |
+  +-o AppleT8103USBXHCI@00000000  <class AppleT8103USBXHCI, id 0x1000002ee, registered, matched, active, busy 0 (19 ms), retain 39>
+      {
+        "IOClass" = "AppleT8103USBXHCI"
+        "locationID" = 0
+        "UsbHostControllerProtocolRevision" = "3.1"
+      }
