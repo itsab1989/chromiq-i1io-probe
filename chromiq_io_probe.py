@@ -3639,10 +3639,10 @@ SESSION_STEPS = [
      "families": ("i1pro2", "i1pro3"),
      "before": """\
   Before you press Enter: switch the program to its dual scan option, if
-  it has one (in i1Profiler it is offered together with the M0, M1 and M2
-  measurement conditions). If you
-  cannot find such an option, type  s  to skip this step. (Owners say the
-  instrument's lights flash during a dual scan.)""",
+  it has one (in i1Profiler it is offered together with the M0, M1 and
+  M2 measurement conditions; owners say the instrument's lights flash
+  during a dual scan). If you cannot find such an option, type  s  to
+  skip this step.""",
      "during": """\
   When the recording runs: scan the same strip, the way the program asks
   for it (it may ask for two passes). Wait until it accepts or refuses
@@ -4059,7 +4059,17 @@ class _ProcRecorder:
                     proc.stderr.close()
                 except OSError:
                     pass
-        files = [p for p in self.files.values() if os.path.exists(p)]
+        files = []
+        for path in self.files.values():
+            if not os.path.exists(path):
+                continue
+            if os.path.getsize(path) == 0:       # created by us, never written
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+                continue
+            files.append(path)
         self.procs, self.files = {}, {}
         return files
 
@@ -4324,6 +4334,10 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                     print("\n  The recording did not start:")
                     for note in recorder.notes[-3:]:
                         print("    " + note)
+                    print("  If it mentions access or permission, close this window and start")
+                    print("  the tool again as administrator (right-click it, then \"Run as")
+                    print("  administrator\"). Otherwise you can record with Wireshark by hand")
+                    print("  (see the README) while the tool times the steps.")
                     session["ended"] = "the recording program stopped at once"
                     break
             entry["start_epoch"] = time.time()
@@ -4454,6 +4468,11 @@ def finish_session(session: dict, folder: str) -> tuple:
             lines.append("The analysis was saved as analysis.txt in the session folder.")
         except Exception as exc:                          # noqa: BLE001
             lines.append(f"The analysis could not be made ({exc}); the recordings are fine.")
+    if os.path.isdir(full_dir) and not os.listdir(full_dir):
+        try:
+            os.rmdir(full_dir)
+        except OSError:
+            pass
     if os.path.isdir(full_dir) and os.listdir(full_dir):
         print("\n  The full recordings (in the folder ending in -FULL-do-not-send) hold")
         print("  everything that happened on those USB ports, possibly including what")
