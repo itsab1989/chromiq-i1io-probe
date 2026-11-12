@@ -1,0 +1,9 @@
+DRV :: i1Pro3 :: USB\VID_0765&PID_6009\7&3CCCC&0&4 :: USBDevice :: WinUSB :: libwdi
+DRV :: i1 Pro :: USB\VID_0971&PID_2000\7&2BBBB&0&3 :: XRiteDevices :: EyeOne :: X-Rite
+DRV :: eye-one :: USB\VID_0971&PID_2000\7&4DDDD&0&1 :: USBDevice :: WinUSB :: libwdi
+DRV :: X-Rite i1 Pro 3 / i1 Pro 3+ :: USB\VID_0765&PID_6009\7&5EEEE&0&5 :: libusb-win32 devices :: libusb0 :: libwdi
+DRV :: ColorMunki :: USB\VID_0971&PID_2007\7&6FFFF&0&6 :: libusbK USB Devices :: libusbK :: libusbK
+DRV :: i1Studio :: USB\VID_0765&PID_6008\7&7AAAA&0&7 ::  ::  :: 
+DRV :: i1Display :: USB\VID_0765&PID_5020\7&8BBBB&0&8 :: HIDClass :: HidUsb :: Microsoft
+DRV :: i1Pro3 :: USB\VID_0765&PID_6009&MI_00\7&9CCCC&0&0000 :: USBDevice :: WinUSB :: libwdi
+not a device line

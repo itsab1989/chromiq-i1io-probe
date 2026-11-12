@@ -330,7 +330,7 @@ class WindowsTests(unittest.TestCase):
                          "Windows 10 version 22H2 (build 19045)")
         late = probe.windows_release_check(26200, "25H2", False)
         self.assertEqual(late["level"], "warning")
-        self.assertIn("blocked on Windows 11 version 25H2", late["text"])
+        self.assertIn("does not work with Windows 11 version 25H2 or newer", late["text"])
         self.assertIn("If the vendor program still finds your instrument, carry on", late["text"])
         self.assertEqual(probe.windows_release_check(26100, "24H2", True)["level"], "problem")
 

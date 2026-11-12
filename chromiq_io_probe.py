@@ -74,7 +74,7 @@ import tempfile
 import threading
 import time
 
-PROBE_VERSION = "1.5"
+PROBE_VERSION = "1.5.1"
 
 ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/129"   # the i1iO only
 NEW_ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/new"
@@ -1025,7 +1025,8 @@ def collect_windows() -> None:
     section("Windows: note",
             "For full endpoint descriptors on Windows the free tool USBTreeView "
             "(uwe-sieber.de) gives much more detail than PowerShell can. If you "
-            "are willing, run it, select the i1iO, and paste its report too.")
+            "are willing, run it, select the X-Rite device (the i1iO or the "
+            "instrument), and paste its report too.")
 
 
 # --------------------------------------------------------------------------
@@ -1081,6 +1082,17 @@ def _count_patches(path: str) -> int:
     return count
 
 
+# 1.5.1: "io" as a bare substring also matched "Studio", "option" and
+# "iteration" in a user's own chart names and tagged them as iO charts. The
+# iO is named "i1iO", "iO2"/"iO3" or "iO" as a word in X-Rite's chart names.
+_IO_CHART_RE = re.compile(r"i1io|(?<![a-z])io(?![a-z])|(?<![a-z])io[23](?![a-z0-9])",
+                          re.IGNORECASE)
+
+
+def is_io_chart_name(name: str) -> bool:
+    return bool(_IO_CHART_RE.search(name))
+
+
 def collect_i1profiler_charts() -> None:
     """Report iO-specific chart metadata (never the chart contents)."""
     root = _find_i1profiler_root()
@@ -1098,7 +1110,7 @@ def collect_i1profiler_charts() -> None:
             if not name.lower().endswith(".txf"):
                 continue
             low = name.lower()
-            is_io = "io" in low
+            is_io = is_io_chart_name(name)
             if not (is_io or "i1pro" in low or "isis" in low or low.startswith("default")):
                 continue
             full = os.path.join(dirpath, name)
@@ -1173,6 +1185,34 @@ def collect_i1profiler_charts() -> None:
 _DETECTION: dict = {}
 
 
+def windows_summary_lines(out: str) -> tuple:
+    """1.5.1: 'name :: instance :: True/False' lines -> (display lines, the
+    (vid, pid) plugged in now). Windows remembers every instrument it has
+    ever seen, once per USB socket; 1.5.0 listed those memories as if they
+    were connected, and could pick the session from one of them."""
+    lines, present = [], []
+    for raw in (out or "").splitlines():
+        raw = raw.strip()
+        if not raw or raw.startswith("["):
+            continue
+        parts = [p.strip() for p in raw.split(" :: ")]
+        is_here = None
+        if len(parts) >= 3 and parts[-1].lower() in ("true", "false"):
+            is_here = parts[-1].lower() == "true"
+            parts = parts[:-1]
+        text = " :: ".join(parts)
+        m = _INSTANCE_IDS_RE.search(text)
+        if is_here is False:
+            text += "   (not plugged in now; Windows remembers it from before)"
+        elif is_here and m:
+            text += "   (plugged in now)"
+            key = (int(m.group(1), 16), int(m.group(2), 16))
+            if key not in present:
+                present.append(key)
+        lines.append(text)
+    return lines, present
+
+
 def quick_summary() -> str:
     """Best-effort 'did we even see the table' answer, per platform."""
     found: list = []
@@ -1192,16 +1232,22 @@ def quick_summary() -> str:
             if ps:
                 out = run([ps, "-NoProfile", "-Command",
                            "Get-PnpDevice | Where-Object { ($_.InstanceId -like '*VID_0971*' -or $_.InstanceId -like '*VID_0765*') } "
-                           "| ForEach-Object { $_.FriendlyName + ' :: ' + $_.InstanceId }"])
-                found = [l.strip() for l in out.splitlines()
-                         if l.strip() and not l.startswith("[")]
+                           "| ForEach-Object { $_.FriendlyName + ' :: ' + $_.InstanceId + ' :: ' + $_.Present }"])
+                found, present = windows_summary_lines(out)
+                _DETECTION.clear()
+                _DETECTION["present_ids"] = present
     except Exception as exc:                              # noqa: BLE001
         return f"[summary failed: {exc}]"
 
     if not found:
         return ("NO X-RITE DEVICES SEEN.\n"
                 "Please check the table is powered on and plugged in, then run again.")
-    return "X-Rite devices detected:\n  " + "\n  ".join(found)
+    text = "X-Rite devices detected:\n  " + "\n  ".join(found)
+    if system == "Windows" and "present_ids" in _DETECTION and not _DETECTION["present_ids"] \
+            and any("(not plugged in now" in f for f in found):
+        text += ("\nNone of them is plugged in right now. Please plug in the instrument "
+                 "and run the tool again.")
+    return text
 
 
 # --------------------------------------------------------------------------
@@ -3748,8 +3794,24 @@ WIN11_FIRST_BUILD = 22000
 WIN11_25H2_BUILD = 26200
 
 
-def windows_release_check(build, display, arm: bool) -> dict:
-    """Plain facts about this Windows for the recording. Never blocks."""
+# 1.5.1: which instruments X-Rite's 25H2 note is about. X-Rite's support page
+# "i1Pro 2 Not Working with i1Profiler, Windows 11, MacOS 28 (soon)" (8/2026):
+# "The i1Pro 2 / iO2 driver is not compatible with recent Windows 11 updates
+# (25H2 or newer)", "The old i1Pro 2 drivers are blocked and there is no
+# workaround", and "i1Pro 3 / iO3 is compatible with latest Windows 11
+# releases". 1.5.0 showed the warning to everybody, including an i1Pro 3
+# owner. The first i1Pro shares the i1Pro 2's USB ID (0971:2000), so the
+# computer cannot tell them apart; the note does not mention it.
+XRITE_25H2_NOTE_URL = ("https://www.xrite.com/service-support/"
+                       "i1pro-2-eol-notes-compatibility-issues-with-windows-11-macos")
+PROFILES_BLOCKED_ON_25H2 = ("i1pro2", "i1pro")
+
+
+def windows_release_check(build, display, arm: bool, profile: str | None = None) -> dict:
+    """Plain facts about this Windows for the recording. Never blocks.
+
+    profile: the session's instrument (None: not known, said for the i1Pro 2
+    and the iO2 as before)."""
     if arm:
         return {"level": "problem", "text": (
             "This Windows runs on an ARM processor. X-Rite has no driver for these "
@@ -3761,10 +3823,19 @@ def windows_release_check(build, display, arm: bool) -> dict:
     name = "Windows 11" if build >= WIN11_FIRST_BUILD else "Windows 10"
     label = f"{name}{' version ' + display if display else ''} (build {build})"
     if build >= WIN11_25H2_BUILD:
-        return {"level": "warning", "text": (
-            f"{label}. X-Rite says the driver for the i1Pro 2 and the i1iO 2 is "
-            "blocked on Windows 11 version 25H2 and newer. If the vendor program "
-            "still finds your instrument, carry on; if it does not, this is why.")}
+        if profile is None or profile in PROFILES_BLOCKED_ON_25H2:
+            return {"level": "warning", "text": (
+                f"{label}. X-Rite says its driver for the i1Pro 2 and the iO2 does "
+                "not work with Windows 11 version 25H2 or newer: Windows blocks it, "
+                "and X-Rite will not update it. (The first i1Pro looks the same to "
+                "the computer; X-Rite's note does not mention it.) If the vendor "
+                "program still finds your instrument, carry on; if it does not, "
+                "this is why.")}
+        if profile == "i1pro3":
+            return {"level": "ok", "text": (
+                f"{label}. X-Rite's note about drivers blocked on 25H2 concerns "
+                "the i1Pro 2 and the iO2 only. X-Rite says the i1Pro 3 works with "
+                "the latest Windows 11 releases.")}
     return {"level": "ok", "text": label}
 
 
@@ -3870,19 +3941,187 @@ def i1profiler_check(version, profile: str) -> dict:
     return {"level": "ok", "text": f"{version}"}
 
 
+# 1.5.1: rewritten after the first report from a user, who asked "what is
+# it?". Facts behind the wording, checked 2026-11-12:
+# - Wireshark's installer (packaging/nsis/wireshark.nsi, USBPcapPage.ini) has
+#   a page headed "USB Capture" with the checkbox "Install USBPcap 1.5.4.0",
+#   NOT ticked by default; it runs USBPcap's own installer (with its licence
+#   pages), copies USBPcapCMD.exe into Wireshark's extcap folder and asks for
+#   a restart.
+# - desowin.org/usbpcap: "After installation you must restart your computer."
+# - USBPcap's installer (nsis/USBPcap.nsi) installs a separate driver build on
+#   Windows 10 and newer, which its author says is signed by "Microsoft
+#   Windows Hardware Compatibility Publisher" (attestation signing, usbpcap
+#   issue #39, since 1.2.0.3). So Secure Boot and driver signature
+#   enforcement stay on. Whether Windows' memory integrity setting accepts
+#   it is not documented anywhere we found, so the text asks the user to
+#   tell us rather than switch anything off.
 USBPCAP_INSTALL_TEXT = """\
-  HOW TO INSTALL USBPcap (free, about 5 minutes)
-  USBPcap is the small free program that lets Windows record USB traffic.
-  It comes with Wireshark.
+  WHAT USBPcap IS
+  USBPcap is a small, free program that lets Windows write down what a
+  program and a USB device say to each other, like a voice recorder for
+  the USB cable. This tool needs it because Windows has no such recorder
+  of its own: without USBPcap there is nothing to record with.
+
+  HOW TO INSTALL IT (free, about 5 minutes)
     1. Open https://www.wireshark.org/download.html and download the
-       "Windows x64 Installer".
-    2. Run it. Keep the suggested choices. On the page about USB capture,
-       tick "Install USBPcap", and accept USBPcap's licence when asked.
-    3. Finish the installation, then restart Windows. USBPcap only starts
-       watching the USB ports after a restart.
-    4. Run this tool again.
-  If the Wireshark installer does not offer USBPcap, install it on its
-  own from https://desowin.org/usbpcap/ and restart Windows."""
+       "Windows x64 Installer". (Wireshark is a free program that brings
+       USBPcap with it. You do not need to use Wireshark itself.)
+    2. Run it and keep the suggested choices, until you reach the page
+       called "USB Capture". There, tick the box "Install USBPcap" (it is
+       not ticked unless you tick it). USBPcap's own installer then opens:
+       accept its licence and keep its suggested choices.
+    3. When everything has finished, restart Windows. USBPcap only starts
+       listening to the USB ports after a restart.
+    4. Run this tool again (right-click it and choose "Run as
+       administrator"), and choose the recording session again.
+
+  You do not need to switch off any security setting for this: not
+  Secure Boot, and not "driver signature enforcement". On Windows 10 and 11,
+  USBPcap installs a driver that is signed through Microsoft's own signing
+  service, so Windows accepts it as it is. If Windows refuses it anyway
+  (for example with a message about "memory integrity" or an incompatible
+  driver), please do not switch any protection off: tell us what Windows
+  said, and we will look at it with you.
+
+  Without Wireshark: USBPcap also has an installer of its own at
+  https://desowin.org/usbpcap/ (restart Windows after it, too).
+  To remove USBPcap later: Settings, Apps, Installed apps, "USBPcap",
+  Uninstall, then restart Windows."""
+
+
+# 1.5.1: which driver Windows has given the instrument. Only devices that are
+# plugged in now count: Windows remembers every instrument it has ever seen,
+# once per USB socket, and those memories keep their old driver.
+#
+# ArgyllCMS (and so ChromIQ) reads an instrument on Windows only through the
+# libusb-win32 driver (service "libusb0"): Argyll's usb/ArgyllCMS.inf binds
+# it, and its device class is "Argyll LibUSB-win32 devices"; ChromIQ's own
+# installer (Preferences, "Instrument drivers...") puts the same driver in
+# through libwdi. X-Rite's programs cannot open an instrument bound to it.
+# X-Rite's own driver for the i1Pro and i1Pro 2 has the device class
+# "XRiteDevices"; the i1Pro 3 asks Windows for the standard WinUSB driver
+# itself (compatible ID USB\MS_COMP_WINUSB), and X-Rite's i1Pro 3 driver is a
+# WinUSB driver named "X-Rite i1Pro3".
+_DRIVER_PS = (
+    "Get-PnpDevice -PresentOnly | Where-Object { ($_.InstanceId -like '*VID_0971*' "
+    "-or $_.InstanceId -like '*VID_0765*') } | ForEach-Object { "
+    "$s = (Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName DEVPKEY_Device_Service "
+    "-ErrorAction SilentlyContinue).Data; "
+    "$p = (Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName DEVPKEY_Device_DriverProvider "
+    "-ErrorAction SilentlyContinue).Data; "
+    "'DRV :: ' + $_.FriendlyName + ' :: ' + $_.InstanceId + ' :: ' + $_.Class + ' :: ' + $s + ' :: ' + $p }")
+
+_INSTANCE_IDS_RE = re.compile(r"VID_([0-9A-Fa-f]{4})&PID_([0-9A-Fa-f]{4})")
+
+
+def parse_driver_lines(text: str) -> list:
+    """The 'DRV :: name :: instance :: class :: service :: provider' lines."""
+    out = []
+    for line in (text or "").splitlines():
+        if not line.startswith("DRV :: "):
+            continue
+        parts = [p.strip() for p in line[len("DRV :: "):].split(" :: ")]
+        parts += [""] * (5 - len(parts))
+        name, instance, cls, service, provider = parts[:5]
+        m = _INSTANCE_IDS_RE.search(instance)
+        if not m or "&MI_" in instance.upper():
+            continue
+        out.append({"vid": int(m.group(1), 16), "pid": int(m.group(2), 16), "name": name,
+                    "class": cls, "service": service, "provider": provider})
+    return out
+
+
+def driver_state(dev: dict) -> str:
+    """'argyll', 'winusb', 'vendor', 'none' or 'unknown' for one present device."""
+    service = dev.get("service", "").lower()
+    text = " ".join(dev.get(k, "") for k in ("name", "class", "provider")).lower()
+    if service in ("libusb0", "libusbk") or "argyll" in text or "libusb" in text:
+        return "argyll"
+    if service == "winusb":
+        return "winusb"
+    if not service:
+        return "none"
+    if "xrite" in text.replace("-", "") or service == "eyeone":
+        return "vendor"
+    return "unknown"
+
+
+def instrument_driver_checks(devices: list) -> list:
+    """One check per plugged-in instrument: name, level, text, needs_help."""
+    checks = []
+    for dev in devices:
+        if (dev["vid"], dev["pid"]) not in PROFILE_IDS:
+            continue
+        state = driver_state(dev)
+        label = dev["name"] or f"{dev['vid']:04x}:{dev['pid']:04x}"
+        drv = dev["service"] or "no driver"
+        if state == "argyll":
+            checks.append({"name": label, "level": "problem", "help": True, "text": (
+                f"{label}: on the ArgyllCMS driver ({drv}), which ChromIQ and "
+                "ArgyllCMS use. The vendor program cannot see the instrument "
+                "like this (see below what to do).")})
+        elif state == "winusb" and dev["vid"] == 0x0765:
+            checks.append({"name": label, "level": "ok", "help": False, "text": (
+                f"{label}: Windows' standard USB driver (WinUSB), which the "
+                "instrument itself asks for. The vendor program normally finds "
+                "it like this.")})
+        elif state == "winusb":
+            checks.append({"name": label, "level": "problem", "help": True, "text": (
+                f"{label}: on a general-purpose driver (WinUSB), not on X-Rite's. "
+                "The vendor program cannot see the instrument like this (see "
+                "below what to do).")})
+        elif state == "vendor":
+            checks.append({"name": label, "level": "ok", "help": False,
+                           "text": f"{label}: X-Rite's driver ({drv})"})
+        elif state == "none":
+            checks.append({"name": label, "level": "warning", "help": False, "text": (
+                f"{label}: Windows has no driver for it at the moment. Installing "
+                "(or repairing) the vendor program normally brings X-Rite's driver.")})
+        else:
+            checks.append({"name": label, "level": "unknown", "help": False,
+                           "text": f"{label}: driver {drv}, not one this tool knows"})
+    return checks
+
+
+DRIVER_HELP_TEXT = """\
+  YOUR INSTRUMENT IS ON THE WRONG DRIVER FOR THE VENDOR PROGRAM
+  A USB instrument works with one driver at a time. ChromIQ and ArgyllCMS
+  need their own driver (called libusb0 or libusb-win32, shown in Device
+  Manager with "(Argyll)" in its name or under "Argyll LibUSB-win32
+  devices"). X-Rite's programs, such as i1Profiler, need X-Rite's driver,
+  and while the instrument is on the ArgyllCMS driver they cannot see it at
+  all. So for a recording, please give it X-Rite's driver back first:
+    1. Plug the instrument into the USB socket you want to use, then open
+       Device Manager (right-click the Start button, "Device Manager").
+    2. Find the instrument, under "Argyll LibUSB-win32 devices" or
+       "libusb-win32 devices". Right-click it and choose "Update driver".
+    3. Choose "Browse my computer for drivers", then "Let me pick from a
+       list of available drivers on my computer".
+    4. Pick X-Rite's own entry: "X-Rite i1Pro3" for an i1Pro 3, or
+       "i1 Pro" for an i1Pro or i1Pro 2. Not an entry with "(Argyll)" in
+       its name, and not "X-Rite i1 Pro 3 / i1 Pro 3+" or "GretagMacbeth
+       i1 Pro / i1 Pro 2" (those are the ArgyllCMS driver as ChromIQ
+       installs it). Click Next. If X-Rite's entry is not in the list,
+       reinstall (or repair) the vendor program: its installer brings
+       X-Rite's driver.
+    5. Unplug the instrument, plug it in again, and check that the vendor
+       program finds it. Then run this tool again.
+  Windows keeps a separate entry for every USB socket, so the instrument
+  can have X-Rite's driver in one socket and the ArgyllCMS driver in
+  another. If the vendor program does not find it, check the socket it is
+  plugged into right now.
+
+  THE WAY BACK, for ChromIQ afterwards: ChromIQ cannot see the instrument
+  while it is on X-Rite's driver. Do the same steps and, in step 4, pick
+  the ArgyllCMS entry again (the one with "(Argyll)" in its name, or the
+  one ChromIQ installed, named as in step 4). Or let ChromIQ do it: in
+  ChromIQ's Preferences, open "Instrument drivers..." and click
+  "Install Driver". Nothing here needs any security setting switched off."""
+
+
+def windows_driver_devices() -> list:
+    return parse_driver_lines(_powershell(_DRIVER_PS))
 
 
 def windows_capture_checks(profile: str) -> dict:
@@ -3902,10 +4141,15 @@ def windows_capture_checks(profile: str) -> dict:
                      "instrument": [d for d in devs if _XRITE_NAME_RE.search(d[1])]})
     programs = windows_program_versions()
     i1p = next((v for k, v in programs.items() if "i1profiler" in k.lower()), None)
-    return {"windows": windows_release_check(build["build"], build["display"], arm),
+    return {"windows": windows_release_check(build["build"], build["display"], arm, profile),
             "service": service, "usbpcapcmd": cmd, "hubs": hubs,
             "admin": windows_is_admin(), "programs": programs,
-            "i1profiler": i1profiler_check(i1p, profile), "build": build}
+            "i1profiler": i1profiler_check(i1p, profile), "build": build,
+            "drivers": instrument_driver_checks(windows_driver_devices())}
+
+
+def driver_help_needed(c: dict) -> bool:
+    return any(d["help"] for d in c.get("drivers") or [])
 
 
 _LEVEL_WORDS = {"ok": "OK", "warning": "PLEASE READ", "problem": "PROBLEM",
@@ -3932,6 +4176,8 @@ def windows_checks_text(c: dict) -> str:
         row("USBPcap:", "problem", "not installed (see below how to install it)")
     row("USBPcapCMD:", "ok" if c["usbpcapcmd"] else "problem",
         c["usbpcapcmd"] or "not found (it comes with USBPcap)")
+    for d in c.get("drivers") or []:
+        row("Driver:", d["level"], d["text"])
     admin = c["admin"]
     row("Administrator:", "ok" if admin else "warning" if admin is False else "unknown",
         "yes, this window runs as administrator" if admin else
@@ -4539,8 +4785,14 @@ def manual_recording_text(folder: str) -> str:
     5. Then run this tool with   --analyze {os.path.basename(folder)}"""
 
 
-def instrument_session_step(pids: list, direct: bool) -> None:
-    """The i1Pro / ColorMunki recording, from start to end, any platform."""
+def instrument_session_step(pids: list, direct: bool) -> dict:
+    """The i1Pro / ColorMunki recording, from start to end, any platform.
+
+    Returns what happened, for the closing words: {"profile", "recorded",
+    "help"} (1.5.1). "help" holds the texts to repeat at the very end when
+    nothing could be recorded, so they are the last thing on the screen
+    instead of being buried above "ALL DONE"."""
+    outcome = {"profile": None, "recorded": False, "help": [], "reason": ""}
     system = platform.system()
     default = choose_profile(pids)
     print("\n" + "=" * 68)
@@ -4550,7 +4802,8 @@ def instrument_session_step(pids: list, direct: bool) -> None:
         profile = _ask_profile(default)
     except _StopSession:
         section("Instrument recording session", "[ended before it started]")
-        return
+        return outcome
+    outcome["profile"] = profile
     print("\n  WHAT THIS IS FOR")
     print(PROFILE_PURPOSE[profile])
     print()
@@ -4580,10 +4833,19 @@ def instrument_session_step(pids: list, direct: bool) -> None:
         print(windows_checks_text(checks))
         print()
         if not checks["service"]["installed"]:
-            print(USBPCAP_INSTALL_TEXT)
+            outcome["help"].append(USBPCAP_INSTALL_TEXT)
+        if driver_help_needed(checks):
+            outcome["help"].append(DRIVER_HELP_TEXT)
+        if outcome["help"]:
+            print(("\n\n  " + "-" * 66 + "\n\n").join(outcome["help"]))
+            print()
+        if not checks["service"]["installed"]:
+            outcome["reason"] = ("Nothing was recorded, because USBPcap (the recorder "
+                                 "this tool needs on Windows) is not installed yet.")
             section("Instrument recording session",
-                    "[USBPcap is not installed]\n" + windows_checks_text(checks))
-            return
+                    "[USBPcap is not installed]\n" + windows_checks_text(checks)
+                    + "\n\n" + "\n\n".join(outcome["help"]))
+            return outcome
         if windows_can_record(checks):
             hubs = [h["path"] for h in checks["hubs"] if h["instrument"]] or \
                 [h["path"] for h in checks["hubs"]]
@@ -4604,7 +4866,7 @@ def instrument_session_step(pids: list, direct: bool) -> None:
             print("  route above works with the same instrument.")
             section("Instrument recording session",
                     "[not possible on this Mac: " + " ".join(readiness["reasons"]) + "]")
-            return
+            return outcome
     else:
         ifaces = linux_usbmon_interfaces()
         context = {"usbmon": ifaces}
@@ -4617,16 +4879,16 @@ def instrument_session_step(pids: list, direct: bool) -> None:
             print("  No usbmon interfaces. Load them first with   sudo modprobe usbmon")
             print("  (and make sure tcpdump is installed), then run the tool again.")
             section("Instrument recording session", "[usbmon not loaded or tcpdump missing]")
-            return
+            return outcome
     if not said_yes(ask("\n  Start the session now? (yes / no): ")):
         print("\n  No problem at all. Nothing was recorded.\n")
         section("Instrument recording session", "[declined by the operator]")
-        return
+        return outcome
     try:
         program, version = _ask_program(detected_programs)
     except _StopSession:
         section("Instrument recording session", "[ended before the first step]")
-        return
+        return outcome
     if profile == "i1pro2" and "i1profiler" in (program or "").lower() \
             and version and version_tuple(version) >= (3, 8, 7):
         print("\n  Please note: i1Profiler 3.8.7 and newer no longer talk to the i1Pro 2.")
@@ -4639,7 +4901,7 @@ def instrument_session_step(pids: list, direct: bool) -> None:
         print(manual_recording_text(folder))
         if not said_yes(ask("\n  Is Wireshark recording now? (yes / no): ")):
             section("Instrument recording session", "[no recording running]")
-            return
+            return outcome
     session = run_instrument_session(recorder, folder, profile, program, version, context)
     if manual:
         print("\n  Now stop Wireshark and save the recording into the folder")
@@ -4651,7 +4913,8 @@ def instrument_session_step(pids: list, direct: bool) -> None:
     if analysis:
         verdict = analysis.split("DOES THIS RECORDING HOLD WHAT WE NEED?")[-1]
         print("\n  DOES THIS RECORDING HOLD WHAT WE NEED?" + verdict.replace("\n", "\n  "))
-    if any(s.get("files_xrite") for s in session["steps"]) or manual:
+    outcome["recorded"] = bool(any(s.get("files_xrite") for s in session["steps"]) or manual)
+    if outcome["recorded"]:
         print()
         print(session_send_text(folder))
     if system == "Darwin":
@@ -4661,6 +4924,7 @@ def instrument_session_step(pids: list, direct: bool) -> None:
     if analysis:
         body += "\n\n" + analysis
     section("Instrument recording session", body)
+    return outcome
 
 
 # --------------------------------------------------------------------------
@@ -4683,7 +4947,10 @@ def detected_ids(summary: str) -> list:
     for key in ids:
         if key[0] in XRITE_VIDS and key not in out:
             out.append(key)
-    return out
+    # 1.5.1: what is plugged in now comes first, so the session is chosen
+    # from the instrument on the desk, not from one Windows remembers.
+    present = _DETECTION.get("present_ids") or []
+    return [k for k in out if k in present] + [k for k in out if k not in present]
 
 
 def find_session_folders() -> list:
@@ -4839,7 +5106,9 @@ def main() -> int:
     has_handheld = any(k in PROFILE_IDS for k in ids)
     if not instrument_mode and has_handheld and (XRITE_VID, 0x2004) not in ids \
             and not args.skip_annotate and not args.annotate:
-        names = ", ".join(PROFILE_NAMES[PROFILE_IDS[k]] for k in ids if k in PROFILE_IDS)
+        present = _DETECTION.get("present_ids")
+        shown = [k for k in ids if k in PROFILE_IDS and (not present or k in present)]
+        names = ", ".join(dict.fromkeys(PROFILE_NAMES[PROFILE_IDS[k]] for k in shown))
         print("-" * 68)
         print(f"  This computer has a handheld instrument plugged in ({names}),")
         print("  but no i1iO table. This tool has a guided recording session made")
@@ -4853,8 +5122,8 @@ def main() -> int:
         print("-" * 68)
         print("STEP 3 of 3: the recording session")
         print("-" * 68)
-        instrument_session_step(ids, direct=True)
-        return finish_report(args, system, instrument=True)
+        outcome = instrument_session_step(ids, direct=True)
+        return finish_report(args, system, instrument=True, outcome=outcome)
 
     print("-" * 68)
     print("STEP 3 of 3: three quick questions")
@@ -4879,7 +5148,38 @@ def main() -> int:
     return finish_report(args, system)
 
 
-def finish_report(args, system: str, instrument: bool = False) -> int:
+def closing_words(outcome: dict | None) -> list:
+    """1.5.1: the end of a handheld run, as lines. When nothing was recorded,
+    say so plainly and repeat what to do, so it is the last thing on screen
+    (1.5.0 put "ALL DONE" and "send it with the session folder" there, with
+    the install steps scrolled away above them)."""
+    outcome = outcome or {}
+    if outcome.get("recorded"):
+        return ["  Send it together with the session folder, as described above.",
+                "  In the report the serial numbers are scrambled; in the zip's",
+                "  recordings they cannot be, as said above.", "", HANDHELD_SEND_WAYS]
+    lines = ["  NOTHING WAS RECORDED THIS TIME",
+             "  " + (outcome.get("reason") or "No step of the session was recorded."),
+             "  There is no session folder to send. You do not need to send this",
+             "  report either; if you like, send it anyway (it shows what the tool",
+             "  found on this computer). A recording is what really helps."]
+    for text in outcome.get("help") or []:
+        lines += ["", "  " + "-" * 66, "", text]
+    if outcome.get("help"):
+        lines += ["", "  When that is done, simply run this tool again. Thank you!"]
+    return lines
+
+
+def show_i1profiler_warning(instrument: bool, outcome: dict | None) -> bool:
+    """1.5.1: the i1Pro 2 / iO2 warning only where it applies. 1.5.0 showed it
+    to every handheld user, including i1Pro 3 owners."""
+    if not instrument:
+        return True
+    return (outcome or {}).get("profile") in PROFILES_BLOCKED_ON_25H2
+
+
+def finish_report(args, system: str, instrument: bool = False,
+                  outcome: dict | None = None) -> int:
     body = [
         "ChromIQ X-Rite instrument probe report",
         ("Made by the handheld-instrument session" if instrument
@@ -4905,8 +5205,9 @@ def finish_report(args, system: str, instrument: bool = False) -> int:
         return 1
 
     size_kb = os.path.getsize(out_path) / 1024
+    recorded = (not instrument) or bool((outcome or {}).get("recorded"))
     print("\n" + "=" * 68)
-    print("  ALL DONE. Thank you!")
+    print("  ALL DONE. Thank you!" if recorded else "  FINISHED, BUT NOTHING WAS RECORDED YET")
     print("=" * 68)
     print()
     print("  Your report was saved here:")
@@ -4917,22 +5218,22 @@ def finish_report(args, system: str, instrument: bool = False) -> int:
     print("  a look first: you can see exactly what is being shared, and you")
     print("  can delete anything you are not comfortable with.")
     print()
-    if instrument:
-        print("  Send it together with the session folder, as described above.")
-        print("  In the report the serial numbers are scrambled; in the zip's")
-        print("  recordings they cannot be, as said above.")
-        print()
-        print(HANDHELD_SEND_WAYS)
-    else:
+    if instrument and recorded:
+        print("\n".join(closing_words(outcome)))
+    elif not instrument:
         print("  Then attach it to:")
         print(f"      {ISSUE_URL}")
-    print()
-    print(I1PROFILER_WARNING)
+    if show_i1profiler_warning(instrument, outcome):
+        print()
+        print(I1PROFILER_WARNING)
     if system == "Darwin" and _READINESS.get("sip") in ("off", "partly"):
         print()
         print(SIP_OFF_REMINDER)
     print()
-    if instrument:
+    if instrument and not recorded:
+        # Last on the screen on purpose: what to do next.
+        print("\n".join(closing_words(outcome)))
+    elif instrument:
         print("  That's everything. Thank you for helping. Whatever comes of it,")
         print("  a recording like this teaches us more than any amount of guessing.")
     else:

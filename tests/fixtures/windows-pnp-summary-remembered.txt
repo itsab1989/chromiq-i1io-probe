@@ -1,0 +1,5 @@
+Eye-One Pro (Argyll) :: USB\VID_0971&PID_2000\7&1AAAA&0&2 :: False
+i1 Pro :: USB\VID_0971&PID_2000\7&2BBBB&0&3 :: False
+i1Pro3 :: USB\VID_0765&PID_6009\7&3CCCC&0&4 :: False
+i1 Pro3 (Argyll) :: USB\VID_0765&PID_6009\7&1AAAA&0&2 :: False
+i1 Pro3 (Argyll) :: USB\VID_0765&PID_6009\7&2BBBB&0&3 :: True

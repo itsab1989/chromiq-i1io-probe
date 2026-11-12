@@ -1,0 +1,1 @@
+DRV :: i1 Pro3 (Argyll) :: USB\VID_0765&PID_6009\7&2BBBB&0&3 :: Argyll LibUSB-win32 devices :: libusb0 :: ArgyllCMS
