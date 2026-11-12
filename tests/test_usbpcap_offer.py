@@ -383,6 +383,101 @@ class SelfTestSwitches(unittest.TestCase):
         self.assertNotIn("selftest", out.getvalue())
 
 
+class HelpersNeverTouchTheWindow(unittest.TestCase):
+    """1.5.3: no helper program may read the user's keys or write into the
+    tool's window. Every subprocess call names its stdin; the only ones that
+    use the terminal on purpose are macOS/Linux "sudo -v" password prompts."""
+
+    def test_every_subprocess_call_names_its_input(self):
+        import ast
+        with open(os.path.join(ROOT, "chromiq_io_probe.py"), encoding="utf-8") as fh:
+            src = fh.read()
+        tree = ast.parse(src)
+        offenders = []
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess"
+                    and node.func.attr in ("run", "Popen", "call", "check_call", "check_output")):
+                continue
+            names = {k.arg for k in node.keywords}
+            text = ast.get_source_segment(src, node)
+            if "stdin" in names or None in names:          # None: **kwargs (checked below)
+                continue
+            if '"-v"' in text:                              # the sudo password prompt
+                continue
+            offenders.append(f"line {node.lineno}: {text[:60]}")
+        self.assertEqual(offenders, [])
+
+    def test_run_and_the_recorder_keep_input_and_errors_away(self):
+        kw = probe._quiet_kwargs()
+        self.assertIs(kw["stdin"], probe.subprocess.DEVNULL)
+        self.assertTrue(kw["capture_output"])
+        with mock.patch.object(probe.os, "name", "nt"):
+            self.assertEqual(probe._quiet_kwargs()["creationflags"], 0x08000000)
+        seen = {}
+
+        def fake_run(cmd, **k):
+            seen.update(k)
+            return probe.subprocess.CompletedProcess(cmd, 0, "ok", "")
+        with mock.patch.object(probe.subprocess, "run", fake_run):
+            self.assertEqual(probe.run(["x"]), "ok")
+        self.assertIs(seen["stdin"], probe.subprocess.DEVNULL)
+        self.assertTrue(seen["capture_output"])
+
+    def test_powershell_is_quiet(self):
+        seen = []
+        with mock.patch.object(probe.shutil, "which", lambda n: "powershell"), \
+                mock.patch.object(probe, "run", lambda cmd, timeout=40: seen.append(cmd) or ""):
+            probe._powershell("Get-Date")
+        cmd = seen[0]
+        for flag in ("-NoProfile", "-NonInteractive", "-NoLogo"):
+            self.assertIn(flag, cmd)
+        self.assertTrue(cmd[-1].startswith("$ProgressPreference = 'SilentlyContinue'; "))
+
+
+class OnlyWhatIsPluggedInIsOffered(unittest.TestCase):
+    """Found in the Windows VM: only a remembered i1Studio, nothing plugged
+    in, and the tool offered the handheld session "plugged in"."""
+
+    def setUp(self):
+        t152._clean_state(self)
+        probe._DETECTION.clear()
+        self.addCleanup(probe._DETECTION.clear)
+
+    def run_main(self, present):
+        summary = ("X-Rite devices detected:\n  X-Rite i1 Studio :: USB\\VID_0765&PID_6008\\1&2&3   "
+                   "(not plugged in now; Windows remembers it from before)\n"
+                   "None of them is plugged in right now. Please plug in the instrument and run "
+                   "the tool again.")
+
+        def fake_summary():
+            probe._DETECTION["present_ids"] = present
+            return summary
+        asked = mock.Mock(return_value="")
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(probe, "quick_summary", fake_summary), \
+                mock.patch.object(probe, "ask", asked), \
+                mock.patch.object(probe.platform, "system", lambda: "Windows"), \
+                mock.patch.object(probe, "collect_windows", lambda: None), \
+                mock.patch.object(probe, "collect_i1profiler_charts", lambda: None), \
+                mock.patch.object(probe, "recording_step", lambda direct: None), \
+                mock.patch.object(probe, "candidate_dirs", lambda: [tmp]), redirect_stdout(out):
+            probe.main([])
+        return out.getvalue(), " ".join(str(c) for c in asked.call_args_list)
+
+    def test_remembered_only_is_not_offered(self):
+        screen, prompts = self.run_main([])
+        self.assertNotIn("has a handheld instrument plugged in", screen)
+        self.assertNotIn("Use the session for handheld instruments?", prompts)
+        self.assertIn("no_instrument", probe._CAUSES)
+
+    def test_plugged_in_is_offered(self):
+        screen, prompts = self.run_main([(0x0765, 0x6008)])
+        self.assertIn("has a handheld instrument plugged in (", screen)
+        self.assertIn("Use the session for handheld instruments?", prompts)
+
+
 class Honesty(unittest.TestCase):
 
     def test_no_silent_or_hidden_switches_in_the_source(self):

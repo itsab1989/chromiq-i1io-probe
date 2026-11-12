@@ -134,11 +134,23 @@ RECORDER_STARTUP_WAIT = 2.0
 # helpers
 # --------------------------------------------------------------------------
 
+def _quiet_kwargs() -> dict:
+    """1.5.3: a helper program must never touch the user's window: no input
+    from it (a key the user types belongs to this tool), output and errors
+    captured (they go into the report, never onto the screen), and on Windows
+    no console of its own (CREATE_NO_WINDOW), so nothing flashes and nothing
+    can write into this window."""
+    kw = {"stdin": subprocess.DEVNULL, "capture_output": True}
+    if os.name == "nt":
+        kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    return kw
+
+
 def run(cmd: list, timeout: int = 40) -> str:
     """Run a command, return its output, never raise."""
     try:
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, check=False
+            cmd, text=True, timeout=timeout, check=False, errors="replace", **_quiet_kwargs()
         )
     except FileNotFoundError:
         return f"[not available on this system: {cmd[0]}]"
@@ -1008,7 +1020,8 @@ def collect_windows() -> None:
         return
 
     def psrun(script: str) -> str:
-        return run([ps, "-NoProfile", "-NonInteractive", "-Command", script], timeout=60)
+        return run([ps, "-NoProfile", "-NonInteractive", "-NoLogo", "-Command",
+                "$ProgressPreference = 'SilentlyContinue'; " + script], timeout=60)
 
     section("Windows: X-Rite USB devices", psrun(
         "Get-PnpDevice | Where-Object { ($_.InstanceId -like '*VID_0971*' -or $_.InstanceId -like '*VID_0765*') } | "
@@ -1239,7 +1252,7 @@ def quick_summary() -> str:
         elif system == "Windows":
             ps = shutil.which("powershell") or shutil.which("pwsh")
             if ps:
-                out = run([ps, "-NoProfile", "-Command",
+                out = run([ps, "-NoProfile", "-NonInteractive", "-NoLogo", "-Command",
                            "Get-PnpDevice | Where-Object { ($_.InstanceId -like '*VID_0971*' -or $_.InstanceId -like '*VID_0765*') } "
                            "| ForEach-Object { $_.FriendlyName + ' :: ' + $_.InstanceId + ' :: ' + $_.Present }"])
                 found, present = windows_summary_lines(out)
@@ -1504,7 +1517,7 @@ def macos_guided_recording(readiness: dict) -> None:
 
     def keepalive():
         while not stop_keepalive.wait(50):
-            subprocess.call([sudo, "-n", "true"], stdout=subprocess.DEVNULL,
+            subprocess.call([sudo, "-n", "true"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL)
 
     threading.Thread(target=keepalive, daemon=True).start()
@@ -1525,7 +1538,7 @@ def macos_guided_recording(readiness: dict) -> None:
         for iface in interfaces:
             if not _iface_is_up(ifconfig, iface):
                 rc = subprocess.call([sudo, "-n", ifconfig, iface, "up"],
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 if rc != 0:
                     print(f"  - {iface}: could not be switched on, skipping it")
                     continue
@@ -1581,7 +1594,8 @@ def macos_guided_recording(readiness: dict) -> None:
             except subprocess.TimeoutExpired:
                 subprocess.call([sudo, "-n", "pkill", "-TERM", "-f",
                                  f"{tcpdump} -U -i {iface} -w {files[iface]}"],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
                 try:
                     proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
@@ -1594,7 +1608,7 @@ def macos_guided_recording(readiness: dict) -> None:
         still_up = []
         for iface in brought_up:
             subprocess.call([sudo, "-n", ifconfig, iface, "down"],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             if _iface_is_up(ifconfig, iface):
                 still_up.append(iface)
         stop_keepalive.set()
@@ -3941,7 +3955,8 @@ def _powershell(script: str) -> str:
     ps = shutil.which("powershell") or shutil.which("pwsh")
     if not ps:
         return "[PowerShell not found]"
-    return run([ps, "-NoProfile", "-NonInteractive", "-Command", script], timeout=60)
+    return run([ps, "-NoProfile", "-NonInteractive", "-NoLogo", "-Command",
+                "$ProgressPreference = 'SilentlyContinue'; " + script], timeout=60)
 
 
 def windows_program_versions() -> dict:
@@ -4455,7 +4470,7 @@ class TcpdumpRecorder(_ProcRecorder):
 
         def keepalive():
             while not self.stop_keepalive.wait(50):
-                subprocess.call([self.sudo, "-n", "true"], stdout=subprocess.DEVNULL,
+                subprocess.call([self.sudo, "-n", "true"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL)
 
         threading.Thread(target=keepalive, daemon=True).start()
@@ -4463,7 +4478,7 @@ class TcpdumpRecorder(_ProcRecorder):
             for iface in self.interfaces:
                 if not _iface_is_up(self.ifconfig, iface):
                     if subprocess.call([self.sudo, "-n", self.ifconfig, iface, "up"],
-                                       stdout=subprocess.DEVNULL,
+                                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                        stderr=subprocess.DEVNULL) == 0:
                         self.brought_up.append(iface)
         return True
@@ -4471,7 +4486,7 @@ class TcpdumpRecorder(_ProcRecorder):
     def session_end(self) -> None:
         for iface in self.brought_up:
             subprocess.call([self.sudo, "-n", self.ifconfig, iface, "down"],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if self.brought_up:
             still = [i for i in self.brought_up if _iface_is_up(self.ifconfig, i)]
             if still:
@@ -5227,11 +5242,16 @@ def main(argv: list | None = None) -> int:
 
     ids = detected_ids(summary)
     instrument_mode = args.instrument
-    has_handheld = any(k in PROFILE_IDS for k in ids)
+    # 1.5.3: where Windows says what is plugged in (present_ids is a list),
+    # only that counts. Found on a real Windows PC: with an instrument Windows
+    # only remembered, the tool said "None of them is plugged in right now"
+    # and then "This computer has a handheld instrument plugged in".
+    present = _DETECTION.get("present_ids")
+    here = [k for k in ids if present is None or k in present]
+    has_handheld = any(k in PROFILE_IDS for k in here)
     if not instrument_mode and has_handheld and (XRITE_VID, 0x2004) not in ids \
             and not args.skip_annotate and not args.annotate:
-        present = _DETECTION.get("present_ids")
-        shown = [k for k in ids if k in PROFILE_IDS and (not present or k in present)]
+        shown = [k for k in here if k in PROFILE_IDS]
         names = ", ".join(dict.fromkeys(PROFILE_NAMES[PROFILE_IDS[k]] for k in shown))
         print("-" * 68)
         print(f"  This computer has a handheld instrument plugged in ({names}),")
