@@ -76,22 +76,27 @@ so you can read everything first.
 Downloaded files aren't marked as runnable, so **double-clicking may appear to
 do nothing at all**. Two ways round it:
 
-**In Finder:** **right-click** the file, choose **Open**, then **Open** again in
-the dialog that appears. (Right-click and Open is what gets past the warning;
-double-click alone won't.) If macOS still refuses, go to **System Settings >
-Privacy & Security**, scroll down, and click **Open Anyway**, then open it
-again.
-
-**Or in Terminal** (this is the reliable route):
+**In Terminal** (the reliable route):
 
 ```bash
 cd ~/Downloads
 chmod +x chromiq-io-probe-macos
+xattr -d com.apple.quarantine chromiq-io-probe-macos
 ./chromiq-io-probe-macos
 ```
 
-`chmod +x` simply marks the file as runnable (downloads never are by default).
-The second line starts it.
+`chmod +x` marks the file as runnable (downloads never are). The `xattr` line
+removes the "downloaded from the internet" mark, which is what makes macOS
+refuse an unsigned program (if it says "No such xattr", the mark was not
+there; carry on). The last line starts it.
+
+**In Finder:** double-click the file. Because the tool is not signed by an
+Apple-registered developer, current macOS (15 and newer) refuses it the first
+time. Then open **System Settings > Privacy & Security**, scroll down, click
+**Open Anyway**, and confirm with **Open** when the warning appears again
+(Apple's own steps: support.apple.com/102445). On older macOS, right-click the
+file, choose **Open**, then **Open** again. If the file is not runnable yet,
+use the Terminal route above.
 
 ### Linux
 

@@ -350,20 +350,23 @@ jobs:
 
             ### Running it on macOS or Linux
 
-            Downloaded files aren't marked as runnable, so a plain double-click
-            may do nothing. On **macOS** try Finder first: **right-click** the
-            file, choose **Open**, then **Open** again in the dialog. If that
-            doesn't work, or you're on **Linux**, open Terminal and run:
+            Downloaded files aren't marked as runnable, and macOS refuses
+            unsigned programs. The reliable way: open Terminal and run
 
             ```bash
             cd ~/Downloads
             chmod +x chromiq-io-probe-macos      # or chromiq-io-probe-linux
+            xattr -d com.apple.quarantine chromiq-io-probe-macos   # macOS only
             ./chromiq-io-probe-macos
             ```
 
-            `chmod +x` just marks the file as runnable; the second line starts
-            it. On **Windows** simply double-click the `.exe` and choose
-            **More info**, then **Run anyway**.
+            `chmod +x` marks the file as runnable; the `xattr` line removes
+            the "downloaded from the internet" mark that makes macOS refuse
+            it; the last line starts it. In Finder on macOS 15 and newer:
+            double-click once, then **System Settings > Privacy & Security >
+            Open Anyway**, and **Open**. On **Windows** simply double-click the
+            `.exe` and choose **More info**, then **Run anyway** (right-click,
+            **Run as administrator** for a recording).
 
             These builds are **not code-signed** (that needs a paid
             certificate), so your system will warn you once. That's expected.

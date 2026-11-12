@@ -45,7 +45,10 @@ IF YOUR COMPUTER REFUSES TO OPEN IT
 
 That is normal for downloaded files and does not mean anything is wrong.
 
-   macOS  :  RIGHT-CLICK the file, choose "Open", then "Open" again.
+   macOS  :  Double-click it once. When macOS refuses, open System
+             Settings > Privacy & Security, scroll down, click "Open
+             Anyway", and confirm with "Open". (On macOS 14 and older:
+             right-click the file, choose "Open", then "Open" again.)
    Windows:  Click "More info", then "Run anyway".
    Linux  :  Open a terminal here and run:  bash Start-Linux.sh
 
