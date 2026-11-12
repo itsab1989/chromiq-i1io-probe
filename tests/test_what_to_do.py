@@ -284,6 +284,24 @@ class TheWholeRun(unittest.TestCase):
         self.assertIn("3: nothing more, just the report", report)
 
 
+class TheDetectionFitsEightyColumns(unittest.TestCase):
+    """Found in the VM's 80-column window: two detection lines wrapped."""
+
+    def test_remembered_and_nothing(self):
+        probe._DETECTION.clear()
+        self.addCleanup(probe._DETECTION.clear)
+        out = ("X-Rite i1 Studio :: USB\\VID_0765&PID_6008\\7&1A2B3C4D&0&2 :: False\n"
+               "i1 Pro :: USB\\VID_0971&PID_2000\\6&2B3C4D5E&0&1 :: True")
+        for text in (out, out.replace("True", "False"), ""):
+            with mock.patch.object(probe.platform, "system", lambda: "Windows"), \
+                    mock.patch.object(probe.shutil, "which", lambda n: "powershell"), \
+                    mock.patch.object(probe, "run", lambda *a, **k: text):
+                summary = probe.quick_summary()
+            for line in ("  " + summary.replace("\n", "\n  ")).splitlines():
+                self.assertLessEqual(len(line), 79, line)
+        self.assertIn("Step 3 can look again", summary)
+
+
 class TheLaunchersSayTheNewName(unittest.TestCase):
 
     def test_banners(self):

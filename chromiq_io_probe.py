@@ -474,7 +474,7 @@ def format_detection(result: dict) -> str:
     lines = []
     if not devices:
         lines.append("NO X-RITE DEVICES SEEN.")
-        lines.append("Please check the table is powered on and plugged in, then run again.")
+        lines.append("Is it switched on and plugged in? Step 3 can look again.")
     else:
         lines.append("X-Rite devices detected:")
         for dev in devices:
@@ -1267,12 +1267,12 @@ def quick_summary() -> str:
 
     if not found:
         return ("NO X-RITE DEVICES SEEN.\n"
-                "Please check the table is powered on and plugged in, then run again.")
+                "Is it switched on and plugged in? Step 3 can look again.")
     text = "X-Rite devices detected:\n  " + "\n  ".join(found)
     if system == "Windows" and "present_ids" in _DETECTION and not _DETECTION["present_ids"] \
             and any("(not plugged in now" in f for f in found):
-        text += ("\nNone of them is plugged in right now. Please plug in the instrument "
-                 "and run the tool again.")
+        # 1.5.3: short enough for an 80-column window; step 3 can look again.
+        text += "\nNone of them is plugged in right now. Step 3 can look again."
     return text
 
 

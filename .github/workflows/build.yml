@@ -182,24 +182,67 @@ jobs:
 
             ### What's new in 1.5.3
 
-            Help with the step where both users so far got stuck. Still
-            untested with a real recording; the installer route was tested
-            with stand-ins, not on a real Windows PC.
+            Help with the step where both users so far got stuck, and one
+            plain question instead of guessing what you want to do. Still
+            untested with a real instrument and a real recording.
 
+            - **"What would you like to do?"** After looking for your
+              instruments the tool shows what is plugged in right now (with
+              its driver on Windows) and asks: 1 record an i1iO table, 2
+              record a handheld instrument, 3 just make the report, or `a` to
+              look again after plugging something in. The suggestion comes
+              only from what is plugged in now, so Enter is usually right.
+              `--io` and `--i1pro` choose without asking.
             - **USBPcap missing: the tool can fetch and start its official
               installer, only after a yes.** It first says what USBPcap is
               (free, open-source, by its own author, not by us), that it
               installs a system driver, that one user reported a blue screen
               naming its driver on Windows 11 25H2 (USBPcap issue #146), and
               how to remove it. The download (`USBPcapSetup-1.5.4.0.exe` from
-              USBPcap's GitHub release) is checked against a SHA-256
-              fingerprint written into the tool and deleted, never started, on
-              any difference. A second yes starts the installer the normal,
-              visible way, with Windows' own permission question. The tool
-              never restarts the computer.
-            - **Not administrator:** an offer, once, to start the tool again as
+              USBPcap's GitHub release) goes into a new private folder and is
+              checked against a SHA-256 fingerprint written into the tool,
+              after the download and again just before the start; on any
+              difference it is deleted and never started. A second yes starts
+              the installer the normal, visible way, with Windows' own
+              permission question. The tool never restarts the computer.
+            - **Not administrator:** one offer to start the tool again as
               administrator through Windows' own question.
             - Every "no" or failure leads to the manual steps, as in 1.5.2.
+            - Helper programs never read your keys or write into the window;
+              a device Windows only remembers is no longer offered as
+              plugged in; the "remembered" note no longer wraps at 80 columns.
+            - An independent review before the release found, and this
+              release fixes: a half-written installer could stay behind; the
+              install steps were repeated after a successful install; Ctrl-C
+              at the question took the suggestion instead of stopping; the
+              installer was saved next to the tool (now a private folder).
+
+            ### What was tested for real, and what was not
+
+            For the first time the Windows exe was driven on a real Windows:
+            Windows 11 Home 25H2 on ARM in a virtual machine (the x64 exe runs
+            emulated), German, by an automated test (`tools/vm_test/`) plus
+            two steps where Windows' permission window had to be answered:
+
+            - double-click start; the window stays open at every ending
+              (normal end, "just the report", choices 1 and 2, an error,
+              a real Ctrl-C while it looks for devices) and closes on Enter; run from a console with output
+              redirected it never waits;
+            - the new question with nothing plugged in, "look again",
+              choices 1, 2 and 3; an 80-column window; no garbled characters;
+            - not administrator: the explanation before the steps, the offer,
+              the real Windows permission window, and the copy started as
+              administrator running;
+            - USBPcap missing: the explanation, the real download from GitHub
+              inside the virtual machine, a deliberately wrong fingerprint
+              refused, the real permission window for USBPcap's installer
+              (verified publisher "Tomasz Moń"), its licence page, and, after
+              it was cancelled, the tool saying plainly that USBPcap is still
+              not installed and cleaning up its download folder.
+
+            Not tested: a real instrument, a real recording, USBPcap's driver
+            actually installed (there is no USBPcap driver for Windows on ARM,
+            so it was not installed), and an x64 Windows PC.
 
             ### What's new in 1.5.2
 

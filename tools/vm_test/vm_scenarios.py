@@ -156,7 +156,7 @@ if ($f) {{ Upload $f.FullName ("report-" + (Split-Path "{folder}" -Leaf) + ".txt
         return not self.only or any(key.startswith(o) for o in self.only)
 
     # ---- a bounded dialogue with the tool ---------------------------------
-    def dialogue(self, key, folder, answers, limit=600, stall=90):
+    def dialogue(self, key, folder, answers, limit=600, stall=90, stop_at=None):
         """Answer the tool's prompts until it shows the wait line or ends.
 
         answers: [(text on the last screen lines, what to type)], first match
@@ -181,6 +181,8 @@ if ($f) {{ Upload $f.FullName ("report-" + (Split-Path "{folder}" -Leaf) + ".txt
             tail = "\n".join(lines[-3:])
             if WAIT_LINE in (lines[-1] if lines else ""):
                 return "WAITING", "\n".join(seen)
+            if stop_at and stop_at in tail and lines[-1].rstrip().endswith((":", "?")):
+                return "AT", "\n".join(seen)
             for text, typed in answers:
                 # answer only a prompt with nothing typed after it yet
                 ready = bool(lines) and lines[-1].rstrip().endswith((":", ">", "?"))

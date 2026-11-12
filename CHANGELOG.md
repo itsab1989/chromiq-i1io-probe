@@ -2,8 +2,20 @@
 
 ## v1.5.3
 
-Help with the step where both users so far got stuck. Still untested with a
-real recording, and the installer route was tested with stand-ins only.
+Help with the step where both users so far got stuck, and one plain
+question instead of guessing what the user wants. Still untested with a real
+instrument and a real recording. For the first time the Windows exe was
+driven on a real Windows (11 on ARM, x64 emulated, in a virtual machine):
+see the release notes for exactly what was and was not tested there.
+
+- **"What would you like to do?"** After the detection the tool shows what
+  is plugged in right now (on Windows with its driver) and asks: 1 record an
+  i1iO table, 2 record a handheld instrument, 3 nothing more, just the
+  report, or `a` to look again. The suggestion comes only from what is
+  plugged in now (a remembered i1iO no longer hides a plugged-in handheld
+  instrument); with nothing plugged in it says so. `--io` is new; `--io`,
+  `--i1pro`, `--annotate` and `--skip-annotate` choose without asking. The
+  tool is now called "the ChromIQ X-Rite instrument probe" everywhere.
 
 - **USBPcap missing: the tool can fetch and start its installer, only after
   a yes.** Before asking, it says what USBPcap is (free, open-source, by its
