@@ -4950,6 +4950,9 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
                                      "and starts working after Windows has been restarted.")
                 _CAUSES[:] = ["usbpcap_restart" if c == "usbpcap_missing" else c
                               for c in _CAUSES]
+                # The closing words repeat outcome["help"] as the last thing on
+                # screen: "HOW TO INSTALL IT" must not be repeated once it is.
+                outcome["help"] = [t for t in outcome["help"] if t != USBPCAP_INSTALL_TEXT]
             section("Instrument recording session",
                     "[USBPcap is not installed]\n" + windows_checks_text(checks)
                     + "\n\nThe offer to fetch and start USBPcap's installer: " + offer
@@ -5659,10 +5662,19 @@ def fetch_usbpcap_installer(folder: str, fetch=None, info=None) -> dict:
             "does not match), so it was thrown away and NOT started. That should "
             "not happen; please tell us. The steps above work without this tool.")}
     path = os.path.join(folder, info["name"])
+    opened = False
     try:
         with open(path, "wb") as fh:
+            opened = True
             fh.write(blob)
     except OSError as exc:
+        # A half-written installer (a full disk, say) must not stay behind
+        # looking like the real one. Only a file this call opened is removed.
+        if opened:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
         return {"ok": False, "kind": "download failed", "path": None, "message": (
             f"The file could not be saved in {folder} ({exc}). The steps above "
             "work without this tool.")}

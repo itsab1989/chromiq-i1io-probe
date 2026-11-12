@@ -91,6 +91,35 @@ class Fetch(unittest.TestCase):
         self.assertIn("without internet", got["message"])
         self.assertEqual(os.listdir(self.tmp.name), [])
 
+    def test_a_half_written_file_is_removed(self):
+        real_open = open
+
+        class Full:
+            def __init__(self, fh):
+                self.fh = fh
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self.fh.close()
+                return False
+
+            def write(self, data):
+                self.fh.write(data[:10])
+                raise OSError(28, "No space left on device")
+
+        def fake_open(path, mode="r", *a, **k):
+            fh = real_open(path, mode, *a, **k)
+            return Full(fh) if "w" in mode else fh
+
+        with mock.patch("builtins.open", fake_open):
+            got = probe.fetch_usbpcap_installer(self.tmp.name, fetch=lambda u, n: FAKE,
+                                                info=FAKE_INFO)
+        self.assertFalse(got["ok"])
+        self.assertIn("could not be saved", got["message"])
+        self.assertEqual(os.listdir(self.tmp.name), [])
+
     def test_the_real_downloader_is_plain_urllib_and_capped(self):
         seen = {}
 
@@ -329,6 +358,15 @@ class InTheSession(unittest.TestCase):
         self.assertIn("1. Restart Windows: USBPcap is installed now", flat)
         self.assertIn("Run as administrator", flat)
         self.assertNotIn("Install USBPcap:", flat)
+
+    def test_after_an_install_the_end_does_not_say_install_it(self):
+        outcome, _s, _o = self.session(False, False, [""], offer_result="installed")
+        end = "\n".join(probe.closing_words(outcome))
+        self.assertNotIn("HOW TO INSTALL IT", end)
+        self.assertIn("now installed", end)
+        self.assertIn("Run as administrator", end)
+        outcome, _s, _o = self.session(False, False, [""], offer_result="declined")
+        self.assertIn("HOW TO INSTALL IT", "\n".join(probe.closing_words(outcome)))
 
     def test_not_offered_on_windows_on_arm(self):
         _o, _s, offers = self.session(False, False, [""], arm=True)
