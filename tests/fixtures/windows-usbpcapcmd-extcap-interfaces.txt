@@ -1,0 +1,3 @@
+extcap {version=1.5.4.0}{help=https://desowin.org/usbpcap/}
+interface {value=\\.\USBPcap1}{display=USBPcap1}
+interface {value=\\.\USBPcap2}{display=USBPcap2}

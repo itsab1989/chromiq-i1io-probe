@@ -1,0 +1,9 @@
+arg {number=0}{call=--snaplen}{display=Snapshot length}{tooltip=Snapshot length}{type=integer}{range=0,65535}{default=65535}
+arg {number=1}{call=--bufferlen}{display=Capture buffer length}{tooltip=Internal capture library buffer length}{type=integer}{range=0,134217728}{default=1048576}
+arg {number=2}{call=--capture-from-all-devices}{display=Capture from all devices connected}{tooltip=Capture from all devices connected despite other options}{type=boolflag}{default=true}
+arg {number=3}{call=--capture-from-new-devices}{display=Capture from newly connected devices}{tooltip=Automatically start capture on all newly connected devices}{type=boolflag}{default=true}
+arg {number=99}{call=--devices}{display=Attached USB Devices}{tooltip=Select individual devices to capture from}{type=multicheck}
+value {arg=99}{value=1}{display=[1] USB Composite Device}{enabled=true}
+value {arg=99}{value=2}{display=USB Input Device}{enabled=false}{parent=1}
+value {arg=99}{value=3}{display=[3] X-Rite i1Pro 2}{enabled=true}
+arg {number=4}{call=--inject-descriptors}{display=Inject already connected devices descriptors into capture data}{type=boolflag}{default=true}

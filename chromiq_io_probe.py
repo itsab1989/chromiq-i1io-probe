@@ -3925,7 +3925,7 @@ def windows_checks_text(c: dict) -> str:
         found = [h for h in c["hubs"] if h["instrument"]]
         if found:
             for h in found:
-                names = ", ".join(f"[{a}] {n}" for a, n in h["instrument"])
+                names = ", ".join(n for _a, n in h["instrument"])
                 row("Instrument on:", "ok", f"{h['display']} ({names})")
         else:
             row("Instrument on:", "unknown",
@@ -3995,6 +3995,8 @@ class _ProcRecorder:
                 live.append(iface)
                 continue
             err = (proc.stderr.read() if proc.stderr else b"").decode("utf-8", "replace")
+            if proc.stderr:
+                proc.stderr.close()
             self.notes.append(f"{iface}: stopped at once: " +
                               (" ".join(err.split())[:200] or f"exit code {proc.returncode}"))
             retry = self.retry_command(iface, self.files[iface], err)
@@ -4308,9 +4310,14 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
             print("  Do the step in the program now. Press Enter here as soon as you have")
             print("  finished (or type  q  to stop the whole session after this step).")
             stop_after = False
+            interrupted = None
             try:
                 done = _session_ask("  > ").lower()
                 stop_after = done.startswith("q")
+            except _StopSession as exc:
+                interrupted = f"ended early ({exc}) during step {number}"
+            except _Hangup:
+                interrupted = f"ended early (window closed or stop signal) during step {number}"
             finally:
                 entry["end_epoch"] = time.time()
                 if recorder is not None and recording:
@@ -4337,6 +4344,12 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                     print("  Recording stopped, but no instrument traffic was found in this")
                     print("  step. Was the program talking to the instrument? You can")
                     print("  record the step again.")
+            if interrupted:
+                # Keep what was recorded, ask nothing more, end the session.
+                entry["interrupted"] = True
+                _write_session(session, folder)
+                session["ended"] = interrupted
+                break
             entry["notes"] = _session_ask(
                 "\n  In one line: what did you do, and what did the program show?\n"
                 "  (for example: \"strip A, accepted\", or \"refused: too fast\")\n  > ")

@@ -1,0 +1,2 @@
+value {arg=99}{value=1}{display=[1] USB Composite Device}{enabled=true}
+value {arg=99}{value=4}{display=[4] USB Mass Storage Device}{enabled=true}

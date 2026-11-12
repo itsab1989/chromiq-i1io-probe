@@ -1,0 +1,5 @@
+Microsoft Edge :: 130.0.2849.80
+i1Profiler :: 3.8.6.16077
+Wireshark 4.4.1 x64 :: 4.4.1
+USBPcap 1.5.4.0 :: 1.5.4.0
+ccStudio :: 1.5.0
