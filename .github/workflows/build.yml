@@ -196,7 +196,9 @@ jobs:
               the instrument, which necessarily includes the instrument's serial
               number and calibration data (the tool says so first). Only the
               instrument's own traffic goes into the folder you would send;
-              nothing is uploaded, you send it yourself if you want to.
+              nothing is uploaded, you send it yourself if you want to: in
+              the forum thread where you heard about the tool, as a new
+              issue, or in a private message on the forum.
             - **Windows checks first (read only):** Windows version, USBPcap,
               administrator rights, which USB port group the instrument is on,
               installed programs and versions. Facts, not obstacles:

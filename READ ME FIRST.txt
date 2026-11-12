@@ -22,7 +22,7 @@ THE SHORT VERSION
    at the end - you may skip them.
 
 4. It saves a text file called  chromiq-io-probe-<date>.txt
-   Have a look at it, then attach it to:
+   Have a look at it, then (for the i1iO) attach it to:
 
        https://github.com/itsab1989/ChromIQ/issues/129
 
@@ -63,6 +63,14 @@ instrument's serial number and calibration data, because the program
 reads them every time; the tool says so first, keeps only the
 instrument's traffic in the folder you would send, and uploads
 nothing. Nothing is promised: it helps us understand, that is all.
+
+To send the session folder (as a zip, with the report): attach it in
+the forum thread where you heard about this tool, or open a new issue
+at  https://github.com/itsab1989/ChromIQ/issues/new  and attach it
+there. The zip contains your instrument's serial number and its
+factory calibration data; if you would rather not post that in
+public, send it in a private message to itsab1989 on the forum.
+Issue #129 is for the i1iO table only.
 README.md has the details.
 
 

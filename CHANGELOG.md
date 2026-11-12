@@ -35,6 +35,10 @@
   in the session folder; the full recordings go into a separate folder ending
   in `-FULL-do-not-send`, which it offers to delete. Chip IDs are hashed and
   EEPROM contents are not printed in the analysis. Nothing is uploaded.
+  When it is time to send, the tool says again that the zip holds the
+  instrument's serial number and calibration data, and offers three ways:
+  the forum thread where you heard about the tool, a new GitHub issue, or a
+  private message on the forum. (Issue #129 stays the i1iO's.)
 - **`--analyze` understands Windows (USBPcap) and Linux (usbmon) recordings
   too**, not only macOS ones, and session folders. For the i1Pro, i1Pro 2,
   i1Pro 3 and ColorMunki / i1Studio it decodes the commands that ArgyllCMS

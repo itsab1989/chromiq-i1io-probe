@@ -125,7 +125,8 @@ is already useful on its own.
 
 It then saves a plain-text file such as `chromiq-io-probe-20261111-143052.txt`.
 **Open it, have a look, then attach it to
-[issue #129](https://github.com/itsab1989/ChromIQ/issues/129).** That's it.
+[issue #129](https://github.com/itsab1989/ChromIQ/issues/129)** (for the i1iO;
+the handheld-instrument session says where its files go). That's it.
 
 ---
 
@@ -328,7 +329,13 @@ showed, and (for instruments with lights) one line about what the lights did.
   checks above, in `session.json`.
 - `analysis.txt`: the tool's own reading of the recordings (see `--analyze`).
 - **Nothing is uploaded, ever.** If you want to help, zip the session folder
-  yourself and attach it, with the report, to the issue the tool names.
+  yourself and send it, with the report. Remember that the zip contains your
+  instrument's serial number and its factory calibration data. Either attach
+  it in the forum thread where you heard about this tool, or open a
+  [new issue](https://github.com/itsab1989/ChromIQ/issues/new) and attach it
+  there. If you would rather not post your instrument's serial number in
+  public, send the zip in a private message to itsab1989 on the forum
+  instead. (Issue #129 is for the i1iO table only.)
 
 ### What we will do with it
 

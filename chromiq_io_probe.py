@@ -76,7 +76,8 @@ import time
 
 PROBE_VERSION = "1.5"
 
-ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/129"
+ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/129"   # the i1iO only
+NEW_ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/new"
 
 # X-Rite USB vendor ID, and the product IDs we have real evidence for.
 #
@@ -4495,6 +4496,16 @@ def finish_session(session: dict, folder: str) -> tuple:
     return lines, analysis
 
 
+HANDHELD_SEND_WAYS = f"""\
+  To send it, choose whichever suits you:
+    - attach it in the forum thread where you heard about this tool, or
+    - open a new issue at
+        {NEW_ISSUE_URL}
+      and attach it there.
+  If you would rather not post your instrument's serial number in public,
+  send the zip in a private message to itsab1989 on the forum instead."""
+
+
 def session_send_text(folder: str) -> str:
     return f"""\
   WHAT TO SEND (only if you want to)
@@ -4502,9 +4513,11 @@ def session_send_text(folder: str) -> str:
   everything we need: the instrument-only recordings, session.json (the
   steps and your notes) and analysis.txt (the tool's own reading of it).
   Make a zip file of that folder (Windows: right-click it, then "Send to",
-  then "Compressed (zipped) folder"; Mac: right-click, then "Compress")
-  and attach the zip, together with the report, to:
-      {ISSUE_URL}
+  then "Compressed (zipped) folder"; Mac: right-click, then "Compress").
+  Please add the report too (the chromiq-io-probe text file).
+  Remember: the zip contains your instrument's serial number and its
+  factory calibration data.
+{HANDHELD_SEND_WAYS}
   Do NOT send the folder ending in -FULL-do-not-send."""
 
 
@@ -4869,7 +4882,8 @@ def main() -> int:
 def finish_report(args, system: str, instrument: bool = False) -> int:
     body = [
         "ChromIQ X-Rite instrument probe report",
-        f"Generated for {ISSUE_URL}",
+        ("Made by the handheld-instrument session" if instrument
+         else f"Generated for {ISSUE_URL}"),
         f"Redaction: {'ON (serials hashed, paths stripped)' if REDACT else 'OFF, raw values included'}",
         "",
     ]
@@ -4903,8 +4917,15 @@ def finish_report(args, system: str, instrument: bool = False) -> int:
     print("  a look first: you can see exactly what is being shared, and you")
     print("  can delete anything you are not comfortable with.")
     print()
-    print("  Then attach it to:")
-    print(f"      {ISSUE_URL}")
+    if instrument:
+        print("  Send it together with the session folder, as described above.")
+        print("  In the report the serial numbers are scrambled; in the zip's")
+        print("  recordings they cannot be, as said above.")
+        print()
+        print(HANDHELD_SEND_WAYS)
+    else:
+        print("  Then attach it to:")
+        print(f"      {ISSUE_URL}")
     print()
     print(I1PROFILER_WARNING)
     if system == "Darwin" and _READINESS.get("sip") in ("off", "partly"):

@@ -702,6 +702,20 @@ class TextRules15(unittest.TestCase):
             self.assertIn(key, probe.PROFILE_PURPOSE)
             self.assertTrue(probe.steps_for(key))
 
+    def test_handheld_send_text_never_points_to_the_io_issue(self):
+        text = probe.session_send_text("/x/instrument-session-1")
+        self.assertNotIn("issues/129", text)
+        self.assertIn("https://github.com/itsab1989/ChromIQ/issues/new", text)
+        self.assertIn("forum thread where you heard about this tool", text)
+        self.assertIn("private message to itsab1989 on the forum", text)
+        self.assertIn("serial number and its\n  factory calibration data", text)
+        self.assertIn("-FULL-do-not-send", text)
+        with open(os.path.join(ROOT, "chromiq_io_probe.py"), encoding="utf-8") as fh:
+            src = fh.read()
+        session_part = src[src.index("# 1.5: guided recording session"):
+                           src.index("# main\n")]
+        self.assertNotRegex(session_part, r"(?<!NEW_)ISSUE_URL")
+
     def test_no_promise_and_privacy_said_up_front(self):
         self.assertIn("We cannot promise", probe.PROMISE_TEXT)
         text = probe.privacy_text("i1pro2")
