@@ -3554,7 +3554,8 @@ PROFILE_PURPOSE = {
   sensor on and where the position data arrives, how its "dual scan"
   works, and how it drives the coloured lights on the instrument.""",
     "i1pro": """\
-  The original i1Pro has no ruler sensor and no coloured lights. We would
+  As far as the open driver knows, the original i1Pro has no ruler
+  sensor and no coloured indicator lights. We would
   like to learn how the vendor program reads a strip so reliably: how
   many readings it takes per second, with which settings, how it reacts
   to a fast or a slow swipe, and what it does when a scan fails.""",
@@ -4072,14 +4073,20 @@ class UsbPcapRecorder(_ProcRecorder):
         super().__init__(interfaces, outdir)
         self.exe = exe
 
+    def _base(self) -> list:
+        # A ".py" stand-in (the tests' fake USBPcapCMD) runs with this Python.
+        if self.exe.lower().endswith(".py"):
+            return [sys.executable, self.exe]
+        return [self.exe]
+
     def command(self, iface, path):
         # -A: every device on this root hub (the X-Rite-only copy is made
         # afterwards); --inject-descriptors: put the description of the
         # devices already connected at the start of the file.
-        return [self.exe, "-d", iface, "-o", path, "-A", "--inject-descriptors"]
+        return self._base() + ["-d", iface, "-o", path, "-A", "--inject-descriptors"]
 
     def retry_command(self, iface, path, err):
-        return [self.exe, "-d", iface, "-o", path, "-A"]
+        return self._base() + ["-d", iface, "-o", path, "-A"]
 
     def iface_label(self, iface):
         return str(iface).replace("\\\\.\\", "").replace("\\", "").replace(".", "") or "USBPcap"

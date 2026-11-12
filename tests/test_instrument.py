@@ -4,8 +4,9 @@
 
 Every recording here is SYNTHETIC (tests/synth.py), built from the request
 formats ArgyllCMS documents. Nothing was recorded from a real instrument.
-The session tests put a FAKE USBPcapCMD (and fake sudo / tcpdump) first on
-PATH; nothing is captured, nothing runs as administrator.
+The session tests use a FAKE USBPcapCMD (a small Python script) and, for
+Linux, fake sudo / tcpdump on PATH; nothing is captured, nothing runs as
+administrator.
 """
 
 import io
@@ -385,25 +386,40 @@ class WindowsTests(unittest.TestCase):
 # the guided session, with a fake USBPcapCMD
 # --------------------------------------------------------------------------
 
-FAKE_USBPCAPCMD = """#!/bin/bash
-echo "usbpcapcmd $*" >> "$FAKE_LOG"
-if [ -n "$FAKE_FAIL" ]; then echo "error: access denied" >&2; exit 1; fi
-if [ -n "$FAKE_REJECT_INJECT" ]; then
-  for a in "$@"; do [ "$a" = "--inject-descriptors" ] && { echo "unknown option" >&2; exit 2; }; done
-fi
-while [ $# -gt 0 ]; do
-  case "$1" in -d) IF="$2"; shift;; -o) OUT="$2"; shift;; esac; shift
-done
-for f in "$FAKE_PCAPS"/*.pcap; do
-  key=$(basename "$f" .pcap)
-  case "$OUT" in *"-$key-take"*) cat "$f" > "$OUT";; esac
-done
-trap 'echo "usbpcapcmd stopped $(basename "$OUT")" >> "$FAKE_LOG"; exit 0' TERM
-while true; do sleep 0.05; done
+FAKE_USBPCAPCMD = r"""
+import glob, os, signal, sys, time
+log = os.environ["FAKE_LOG"]
+args = sys.argv[1:]
+with open(log, "a") as fh:
+    fh.write("usbpcapcmd " + " ".join(args) + "\n")
+if os.environ.get("FAKE_FAIL"):
+    sys.stderr.write("error: access denied\n")
+    sys.exit(1)
+if os.environ.get("FAKE_REJECT_INJECT") and "--inject-descriptors" in args:
+    sys.stderr.write("unknown option\n")
+    sys.exit(2)
+out = args[args.index("-o") + 1]
+for f in glob.glob(os.path.join(os.environ["FAKE_PCAPS"], "*.pcap")):
+    key = os.path.basename(f)[:-5]
+    if "-" + key + "-take" in out:
+        with open(f, "rb") as src, open(out, "wb") as dst:
+            dst.write(src.read())
+
+
+def stop(*_args):
+    with open(log, "a") as fh:
+        fh.write("usbpcapcmd stopped " + os.path.basename(out) + "\n")
+    sys.exit(0)
+
+
+for name in ("SIGTERM", "SIGBREAK"):
+    if hasattr(signal, name):
+        signal.signal(getattr(signal, name), stop)
+while True:
+    time.sleep(0.05)
 """
 
 
-@unittest.skipIf(os.name == "nt", "the fake tools are bash scripts")
 class SessionTests(TempDirCase):
 
     def setUp(self):
@@ -414,10 +430,11 @@ class SessionTests(TempDirCase):
         for d in (self.bin, self.pcaps, self.out):
             os.mkdir(d)
         self.log = os.path.join(self.dir, "fake.log")
-        self.exe = os.path.join(self.bin, "USBPcapCMD")
+        # A Python stand-in, so the same test runs on Windows, where the
+        # recorder is stopped with CTRL_BREAK, and elsewhere (SIGTERM).
+        self.exe = os.path.join(self.bin, "fake_usbpcapcmd.py")
         with open(self.exe, "w") as fh:
             fh.write(FAKE_USBPCAPCMD)
-        os.chmod(self.exe, os.stat(self.exe).st_mode | stat.S_IXUSR)
         patcher = mock.patch.dict(os.environ, {"FAKE_LOG": self.log, "FAKE_PCAPS": self.pcaps})
         patcher.start()
         self.addCleanup(patcher.stop)
