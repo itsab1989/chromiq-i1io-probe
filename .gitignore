@@ -4,6 +4,8 @@ chromiq-io-probe-*.txt
 # Capture artefacts (contain the user's raw USB traffic — never commit)
 *.pcap
 io-capture-*
+instrument-session-*
+smoke/
 tcpdump-*.log
 start-usb-capture.command
 capture-colormunki.command

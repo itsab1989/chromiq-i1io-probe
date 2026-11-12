@@ -464,7 +464,8 @@ class TextRules(unittest.TestCase):
         names = ["chromiq_io_probe.py", "README.md", "CHANGELOG.md", "READ ME FIRST.txt",
                  "Start-macOS.command", "Start-Linux.sh", "Start-Windows.bat",
                  os.path.join(".github", "workflows", "build.yml"),
-                 os.path.join("tests", "test_probe.py")]
+                 os.path.join("tests", "test_probe.py"),
+                 os.path.join("tests", "test_instrument.py"), os.path.join("tests", "synth.py")]
         for name in names:
             path = os.path.join(ROOT, name)
             if not os.path.exists(path):
@@ -474,7 +475,7 @@ class TextRules(unittest.TestCase):
             self.assertEqual(count, 0, f"{name} has {count} em dash(es)")
 
     def test_version(self):
-        self.assertEqual(probe.PROBE_VERSION, "1.4")
+        self.assertEqual(probe.PROBE_VERSION, "1.5")
 
 
 @unittest.skipUnless(platform.system() == "Darwin", "macOS only")

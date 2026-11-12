@@ -1,4 +1,4 @@
-# ChromIQ: i1iO information collector
+# ChromIQ: X-Rite instrument information collector
 
 <p align="center">
   <a href="https://ko-fi.com/itsab1989"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support ChromIQ on Ko-fi" height="36"></a>
@@ -6,10 +6,14 @@
   <sub>ChromIQ is free and always will be. If it's useful to you, a coffee is a kind way to say thanks. It is completely optional, and the app stays fully featured either way.</sub>
 </p>
 
-A tiny, **read-only** tool that collects information about an **X-Rite i1iO
-scanning table** and the computer it's connected to. It exists to help work out
-whether [ChromIQ](https://github.com/itsab1989/ChromIQ) could one day drive the
-i1iO directly. See [ChromIQ issue #129](https://github.com/itsab1989/ChromIQ/issues/129).
+A small, **read-only** tool that collects information about **X-Rite
+instruments** and the computer they are connected to, and can record what the
+vendor's own program says to them: the **i1iO** scanning table, the **i1Pro
+family** (original i1Pro, i1Pro 2, i1Pro 3 and 3 Plus) and the **ColorMunki
+Photo / Design** and **i1Studio**. It exists to help
+[ChromIQ](https://github.com/itsab1989/ChromIQ) understand these instruments
+better. For the i1iO see [ChromIQ issue #129](https://github.com/itsab1989/ChromIQ/issues/129);
+the handheld-instrument session is described [below](#the-handheld-instrument-session-new-in-15).
 
 It takes about **two minutes**, and you do **not** need to be technical.
 
@@ -23,7 +27,7 @@ It takes about **two minutes**, and you do **not** need to be technical.
 
 **Yes. This is the important part, so here it is plainly:**
 
-- It **never sends anything to the table.** Not one byte.
+- It **never sends anything to the table or the instrument.** Not one byte.
 - It **cannot move the arm.** It does not even open a connection to the device.
   (Opening it could take it away from X-Rite's own software, so the tool never
   does that.)
@@ -227,6 +231,116 @@ steps. Note that i1Profiler itself does not run on Linux.
 
 ---
 
+## The handheld-instrument session (new in 1.5)
+
+If the tool sees a handheld instrument (i1Pro, i1Pro 2, i1Pro 3, ColorMunki
+or i1Studio) and no i1iO table, it offers a guided recording session. You can
+also start it directly with `--i1pro` (or `--instrument`). It is optional.
+
+### What it is for
+
+The session records, step by step, the USB conversation between the program
+you normally measure with (i1Profiler, ccStudio / ColorChecker Studio, the
+ColorMunki or the i1Studio software) and your instrument. What we hope to
+learn depends on the instrument, and the tool says so before you start:
+
+- **i1Pro 2:** the instrument has a sensor that can read the striped
+  ("zebra") edge of its ruler. The free ArgyllCMS driver, which ChromIQ uses,
+  never reads it and finds the patches only from how the colour changes over
+  time. We would like to learn how i1Profiler switches the ruler sensor on and
+  where the position data arrives, how its dual scan works, and how it drives
+  the coloured lights on the instrument.
+- **i1Pro 3 / 3 Plus:** the open driver already reads its ruler, so this is a
+  comparison: what does the vendor program do differently (commands the open
+  driver never sends, the dual scan, the lights, the reaction to a fast or
+  uneven swipe, readings per patch, reading again by itself)?
+- **Original i1Pro, ColorMunki and i1Studio:** no ruler sensor. We would like
+  to learn how the vendor program reads strips so reliably: how many readings
+  per second and per patch, how it reacts to speed, what it does with a failed
+  strip, and (ColorMunki / i1Studio) what its light does and how it asks about
+  the dial positions.
+
+**Nothing is promised.** A recording helps us understand; whether an
+open-source measurement engine can ever use what we learn is a separate
+question, and the answer may be no.
+
+### The steps
+
+Each step is recorded into its own small file. You can skip or repeat any
+step, and stop at any time (type `q`, press Ctrl-C or close the window): the
+steps you finished are kept. About 15 minutes; you need the instrument, your
+measuring program and one printed test chart.
+
+1. Start the program, then leave it idle for about 10 seconds.
+2. Calibrate, as the program asks (white tile; ColorMunki / i1Studio: the
+   dial's calibration position).
+3. Scan one strip in single-scan mode at your normal speed.
+4. The same strip in dual-scan mode (i1Pro 2 and i1Pro 3 only).
+5. The same strip again, about twice as fast.
+6. The same strip again, slowly (about three times as long).
+7. Let one scan fail on purpose, for example by lifting the instrument
+   halfway (skip it if you would rather not).
+8. Read one single patch, if the program offers it.
+9. The same strip without the ruler, as a comparison, if the program allows
+   it (i1Pro 2 and i1Pro 3 only).
+
+After each step you type one line about what you did and what the program
+showed, and (for instruments with lights) one line about what the lights did.
+
+### What it needs
+
+- **Windows (the main route):** the free USBPcap, which comes with
+  [Wireshark](https://www.wireshark.org) (tick "Install USBPcap" in its
+  installer and restart Windows). The tool checks, without changing anything:
+  the Windows version, whether USBPcap is installed and running, whether the
+  window runs as administrator (USBPcap may need that: right-click the tool,
+  "Run as administrator"), which USB root hub the instrument is on, and which
+  measuring programs and versions are installed. It then starts and stops
+  USBPcap's own recorder (`USBPcapCMD`) for every step. If it cannot, it times
+  the steps while you record the whole session with Wireshark yourself, and
+  the analysis cuts that recording into the steps later.
+- **Version facts, checked and shown up front:** i1Profiler 3.8.7 removed
+  support for the i1Pro 2, so 3.8.6 or older is needed for it. X-Rite says the
+  i1Pro 2 driver is blocked on Windows 11 version 25H2 and newer; the tool
+  shows your version and lets you carry on if your program still finds the
+  instrument. There is no driver for Windows on ARM (including a Windows
+  virtual machine on an Apple Silicon Mac).
+- **Mac:** only with System Integrity Protection switched off, exactly as for
+  the i1iO (see above). The measuring programs run on Windows and on the Mac,
+  so the Windows route works with the same instrument.
+- **Linux:** `usbmon` and `tcpdump`; the vendor programs themselves do not run
+  on Linux.
+
+### What is collected, and what happens to it
+
+- The USB conversation between the program and the instrument. It
+  necessarily includes the instrument's **serial number and factory
+  calibration data**, because the program reads them from the instrument every
+  time it connects. They identify your instrument, not you. The tool says so
+  before you start.
+- While a step records, USBPcap also sees the other devices on the same USB
+  root hub, such as a keyboard. After each step the tool makes a copy that
+  holds **only the instrument's traffic** (its device address and nothing
+  else). Only that copy goes into the session folder (`instrument-session-<date>`);
+  the full recordings sit in a separate folder ending in `-FULL-do-not-send`,
+  and the tool offers to delete them at the end.
+- Your one-line notes for each step, the program name and version, and the
+  checks above, in `session.json`.
+- `analysis.txt`: the tool's own reading of the recordings (see `--analyze`).
+- **Nothing is uploaded, ever.** If you want to help, zip the session folder
+  yourself and attach it, with the report, to the issue the tool names.
+
+### What we will do with it
+
+Study how the vendor program drives the instrument: the commands, where the
+ruler or position data travels, how the dual scan and the lights are
+commanded, the measurement timing and sizes. The analyser decodes the commands
+that ArgyllCMS documents for each instrument family (its source is GPL; this
+tool is MIT, so no Argyll code is copied, only facts, with references to
+where Argyll documents them) and lists everything else raw.
+
+---
+
 ## What's in the report
 
 So you know exactly what you're sending:
@@ -277,11 +391,16 @@ Useful options:
 - `--annotate` (or `--record`): go straight to the recording step.
 - `--capture-setup` (macOS): say whether this Mac can record USB traffic, and
   how, then exit. Changes nothing.
-- `--analyze [FILE ...]`: read a USB recording (`.pcap` or `.pcapng`) and print
-  a plain verdict (did it record real traffic to the table, or only zeros?)
-  plus a command timeline, so you can check a recording before sending it. With
-  no path it finds the newest recording next to the tool. Reads only; sends
-  nothing to the device.
+- `--i1pro` (or `--instrument`): go straight to the handheld-instrument session.
+- `--analyze [FILE or FOLDER ...]`: read USB recordings (`.pcap` or `.pcapng`,
+  from Windows, macOS or Linux) or an `instrument-session-*` folder and print a
+  plain verdict (real traffic, or only zeros?) plus a command timeline. For an
+  i1Pro, i1Pro 2, i1Pro 3, ColorMunki or i1Studio it names every known command
+  with its arguments, lists unknown commands in full, counts every endpoint
+  that carries data, compares the steps (sizes, counts, readings per second,
+  fast against slow, the no-ruler control) and decodes the light commands.
+  With no path it finds the newest session or recording next to the tool.
+  Reads only; sends nothing to the device.
 
 The tests need nothing but Python: `python3 -m unittest discover -s tests -v`.
 

@@ -1,5 +1,8 @@
-ChromIQ - i1iO information collector
-====================================
+ChromIQ - X-Rite instrument information collector
+=================================================
+
+For the i1iO table, and since version 1.5 also for handheld
+instruments: i1Pro, i1Pro 2, i1Pro 3, ColorMunki and i1Studio.
 
 Thank you for helping!  This takes about two minutes.
 
@@ -42,6 +45,25 @@ That is normal for downloaded files and does not mean anything is wrong.
    macOS  :  RIGHT-CLICK the file, choose "Open", then "Open" again.
    Windows:  Click "More info", then "Run anyway".
    Linux  :  Open a terminal here and run:  bash Start-Linux.sh
+
+
+HANDHELD INSTRUMENT (i1Pro, i1Pro 2, i1Pro 3, ColorMunki, i1Studio)?
+---------------------------------------------------------------------
+
+Plug it in and run the tool as above. When it sees your instrument
+and no i1iO table, it offers a guided recording session: about 15
+minutes of short steps in the program you normally measure with
+(calibrate, scan one strip, scan it again faster and slower, and so
+on). Each step is recorded into its own small file; you can skip or
+repeat any step and stop at any time without losing finished steps.
+
+On Windows it needs the free USBPcap (comes with Wireshark; the tool
+tells you exactly how to install it). The recording contains your
+instrument's serial number and calibration data, because the program
+reads them every time; the tool says so first, keeps only the
+instrument's traffic in the folder you would send, and uploads
+nothing. Nothing is promised: it helps us understand, that is all.
+README.md has the details.
 
 
 IMPORTANT FOR i1Pro 2 AND i1iO 2 OWNERS

@@ -1,5 +1,57 @@
 # Changelog
 
+## v1.5.0
+
+- **New: a guided recording session for handheld instruments**: the
+  original i1Pro, the i1Pro 2, the i1Pro 3 / 3 Plus, the ColorMunki Photo /
+  Design and the i1Studio, plus a raw path for any other X-Rite device. The
+  tool offers it when it sees such an instrument and no i1iO table, or start
+  it with `--i1pro`. It asks which program you measure with (i1Profiler,
+  ccStudio / ColorChecker Studio, the ColorMunki or i1Studio software, or
+  another) and guides up to nine short steps: idle, calibration, one strip
+  in single scan, the same strip in dual scan, faster, slower, a scan that
+  fails on purpose, one single patch, and the strip without the ruler. Each
+  step is recorded into its own file; every step can be skipped or repeated,
+  and stopping (q, Ctrl-C, closing the window) keeps every finished step.
+  After each step you type one line about what happened and one about what
+  the instrument's lights did.
+- **Says honestly what it is for, per instrument**: i1Pro 2, the ruler
+  sensor, the dual scan and the lights; i1Pro 3, what the vendor program does
+  differently from the open driver; original i1Pro, ColorMunki and i1Studio,
+  how the vendor program reads strips so reliably. Nothing is promised.
+- **Windows checks before recording (read only)**: Windows version, USBPcap
+  installed and running, administrator rights, which USB root hub the
+  instrument is on, which measuring programs and versions are installed, and
+  plain install steps for USBPcap if it is missing. The version facts
+  (i1Profiler 3.8.7 dropped the i1Pro 2; X-Rite says the i1Pro 2 driver is
+  blocked on Windows 11 25H2 and newer; no driver on Windows on ARM) are shown
+  as checks; you can carry on if your program still finds the instrument.
+- **Recording**: USBPcap's own `USBPcapCMD` per step on Windows (or time marks
+  for a Wireshark recording you make yourself), `tcpdump` on a Mac with SIP off
+  or on Linux.
+- **Privacy**: the tool says up front that a recording necessarily contains
+  the instrument's serial number and calibration data. After each step it
+  keeps only the instrument's traffic (its device address and nothing else)
+  in the session folder; the full recordings go into a separate folder ending
+  in `-FULL-do-not-send`, which it offers to delete. Chip IDs are hashed and
+  EEPROM contents are not printed in the analysis. Nothing is uploaded.
+- **`--analyze` understands Windows (USBPcap) and Linux (usbmon) recordings
+  too**, not only macOS ones, and session folders. For the i1Pro, i1Pro 2,
+  i1Pro 3 and ColorMunki / i1Studio it decodes the commands that ArgyllCMS
+  documents (written from those facts; no Argyll code is copied), lists
+  unknown commands in full, counts every endpoint that carries data, flags
+  anything the open driver never uses (for example the i1Pro 2's endpoint
+  0x85, ruler bits, request 0xD7), compares the steps (readings, sizes,
+  readings per second, fast against slow, the no-ruler control), decodes the
+  light commands, and ends with a plain "does this hold what we need" list.
+- **X-Rite's newer vendor ID 0765** (i1Pro 3, i1Studio) is recognised.
+- **Tests** with synthetic recordings built from the documented formats and a
+  stand-in `USBPcapCMD`.
+- **Not tested**: any recording of a real i1Pro, i1Pro 2, i1Pro 3, ColorMunki
+  or i1Studio (none was available), and the tool on a real Windows PC with
+  USBPcap. The Windows checks were tested against text written from the
+  documented formats, not against a real PC.
+
 ## v1.4.0
 
 - **Fixed: "NO X-RITE DEVICES SEEN" on current macOS although the table was

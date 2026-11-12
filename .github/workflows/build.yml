@@ -115,6 +115,19 @@ jobs:
             Write-Error "no report produced"; exit 1
           }
 
+      # 1.5: the frozen binary must read a (synthetic) i1Pro 2 recording.
+      - name: Smoke-test the analyser in the binary
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then PY=python; else PY=python3; fi
+          mkdir -p smoke
+          $PY -c "import os,sys; sys.path.insert(0,'tests'); import synth; synth.i1pro2_session_files('smoke', os)"
+          "./out/${{ matrix.asset }}" --analyze smoke/scan-single.pcap smoke/noruler.pcap > smoke/analysis.txt
+          cat smoke/analysis.txt | tail -20
+          grep -q "instrument family: i1Pro 2 (Rev E)" smoke/analysis.txt
+          grep -q "0xD7 sent" smoke/analysis.txt
+          grep -q "NOT USED BY THE OPEN DRIVER" smoke/analysis.txt
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
@@ -149,7 +162,9 @@ jobs:
         with:
           files: artifacts/*
           body: |
-            Ready-to-run builds of the ChromIQ i1iO information collector.
+            Ready-to-run builds of the ChromIQ X-Rite instrument information
+            collector: for the i1iO table and, since 1.5, for handheld
+            instruments (i1Pro, i1Pro 2, i1Pro 3 / 3 Plus, ColorMunki, i1Studio).
 
             **Just want to run it?** Download the file for your system:
 
@@ -159,56 +174,60 @@ jobs:
             | macOS (Intel **and** Apple Silicon) | `chromiq-io-probe-macos` |
             | Linux | `chromiq-io-probe-linux` |
 
-            No Python needed. It only **reads** information about connected
-            hardware: it never sends anything to the table, cannot move the
-            arm, and changes no settings.
+            No Python needed. **It changes nothing on the instrument or the
+            computer**: it never sends anything to the instrument or the table,
+            cannot move the i1iO's arm, and changes no settings. The optional
+            recording only listens (on Windows through the free USBPcap, which
+            you install yourself if you want to record).
+
+            ### What's new in 1.5
+
+            - **A guided recording session for handheld instruments.** When the
+              tool sees an i1Pro, i1Pro 2, i1Pro 3, ColorMunki or i1Studio and no
+              i1iO, it offers it (or start it with `--i1pro`). Up to nine short
+              steps in the program you normally measure with (i1Profiler,
+              ccStudio, the ColorMunki or i1Studio software): idle, calibrate,
+              one strip, the same strip in dual scan, faster, slower, a scan
+              that fails on purpose, one single patch, and without the ruler.
+              Each step goes into its own file; skip, repeat or stop at any time
+              without losing finished steps. After each step you note what
+              happened and what the instrument's lights did.
+            - **What it records:** the USB conversation between the program and
+              the instrument, which necessarily includes the instrument's serial
+              number and calibration data (the tool says so first). Only the
+              instrument's own traffic goes into the folder you would send;
+              nothing is uploaded, you send it yourself if you want to.
+            - **Windows checks first (read only):** Windows version, USBPcap,
+              administrator rights, which USB port group the instrument is on,
+              installed programs and versions. Facts, not obstacles:
+              i1Profiler 3.8.7 dropped the i1Pro 2 (3.8.6 or older needed);
+              X-Rite says the i1Pro 2 driver is blocked on Windows 11 25H2 and
+              newer; no driver on Windows on ARM.
+            - **`--analyze` reads Windows and Linux recordings too**, decodes the
+              commands of the i1Pro family and the ColorMunki / i1Studio from the
+              facts ArgyllCMS documents, and says in plain words whether a
+              recording holds what is needed.
+
+            > **Nothing is promised.** A recording helps us understand how the
+            > vendor programs drive these instruments. Whether an open-source
+            > measurement engine can ever use what we learn is a separate
+            > question, and the answer may be no.
+
+            ### What has NOT been tested
+
+            - **Any recording of a real instrument.** No i1Pro, i1Pro 2, i1Pro 3,
+              ColorMunki or i1Studio was available while building 1.5, and no
+              i1iO for 1.4. Everything about real instrument traffic is untested;
+              the analyser was tested with synthetic recordings built from the
+              formats ArgyllCMS documents.
+            - **The recording on a real Windows PC.** It was tested with a
+              stand-in for USBPcap's recorder; the Windows checks were tested
+              against text written from the documented formats.
+            - Any recording on a Mac with SIP switched off.
 
             > **Owners of an i1Pro 2 or an i1iO 2:** i1Profiler 3.8.7 (July 2026)
             > removed support for both. Stay on i1Profiler 3.8.6 or older and do
             > not let it update itself.
-
-            ### What's new in 1.4
-
-            - **Fixed: "NO X-RITE DEVICES SEEN" on current macOS** although the
-              table was plugged in. macOS now lists USB devices under a new name
-              (`SPUSBHostDataType`); 1.3 asked under the old one and got an empty
-              list. 1.4 asks both and also reads the IOKit registry.
-            - **Fixed: a wrong device name.** USB ID 0971:2001 was labelled
-              "i1Pro 2 / i1Pro 3 family", but a real i1Pro 2 reports 0971:2000.
-              Only IDs seen in real reports are named now; the rest say "unknown".
-            - **More of the USB description**, still without ever opening the
-              device: interfaces, which software has them open, and the hub
-              inside the table. Endpoint details need a recording, and the report
-              says so.
-            - **The recording step on a Mac now tells the truth.** Earlier
-              versions said macOS already had everything needed. In fact macOS
-              only allows USB recording with System Integrity Protection (SIP)
-              fully off. 1.4 checks that (read only) and says plainly whether a
-              recording is possible. If not, it explains why and shows the three
-              real ways: a Windows PC with an Intel or AMD processor (easiest), SIP
-              off on the Mac for the recording (exact steps, the risk, and how to
-              switch it back on), or a hardware USB sniffer. If it is possible, it
-              guides a short recording with the system's own `tcpdump`, switches
-              the recording interfaces off again afterwards, checks the recording
-              is not all zeros, makes an X-Rite-only copy to send, and reminds you
-              to switch SIP back on. The tool never changes SIP itself.
-            - `--analyze` now also flags all-zero recordings and reads `.pcapng`.
-            - A serial number that macOS hides in `UsbDeviceSignature` is now
-              hashed like the others.
-
-            ### What has NOT been tested
-
-            - **A recording against a real i1iO.** No i1iO was available while
-              building this release.
-            - **Any recording on a Mac with SIP switched off.** The recording path
-              was tested only with stand-in programs in place of `sudo`,
-              `ifconfig` and `tcpdump`, including a made-up all-zero recording.
-            - Whether a recording on Apple Silicon holds real data. One public
-              report says yes, an older one saw only zeros; the tool checks and
-              tells you.
-
-            The device detection was tested against a real Mac's USB devices and
-            against an anonymised copy of a volunteer's report.
 
             ### Running it on macOS or Linux
 

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-chromiq_io_probe.py: X-Rite i1iO information collector for ChromIQ issue #129.
+chromiq_io_probe.py: X-Rite instrument information collector for ChromIQ
+(the i1iO table, issue #129; since 1.5 also the i1Pro family, the ColorMunki
+and the i1Studio).
 
 WHAT THIS DOES
     Collects information about an i1iO scanning table and the machine it is
@@ -30,7 +32,16 @@ USAGE
     checks that for you, says plainly whether a recording is possible, and if
     it is not, explains the other ways to make one.
 
-    Both produce a file named chromiq-io-probe-<timestamp>.txt next to the
+    Stage 2 for a handheld instrument (i1Pro, i1Pro 2, i1Pro 3, ColorMunki,
+    i1Studio), a guided session recorded step by step:
+
+        python3 chromiq_io_probe.py --i1pro
+
+    Check recordings, or a session folder, before sending them:
+
+        python3 chromiq_io_probe.py --analyze instrument-session-<date>
+
+    All of them produce a file named chromiq-io-probe-<timestamp>.txt next to the
     script. Open it, read it (it is plain text, nothing hidden), and attach it
     to the GitHub issue.
 
@@ -63,7 +74,7 @@ import tempfile
 import threading
 import time
 
-PROBE_VERSION = "1.4"
+PROBE_VERSION = "1.5"
 
 ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/129"
 
