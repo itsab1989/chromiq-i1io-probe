@@ -27,6 +27,10 @@ there.
   without any host keystroke, and never writes into the tool's window. (A
   PowerShell helper did that: after attaching to the tool's console its host
   printed "invalid handle" errors there. That was the harness, not the tool.)
+- `winshot.cs` (compiled the same way) photographs ONE window by a part of
+  its title (PrintWindow, DPI aware), for clean pictures of the tool's
+  window; `conhelper.exe scroll <pid> <row|end>` moves a console's view, so
+  text that scrolled away can be photographed.
 - `vm_scenarios.py` holds the checks. Each case runs in its own folder
   (`%USERPROFILE%\vm_test\cases\<case>-<time>`) with its own copy of the exe.
   The exe is started **as a double-click is**: by Explorer, with a shortcut

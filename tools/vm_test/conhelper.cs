@@ -32,6 +32,7 @@ public static class ConHelper {
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     static extern bool WriteConsoleInputW(IntPtr h, KEYREC[] r, uint n, out uint w);
 
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetConsoleWindowInfo(IntPtr h, bool abs, ref RECT16 r);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetConsoleCtrlHandler(IntPtr h, bool add);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool GenerateConsoleCtrlEvent(uint ev, uint group);
 
@@ -71,6 +72,17 @@ public static class ConHelper {
             }
             uint w;
             return WriteConsoleInputW(h, recs, (uint)recs.Length, out w) ? 0 : 4;
+        }
+        if (args[0] == "scroll") {
+            // Show the screen buffer from row <top> (for a screenshot of text
+            // that has scrolled out of view); "end" goes back to the cursor.
+            IntPtr h = CreateFileW("CONOUT$", 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
+            CSBI info;
+            if (!GetConsoleScreenBufferInfo(h, out info)) return 3;
+            int height = info.Win.B - info.Win.T + 1;
+            int top = args[2] == "end" ? Math.Max(0, info.Cursor.Y - height + 1) : int.Parse(args[2]);
+            RECT16 r; r.L = info.Win.L; r.R = info.Win.R; r.T = (short)top; r.B = (short)(top + height - 1);
+            return SetConsoleWindowInfo(h, true, ref r) ? 0 : 6;
         }
         if (args[0] == "ctrlc") {
             // A real Ctrl-C, as the keyboard sends it, to every program on
