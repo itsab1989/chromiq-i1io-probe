@@ -314,6 +314,31 @@ showed, and (for instruments with lights) one line about what the lights did.
   USBPcap's own recorder (`USBPcapCMD`) for every step. If it cannot, it times
   the steps while you record the whole session with Wireshark yourself, and
   the analysis cuts that recording into the steps later.
+- **Help with installing USBPcap, and with administrator rights (since
+  1.5.3), only after a yes.** When USBPcap is missing, the tool first says
+  in plain words what it is (free, open-source, by its own author, not by
+  us), that it installs a system driver, that one user has reported a blue
+  screen naming its driver on Windows 11 25H2 (USBPcap issue #146), and how
+  to remove it. Then it asks whether to fetch USBPcap's own installer. On a
+  yes it downloads `USBPcapSetup-1.5.4.0.exe` from USBPcap's official GitHub
+  release over HTTPS (Python's standard `urllib`, nothing else) into the
+  folder next to the tool, and compares its SHA-256 fingerprint with the one
+  written into the tool's source (the same one Wireshark's build pins); on
+  any difference it deletes the file and starts nothing. It then asks again
+  before starting the installer, which it starts the normal, visible way: no
+  silent switches, Windows asks its own User Account Control question, and
+  USBPcap's installer shows its licence. Afterwards it checks whether USBPcap
+  is installed, says so, asks you to restart Windows (it never restarts the
+  computer itself), and offers to delete the downloaded file. Not running as
+  administrator, with USBPcap installed, it offers once to start itself again
+  as administrator through Windows' own question, and closes this window
+  when the new one opens. Every "no", a failed download or a refused Windows
+  question leads to the manual steps. This is written out here on purpose,
+  for you and for any antivirus analyst: an unsigned program that downloads
+  and starts an installer can look suspicious, so the code doing it is plain
+  and short (`offer_usbpcap_install` and `offer_relaunch_as_admin` in
+  `chromiq_io_probe.py`). It is not offered on Windows on ARM, where there
+  is no instrument driver anyway.
 - **Version facts, checked and shown up front:** i1Profiler 3.8.7 removed
   support for the i1Pro 2, so 3.8.6 or older is needed for it. X-Rite says the
   i1Pro 2 / iO2 driver is blocked on Windows 11 version 25H2 and newer; the

@@ -74,7 +74,7 @@ import tempfile
 import threading
 import time
 
-PROBE_VERSION = "1.5.2"
+PROBE_VERSION = "1.5.3"
 
 ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/129"   # the i1iO only
 NEW_ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/new"
@@ -4178,7 +4178,7 @@ def windows_capture_checks(profile: str) -> dict:
     return {"windows": windows_release_check(build["build"], build["display"], arm, profile,
                                              vendor_driver_working=working),
             "service": service, "usbpcapcmd": cmd, "hubs": hubs,
-            "admin": windows_is_admin(), "programs": programs,
+            "admin": windows_is_admin(), "programs": programs, "arm": arm,
             "i1profiler": i1profiler_check(i1p, profile), "build": build,
             "drivers": drivers}
 
@@ -4921,11 +4921,22 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
         if not checks["service"]["installed"]:
             outcome["reason"] = ("Nothing was recorded, because USBPcap (the recorder "
                                  "this tool needs on Windows) is not installed yet.")
+            offer = "not offered (Windows on ARM)"
+            if not checks.get("arm"):
+                offer = offer_usbpcap_install(_writable_dir())
+            if offer == "installed":
+                outcome["reason"] = ("Nothing was recorded yet: USBPcap is now installed, "
+                                     "and starts working after Windows has been restarted.")
+                _CAUSES[:] = ["usbpcap_restart" if c == "usbpcap_missing" else c
+                              for c in _CAUSES]
             section("Instrument recording session",
                     "[USBPcap is not installed]\n" + windows_checks_text(checks)
+                    + "\n\nThe offer to fetch and start USBPcap's installer: " + offer
                     + "\n\n" + "\n\n".join(outcome["help"]))
             return outcome
         if checks["admin"] is False:
+            # 1.5.3: offer to start again as administrator, once, by consent.
+            offer_relaunch_as_admin()
             # 1.5.2: say it before the steps, not after the first one failed.
             outcome["reason"] = ("Nothing was recorded, because this window does not run "
                                  "as administrator, and USBPcap records only for "
@@ -5400,6 +5411,243 @@ def write_report(report: str, explicit) -> str | None:
 
 
 # --------------------------------------------------------------------------
+# 1.5.3: help with installing USBPcap, and with starting as administrator.
+# Both real users got stuck exactly there. Everything here happens only after
+# a yes, in plain view: a normal download over HTTPS, a fingerprint check, a
+# normal visible start of USBPcap's own installer (Windows asks its User
+# Account Control question itself), and, separately, Windows' own "run as
+# administrator" question. No silent switches, no security setting touched,
+# no restart done for the user, nothing retried.
+# --------------------------------------------------------------------------
+
+# USBPcap's own standalone installer, from its official GitHub release
+# (github.com/desowin/usbpcap/releases/tag/1.5.4.0, published 2020-05-22, the
+# current release on 2026-11-13). Size and SHA-256 computed here on
+# 2026-11-13 from that asset, and identical to the SHA-256 that Wireshark's
+# own build pins for the same file (wireshark/wireshark CMakeLists.txt,
+# USBPCAP_SHA256). The release page publishes no hash of its own.
+USBPCAP_INSTALLER = {
+    "name": "USBPcapSetup-1.5.4.0.exe",
+    "url": "https://github.com/desowin/usbpcap/releases/download/1.5.4.0/"
+           "USBPcapSetup-1.5.4.0.exe",
+    "size": 195040,
+    "sha256": "87a7edf9bbbcf07b5f4373d9a192a6770d2ff3add7aa1e276e82e38582ccb622",
+}
+
+# USBPcap issue #146 "USBPcap Driver BSOD" (opened 2026-03-26, still open on
+# 2026-11-13): one user's PC crashed with a blue screen naming USBPcap.sys,
+# on Windows 11 25H2 (26200.8037) with USBPcap 1.5.4.0.
+USBPCAP_BEFORE_YOU_DECIDE = """\
+  ABOUT USBPcap, BEFORE YOU DECIDE
+  USBPcap is free, open-source software by its own author (desowin.org),
+  not by us. It installs a system driver that sits between Windows and the
+  USB ports, which is how it can record them.
+  One user has reported that Windows crashed with a blue screen that named
+  USBPcap's driver, on Windows 11 25H2 (USBPcap issue #146 on GitHub). We
+  know of no other report like it, but you should know before you decide.
+  To remove USBPcap again at any time: Settings, Apps, Installed apps,
+  "USBPcap", Uninstall, then restart Windows."""
+
+
+class Relaunched(Exception):
+    """This copy has started another one as administrator and closes."""
+
+
+def _download(url: str, limit: int, timeout: int = 60) -> bytes:
+    """A plain HTTPS download, at most limit bytes (urllib, nothing else)."""
+    import urllib.request                                 # noqa: PLC0415
+    req = urllib.request.Request(url, headers={"User-Agent": "chromiq-i1io-probe"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:   # noqa: S310
+        return resp.read(limit + 1)
+
+
+def fetch_usbpcap_installer(folder: str, fetch=None, info=None) -> dict:
+    """Download USBPcap's installer into folder and check its fingerprint.
+
+    Returns {"ok", "path", "message"}. On any mismatch the file is deleted
+    and never started."""
+    info = info or USBPCAP_INSTALLER
+    fetch = fetch or _download
+    try:
+        blob = fetch(info["url"], info["size"])
+    except Exception as exc:                              # noqa: BLE001
+        return {"ok": False, "kind": "download failed", "path": None, "message": (
+            "The download did not work (" + (" ".join(str(exc).split())[:120] or
+                                            type(exc).__name__) + "). This happens "
+            "without internet, behind some company networks, or when GitHub is "
+            "blocked. Nothing was saved. The steps above work without this tool.")}
+    digest = hashlib.sha256(blob).hexdigest()
+    if len(blob) != info["size"] or digest != info["sha256"]:
+        return {"ok": False, "kind": "fingerprint mismatch", "path": None, "message": (
+            "The downloaded file is not the one this tool expects (its fingerprint "
+            "does not match), so it was thrown away and NOT started. That should "
+            "not happen; please tell us. The steps above work without this tool.")}
+    path = os.path.join(folder, info["name"])
+    try:
+        with open(path, "wb") as fh:
+            fh.write(blob)
+    except OSError as exc:
+        return {"ok": False, "kind": "download failed", "path": None, "message": (
+            f"The file could not be saved in {folder} ({exc}). The steps above "
+            "work without this tool.")}
+    return {"ok": True, "kind": "downloaded", "path": path, "message": (
+        f"Downloaded  {info['name']}  ({info['size']:,} bytes)\n"
+        f"    from  {info['url']}\n"
+        f"    into  {folder}\n"
+        "    Its fingerprint (SHA-256) matches the one written into this tool, so it\n"
+        "    is exactly the file USBPcap's author published.")}
+
+
+def _shell_execute(path: str, params: str = "", verb: str = "open",
+                   wait: bool = True, folder: str | None = None):
+    """Windows: start a program the way a double-click does (ShellExecuteEx),
+    so Windows asks its own User Account Control question when the program
+    needs it. Returns the exit code when waiting, 0 when started without
+    waiting, or None when it did not start (for example, "No" at the Windows
+    question)."""
+    import ctypes                                         # noqa: PLC0415
+    from ctypes import wintypes                           # noqa: PLC0415
+
+    class SHELLEXECUTEINFOW(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("fMask", ctypes.c_ulong),
+                    ("hwnd", wintypes.HWND), ("lpVerb", wintypes.LPCWSTR),
+                    ("lpFile", wintypes.LPCWSTR), ("lpParameters", wintypes.LPCWSTR),
+                    ("lpDirectory", wintypes.LPCWSTR), ("nShow", ctypes.c_int),
+                    ("hInstApp", wintypes.HINSTANCE), ("lpIDList", ctypes.c_void_p),
+                    ("lpClass", wintypes.LPCWSTR), ("hkeyClass", wintypes.HKEY),
+                    ("dwHotKey", wintypes.DWORD), ("hIconOrMonitor", wintypes.HANDLE),
+                    ("hProcess", wintypes.HANDLE)]
+
+    info = SHELLEXECUTEINFOW()
+    info.cbSize = ctypes.sizeof(info)
+    info.fMask = 0x00000040                               # SEE_MASK_NOCLOSEPROCESS
+    info.lpVerb = verb
+    info.lpFile = path
+    info.lpParameters = params or None
+    info.lpDirectory = folder
+    info.nShow = 1                                        # SW_SHOWNORMAL: visible
+    shell32 = ctypes.windll.shell32                       # type: ignore[attr-defined]
+    k32 = ctypes.windll.kernel32                          # type: ignore[attr-defined]
+    if not shell32.ShellExecuteExW(ctypes.byref(info)):
+        return None
+    if not info.hProcess:
+        return 0
+    try:
+        if not wait:
+            return 0
+        k32.WaitForSingleObject(info.hProcess, 0xFFFFFFFF)
+        code = wintypes.DWORD()
+        k32.GetExitCodeProcess(info.hProcess, ctypes.byref(code))
+        return code.value
+    finally:
+        k32.CloseHandle(info.hProcess)
+
+
+def usbpcap_installed_now() -> bool:
+    return parse_sc_query(run(["sc", "query", "USBPcap"], timeout=15))["installed"]
+
+
+def offer_usbpcap_install(folder: str, fetch=None, launch=None, installed=None) -> str:
+    """Windows, USBPcap missing: fetch and start its installer, by consent.
+
+    Returns what happened, for the report: "declined", "download failed",
+    "fingerprint mismatch", "downloaded, not started", "installer did not
+    start", "installed", or "still not installed"."""
+    launch = launch or (lambda path: _shell_execute(path, wait=True,
+                                                    folder=os.path.dirname(path)))
+    installed = installed or usbpcap_installed_now
+    print("  " + "-" * 66)
+    print()
+    print(USBPCAP_BEFORE_YOU_DECIDE)
+    print()
+    if not said_yes(ask("  USBPcap is not installed. Shall this tool fetch its official\n"
+                        "  installer for you? (yes / no): ")):
+        print("  All right. The steps above are all you need to do it yourself.")
+        return "declined"
+    print("\n  Downloading USBPcap's installer from its official page on GitHub...")
+    got = fetch_usbpcap_installer(folder, fetch=fetch)
+    print("  " + got["message"].replace("\n", "\n  "))
+    if not got["ok"]:
+        return got["kind"]
+    print()
+    if not said_yes(ask("  Start the USBPcap installer now? Windows will ask for permission\n"
+                        "  (the blue or yellow \"User Account Control\" window), and USBPcap's\n"
+                        "  installer will show its licence. (yes / no): ")):
+        print(f"  All right. The installer is kept here, for when you want it:\n"
+              f"      {got['path']}\n"
+              "  Double-click it to start it, then restart Windows.")
+        return "downloaded, not started"
+    print("\n  Starting USBPcap's installer. Please answer Windows' question, then")
+    print("  follow the installer's own pages. This window waits until it has closed.")
+    try:
+        code = launch(got["path"])
+    except Exception:                                     # noqa: BLE001
+        code = None
+    if code is None:
+        print("\n  The installer did not start. If Windows asked for permission and the")
+        print("  answer was \"No\", that is fine: nothing was installed. You can start it")
+        print(f"  yourself at any time by double-clicking\n      {got['path']}")
+        return "installer did not start"
+    now = installed()
+    if now:
+        print("\n  USBPcap is installed now. Windows must be restarted before USBPcap")
+        print("  can record anything. Please restart Windows now, then start this tool")
+        print("  again as administrator (right-click it, \"Run as administrator\").")
+        print("  This tool does not restart your computer for you.")
+        result = "installed"
+    else:
+        print(f"\n  The installer has closed (its exit code was {code}), but Windows does")
+        print("  not list USBPcap as installed. Perhaps the installer was cancelled, or")
+        print("  it said it cannot install on this computer. Nothing else was changed.")
+        print("  If it showed a message, please tell us what it said.")
+        result = "still not installed"
+    if said_yes(ask("\n  Delete the downloaded installer file now? It is not needed any more\n"
+                    "  once USBPcap is installed. (yes / no): ")):
+        try:
+            os.remove(got["path"])
+            print("  Deleted.")
+        except OSError as exc:
+            print(f"  It could not be deleted ({exc}). You can delete it yourself:")
+            print(f"      {got['path']}")
+    else:
+        print(f"  It stays here:  {got['path']}")
+    return result
+
+
+def relaunch_command() -> tuple:
+    """(program, parameters, folder) to start this tool again, straight into
+    the handheld session."""
+    if getattr(sys, "frozen", False):
+        return sys.executable, "--i1pro", os.getcwd()
+    script = os.path.abspath(__file__)
+    return sys.executable, f'"{script}" --i1pro', os.getcwd()
+
+
+def offer_relaunch_as_admin(launch=None) -> bool:
+    """Not administrator: offer, once, to start again as administrator through
+    Windows' own question. On success this copy closes (raises Relaunched)."""
+    launch = launch or (lambda prog, params, folder: _shell_execute(
+        prog, params, verb="runas", wait=False, folder=folder))
+    if not said_yes(ask("\n  Start this tool again as administrator now? Windows will ask for\n"
+                        "  permission, and a new window opens. (yes / no): ")):
+        print("  All right. The steps above say how to do it yourself.")
+        return False
+    prog, params, folder = relaunch_command()
+    try:
+        started = launch(prog, params, folder)
+    except Exception:                                     # noqa: BLE001
+        started = None
+    if started is None:
+        print("\n  It did not start (perhaps the answer to Windows' question was \"No\").")
+        print("  Nothing else happens; the steps above say how to do it yourself.")
+        return False
+    print("\n  A new window opens, running as administrator; carry on there.")
+    print("  This window closes now.")
+    time.sleep(3)
+    raise Relaunched()
+
+
+# --------------------------------------------------------------------------
 # 1.5.2: the end of every run. The second user double-clicked the Windows exe,
 # the tool printed its install help, and the console window closed the moment
 # it finished: he never saw the help and thought it had crashed. So every way
@@ -5428,6 +5676,9 @@ def what_to_do_lines(causes: list, report_path: str | None) -> list:
                      "\"Windows x64 Installer\" and, on its page \"USB Capture\", tick "
                      "\"Install USBPcap\".")
         steps.append("Restart Windows.")
+    if "usbpcap_restart" in causes:
+        steps.append("Restart Windows: USBPcap is installed now, and starts listening "
+                     "to the USB ports only after a restart.")
     if "wrong_driver" in causes:
         steps.append("Give the instrument X-Rite's driver back in Device Manager, and "
                      "check that the measuring program finds it.")
@@ -5609,6 +5860,10 @@ def console_main(argv: list | None = None) -> int:
     pause = should_pause(argv)
     try:
         code = main(argv)
+    except Relaunched:
+        # 1.5.3: the copy running as administrator carries on in its own
+        # window; this one closes, as it said it would.
+        return 0
     except KeyboardInterrupt:
         print("\n\n  Stopped (Ctrl-C). Nothing more was done; anything already saved"
               "\n  is kept.")

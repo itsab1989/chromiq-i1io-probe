@@ -186,7 +186,7 @@ class TheFirstReportReplayed(unittest.TestCase):
         probe._SECTIONS.clear()
         self.addCleanup(probe._SECTIONS.clear)
 
-    def _session(self, answers=("",)):
+    def _session(self, answers=("", "")):   # 1.5.3: + "no" to the installer offer
         patches = _his_checks() + [
             mock.patch.object(probe.platform, "system", lambda: "Windows"),
             mock.patch.object(probe, "ask", mock.Mock(side_effect=list(answers))),

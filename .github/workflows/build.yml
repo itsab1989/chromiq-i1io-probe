@@ -180,6 +180,27 @@ jobs:
             recording only listens (on Windows through the free USBPcap, which
             you install yourself if you want to record).
 
+            ### What's new in 1.5.3
+
+            Help with the step where both users so far got stuck. Still
+            untested with a real recording; the installer route was tested
+            with stand-ins, not on a real Windows PC.
+
+            - **USBPcap missing: the tool can fetch and start its official
+              installer, only after a yes.** It first says what USBPcap is
+              (free, open-source, by its own author, not by us), that it
+              installs a system driver, that one user reported a blue screen
+              naming its driver on Windows 11 25H2 (USBPcap issue #146), and
+              how to remove it. The download (`USBPcapSetup-1.5.4.0.exe` from
+              USBPcap's GitHub release) is checked against a SHA-256
+              fingerprint written into the tool and deleted, never started, on
+              any difference. A second yes starts the installer the normal,
+              visible way, with Windows' own permission question. The tool
+              never restarts the computer.
+            - **Not administrator:** an offer, once, to start the tool again as
+              administrator through Windows' own question.
+            - Every "no" or failure leads to the manual steps, as in 1.5.2.
+
             ### What's new in 1.5.2
 
             Changed after the second report from a user: the window closed

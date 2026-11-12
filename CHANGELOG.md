@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.5.3
+
+Help with the step where both users so far got stuck. Still untested with a
+real recording, and the installer route was tested with stand-ins only.
+
+- **USBPcap missing: the tool can fetch and start its installer, only after
+  a yes.** Before asking, it says what USBPcap is (free, open-source, by its
+  own author, not by us), that it installs a system driver, that one user
+  has reported a blue screen naming its driver on Windows 11 25H2 (USBPcap
+  issue #146), and how to remove it. On a yes it downloads USBPcap's own
+  installer (`USBPcapSetup-1.5.4.0.exe`, 195,040 bytes) from the official
+  GitHub release into the folder next to the tool and checks its SHA-256
+  fingerprint against the one written into the tool (the same one
+  Wireshark's build pins); on any difference it deletes the file and starts
+  nothing. A second question comes before the installer starts, normally
+  and visibly, with Windows' own permission question and USBPcap's licence.
+  Afterwards it checks whether USBPcap is installed and says so, asks you to
+  restart Windows (it does not restart anything itself), and offers to
+  delete the downloaded file. Not offered on Windows on ARM.
+- **Not administrator: the tool offers to start itself again as
+  administrator**, once, through Windows' own question; the new window
+  carries on and this one closes. On "no", the manual steps as before.
+- A failed download, a "no" anywhere or a refused Windows question leads to
+  the manual steps of 1.5.2, including the offer to open Wireshark's
+  download page.
+
 ## v1.5.2
 
 After the second report from a user: the window closed before the

@@ -430,7 +430,7 @@ class TheSecondReportReplayed(unittest.TestCase):
         self.addCleanup(probe._DETECTION.clear)
 
     def session(self, admin=False, usbpcap=False, drivers=XRITE_I1PRO2_WORKING,
-                answers=("",)):
+                answers=("", "")):   # 1.5.3: + "no" to the installer or admin offer
         asked = mock.Mock(side_effect=list(answers))
         patches = _windows_checks(admin, usbpcap, drivers) + [
             mock.patch.object(probe, "ask", asked)]
