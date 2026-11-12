@@ -1,5 +1,40 @@
 # Changelog
 
+## v1.5.1
+
+After the first report from a user (Windows 11 25H2, an i1Pro 3, USBPcap
+not yet installed). Still untested with a real recording.
+
+- **USBPcap missing: clearer help.** The tool now says in plain words what
+  USBPcap is and why it is needed, gives numbered steps (Wireshark's "USB
+  Capture" page and its "Install USBPcap" box, which is not ticked by
+  default; the restart; run the tool again), and says that no security
+  setting has to be switched off: on Windows 10 and 11 USBPcap installs a
+  driver signed through Microsoft's signing service. 1.5.0 printed its
+  shorter steps above "ALL DONE", where they scrolled away.
+- **The run ends honestly when nothing was recorded.** Instead of "ALL
+  DONE" and "send it together with the session folder", it says that
+  nothing was recorded and why, and repeats what to do as the last thing
+  on the screen. The help is in the report too.
+- **The 25H2 note only where it applies.** X-Rite's note says the i1Pro 2 /
+  iO2 driver is blocked on Windows 11 25H2 and newer and that the i1Pro 3 /
+  iO3 works with the latest Windows 11 releases. 1.5.0 showed the warning to
+  everybody; 1.5.1 shows it for the i1Pro 2 (and the first i1Pro, which
+  looks the same to the computer) and tells i1Pro 3 owners it does not
+  concern them. The closing "stay on i1Profiler 3.8.6" note is likewise
+  shown only to i1Pro 2 and i1Pro users.
+- **New check: which driver the instrument is on.** If the plugged-in
+  instrument is on the ArgyllCMS driver (libusb0 or libusbK, as ArgyllCMS,
+  ChromIQ or Zadig install it, or WinUSB on the older X-Rite ID), the vendor
+  program cannot see it. The tool says so and gives the Device Manager
+  steps to give it X-Rite's driver back, and the way back for ChromIQ
+  afterwards.
+- **Remembered devices.** Windows remembers every instrument it has seen,
+  once per USB socket. They are now marked "not plugged in now", and the
+  session is chosen from the instrument that is plugged in.
+- **Chart list:** names that merely contain the letters "io" ("Studio",
+  "option", "iteration") are no longer tagged as iO charts.
+
 ## v1.5.0
 
 - **New: a guided recording session for handheld instruments**: the

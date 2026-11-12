@@ -180,6 +180,26 @@ jobs:
             recording only listens (on Windows through the free USBPcap, which
             you install yourself if you want to record).
 
+            ### What's new in 1.5.1
+
+            Changed after the first report from a user. Still untested with a
+            real recording.
+
+            - **Clearer help when USBPcap is missing:** what it is, why it is
+              needed, numbered install steps (Wireshark's "USB Capture" page,
+              the restart, run the tool again), and that no security setting
+              has to be switched off. When nothing could be recorded, the run
+              now ends by saying so, with what to do, instead of "ALL DONE".
+            - **The Windows 11 25H2 driver note only where it applies:** X-Rite
+              says the i1Pro 2 / iO2 driver is blocked on 25H2 and newer, and
+              that the i1Pro 3 works with the latest Windows 11 releases.
+            - **A new check for the instrument's driver:** on the ArgyllCMS
+              driver (as ArgyllCMS, ChromIQ or Zadig install it) the vendor
+              program cannot see the instrument. The tool says how to give it
+              X-Rite's driver back, and how to switch back for ChromIQ later.
+            - Devices Windows only remembers no longer count as plugged in;
+              chart names containing "Studio" are no longer tagged as iO charts.
+
             ### What's new in 1.5
 
             - **A guided recording session for handheld instruments.** When the
@@ -218,7 +238,7 @@ jobs:
             ### What has NOT been tested
 
             - **Any recording of a real instrument.** No i1Pro, i1Pro 2, i1Pro 3,
-              ColorMunki or i1Studio was available while building 1.5, and no
+              ColorMunki or i1Studio was available while building 1.5 and 1.5.1, and no
               i1iO for 1.4. Everything about real instrument traffic is untested;
               the analyser was tested with synthetic recordings built from the
               formats ArgyllCMS documents.

@@ -58,7 +58,10 @@ on). Each step is recorded into its own small file; you can skip or
 repeat any step and stop at any time without losing finished steps.
 
 On Windows it needs the free USBPcap (comes with Wireshark; the tool
-tells you exactly how to install it). The recording contains your
+tells you exactly how to install it, and no security setting has to be
+switched off). If ChromIQ or ArgyllCMS installed its own driver for
+the instrument, the measuring program cannot see it until X-Rite's
+driver is back; the tool notices that and says how. The recording contains your
 instrument's serial number and calibration data, because the program
 reads them every time; the tool says so first, keeps only the
 instrument's traffic in the folder you would send, and uploads

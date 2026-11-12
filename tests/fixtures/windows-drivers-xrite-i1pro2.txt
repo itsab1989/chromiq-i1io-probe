@@ -1,0 +1,1 @@
+DRV :: i1 Pro :: USB\VID_0971&PID_2000\7&2BBBB&0&3 :: XRiteDevices :: EyeOne :: X-Rite

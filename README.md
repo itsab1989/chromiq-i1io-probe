@@ -188,7 +188,8 @@ step; it tells you what to do and times each step.
 Which Windows works: the X-Rite driver for the i1Pro 2 and the i1iO 2 needs
 **Windows 10 with i1Profiler 3.8.5**, or **Windows 11 version 24H2 or older
 with i1Profiler 3.8.6**. X-Rite says the driver is blocked on Windows 11
-version 25H2 and newer.
+version 25H2 and newer ([X-Rite's note](https://www.xrite.com/service-support/i1pro-2-eol-notes-compatibility-issues-with-windows-11-macos));
+the same note says the i1Pro 3 / iO3 works with the latest Windows 11 releases.
 **A Windows virtual machine on an Apple Silicon Mac does not work**: there is
 no i1Pro or i1iO driver for Windows on ARM.
 
@@ -291,20 +292,26 @@ showed, and (for instruments with lights) one line about what the lights did.
 ### What it needs
 
 - **Windows (the main route):** the free USBPcap, which comes with
-  [Wireshark](https://www.wireshark.org) (tick "Install USBPcap" in its
-  installer and restart Windows). The tool checks, without changing anything:
-  the Windows version, whether USBPcap is installed and running, whether the
-  window runs as administrator (USBPcap may need that: right-click the tool,
-  "Run as administrator"), which USB root hub the instrument is on, and which
-  measuring programs and versions are installed. It then starts and stops
+  [Wireshark](https://www.wireshark.org): on the installer's page "USB
+  Capture", tick "Install USBPcap" (it is not ticked by default), then restart
+  Windows. No security setting has to be switched off: on Windows 10 and 11
+  USBPcap installs a driver signed through Microsoft's signing service. The
+  tool checks, without changing anything: the Windows version, whether USBPcap
+  is installed and running, whether the window runs as administrator (USBPcap
+  may need that: right-click the tool, "Run as administrator"), which driver
+  the instrument is on (since 1.5.1: on the ArgyllCMS driver the vendor
+  program cannot see it, and the tool says how to switch it to X-Rite's driver
+  and back), which USB root hub the instrument is on, and which measuring
+  programs and versions are installed. It then starts and stops
   USBPcap's own recorder (`USBPcapCMD`) for every step. If it cannot, it times
   the steps while you record the whole session with Wireshark yourself, and
   the analysis cuts that recording into the steps later.
 - **Version facts, checked and shown up front:** i1Profiler 3.8.7 removed
   support for the i1Pro 2, so 3.8.6 or older is needed for it. X-Rite says the
-  i1Pro 2 driver is blocked on Windows 11 version 25H2 and newer; the tool
-  shows your version and lets you carry on if your program still finds the
-  instrument. There is no driver for Windows on ARM (including a Windows
+  i1Pro 2 / iO2 driver is blocked on Windows 11 version 25H2 and newer; the
+  tool shows that to i1Pro 2 (and first i1Pro) users only, and lets them carry
+  on if their program still finds the instrument. It does not concern the
+  i1Pro 3. There is no driver for Windows on ARM (including a Windows
   virtual machine on an Apple Silicon Mac).
 - **Mac:** only with System Integrity Protection switched off, exactly as for
   the i1iO (see above). The measuring programs run on Windows and on the Mac,

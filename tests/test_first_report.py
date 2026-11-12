@@ -307,5 +307,84 @@ class ChartNames(unittest.TestCase):
             self.assertFalse(probe.is_io_chart_name(name), name)
 
 
+class TheI1Pro2Path(unittest.TestCase):
+    """An i1Pro 2 owner: the case where the 25H2 and i1Profiler facts apply."""
+
+    def setUp(self):
+        probe._SECTIONS.clear()
+        self.addCleanup(probe._SECTIONS.clear)
+
+    def _run(self, build, display, i1p, drivers, usbpcap=False, answers=("", "no")):
+        def fake_run(cmd, timeout=40):
+            if cmd[0] == "sc":
+                return fixture("windows-sc-query-usbpcap-running.txt" if usbpcap
+                               else "windows-sc-query-usbpcap-missing.txt")
+            joined = " ".join(cmd)
+            if "--extcap-interfaces" in joined:
+                return fixture("windows-usbpcapcmd-extcap-interfaces.txt")
+            if "USBPcap2" in joined:
+                return fixture("windows-usbpcapcmd-extcap-config-hub2.txt")
+            return fixture("windows-usbpcapcmd-extcap-config-hub1.txt")
+        patches = [
+            mock.patch.object(probe, "run", fake_run),
+            mock.patch.object(probe, "find_usbpcapcmd",
+                              lambda: "C:\\Program Files\\USBPcap\\USBPcapCMD.exe" if usbpcap else None),
+            mock.patch.object(probe, "windows_program_versions", lambda: {"i1Profiler": i1p}),
+            mock.patch.object(probe, "windows_build_info",
+                              lambda: {"build": build, "display": display, "product": ""}),
+            mock.patch.object(probe, "windows_is_arm", lambda: False),
+            mock.patch.object(probe, "windows_is_admin", lambda: True),
+            mock.patch.object(probe, "windows_driver_devices",
+                              lambda: probe.parse_driver_lines(fixture(drivers))),
+            mock.patch.object(probe.platform, "system", lambda: "Windows"),
+            mock.patch.object(probe, "ask", mock.Mock(side_effect=list(answers))),
+        ]
+        for p in patches:
+            p.start()
+        try:
+            out = io.StringIO()
+            with redirect_stdout(out):
+                outcome = probe.instrument_session_step([I1PRO2], direct=True)
+        finally:
+            for p in patches:
+                p.stop()
+        # one line per paragraph: the checks wrap their text in a column
+        return outcome, " ".join(out.getvalue().split())
+
+    def test_25h2_new_i1profiler_x_rite_driver(self):
+        outcome, screen = self._run(26200, "25H2", "3.8.8.20000", "windows-drivers-xrite-i1pro2.txt")
+        self.assertEqual(outcome["profile"], "i1pro2")
+        self.assertIn("[PLEASE READ] Windows 11 version 25H2 (build 26200)", screen)
+        self.assertIn("i1Pro 2 and the iO2", screen)
+        self.assertIn("i1Profiler 3.8.7 removed support for the i1Pro 2", screen)
+        self.assertIn("Version 3.8.6 or older is needed", screen)
+        self.assertIn("[OK] i1 Pro: X-Rite's driver (EyeOne)", screen)
+        self.assertNotIn("WRONG DRIVER", screen)
+        self.assertEqual(outcome["help"], [probe.USBPCAP_INSTALL_TEXT])
+        self.assertTrue(probe.show_i1profiler_warning(True, outcome))
+
+    def test_24h2_i1profiler_386_argyll_driver(self):
+        outcome, screen = self._run(26100, "24H2", "3.8.6.16077", "windows-drivers-argyll-i1pro2.txt")
+        self.assertIn("[OK] Windows 11 version 24H2 (build 26100)", screen)
+        self.assertIn("[OK] 3.8.6.16077", screen)
+        self.assertIn("[PROBLEM] Eye-One Pro (Argyll): on the ArgyllCMS driver", screen)
+        self.assertIn('"i1 Pro" for an i1Pro or i1Pro 2', screen)
+        self.assertIn("THE WAY BACK", screen)
+        self.assertEqual(outcome["help"], [probe.USBPCAP_INSTALL_TEXT, probe.DRIVER_HELP_TEXT])
+
+    def test_usbpcap_present_driver_help_still_shown_before_the_start_question(self):
+        outcome, screen = self._run(26100, "24H2", "3.8.6.16077",
+                                    "windows-drivers-argyll-i1pro2.txt", usbpcap=True)
+        self.assertIn("installed and running", screen)
+        self.assertNotIn("WHAT USBPcap IS", screen)
+        self.assertIn("YOUR INSTRUMENT IS ON THE WRONG DRIVER", screen)
+        self.assertLess(screen.index("THE WAY BACK"), screen.index("No problem at all"))
+        self.assertFalse(outcome["recorded"])
+        self.assertEqual(outcome["help"], [probe.DRIVER_HELP_TEXT])
+        lines = "\n".join(probe.closing_words(outcome))
+        self.assertIn("No step of the session was recorded.", lines)
+        self.assertIn("THE WAY BACK", lines)
+
+
 if __name__ == "__main__":
     unittest.main()
