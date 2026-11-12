@@ -11,17 +11,23 @@ real recording, and the installer route was tested with stand-ins only.
   has reported a blue screen naming its driver on Windows 11 25H2 (USBPcap
   issue #146), and how to remove it. On a yes it downloads USBPcap's own
   installer (`USBPcapSetup-1.5.4.0.exe`, 195,040 bytes) from the official
-  GitHub release into the folder next to the tool and checks its SHA-256
-  fingerprint against the one written into the tool (the same one
-  Wireshark's build pins); on any difference it deletes the file and starts
-  nothing. A second question comes before the installer starts, normally
+  GitHub release into a new, empty folder of the user's own (in the user's
+  temporary folder) and checks its SHA-256 fingerprint against the one
+  written into the tool (the same one Wireshark's build pins), after the
+  download and again just before starting it; on any difference it deletes
+  the file and starts nothing. A cut-off download says so. A second question comes before the installer starts, normally
   and visibly, with Windows' own permission question and USBPcap's licence.
   Afterwards it checks whether USBPcap is installed and says so, asks you to
   restart Windows (it does not restart anything itself), and offers to
   delete the downloaded file. Not offered on Windows on ARM.
 - **Not administrator: the tool offers to start itself again as
   administrator**, once, through Windows' own question; the new window
-  carries on and this one closes. On "no", the manual steps as before.
+  carries on (with the same `-o` and `--no-redact`) and this one closes.
+  The new copy never offers it again. On "no", the manual steps as before.
+- **An independent review** before the release found, and this release
+  fixes: a half-written installer could stay behind after a failed save;
+  the install steps were repeated after a successful install; Ctrl-C at
+  the new question took the suggestion instead of stopping.
 - A failed download, a "no" anywhere or a refused Windows question leads to
   the manual steps of 1.5.2, including the offer to open Wireshark's
   download page.

@@ -286,10 +286,11 @@ class TheAdminOffer(unittest.TestCase):
         with mock.patch.object(probe.sys, "frozen", True, create=True), \
                 mock.patch.object(probe.sys, "executable", "C:\\x\\chromiq-io-probe-windows.exe"):
             prog, params, _folder = probe.relaunch_command()
-        self.assertEqual((prog, params), ("C:\\x\\chromiq-io-probe-windows.exe", "--i1pro"))
+        self.assertEqual((prog, params), ("C:\\x\\chromiq-io-probe-windows.exe",
+                                          "--i1pro --relaunched"))
         prog, params, _folder = probe.relaunch_command()
         self.assertEqual(prog, sys.executable)
-        self.assertEqual(params, f'"{os.path.abspath(probe.__file__)}" --i1pro')
+        self.assertEqual(params, f'"{os.path.abspath(probe.__file__)}" --i1pro --relaunched')
 
     def test_default_launch_uses_runas_without_waiting(self):
         calls = []
@@ -329,7 +330,7 @@ class InTheSession(unittest.TestCase):
         patches = t152._windows_checks(admin, usbpcap, t152.XRITE_I1PRO2_WORKING) + [
             mock.patch.object(probe, "ask", mock.Mock(side_effect=list(answers))),
             mock.patch.object(probe, "offer_usbpcap_install",
-                              lambda folder: offers.append(folder) or offer_result),
+                              lambda folder=None: offers.append(folder) or offer_result),
             mock.patch.object(probe, "_writable_dir", lambda: self.tmp.name),
             mock.patch.object(probe, "windows_is_arm", lambda: arm),
         ]
@@ -346,7 +347,8 @@ class InTheSession(unittest.TestCase):
 
     def test_usbpcap_missing_offers_the_installer(self):
         _o, _s, offers = self.session(False, False, [""])
-        self.assertEqual(offers, [self.tmp.name])
+        # 1.5.3 review: a private new folder, not the folder next to the tool
+        self.assertEqual(offers, [None])
         body = dict(probe._SECTIONS)["Instrument recording session"]
         self.assertIn("The offer to fetch and start USBPcap's installer: declined", body)
 
@@ -412,7 +414,7 @@ class SelfTestSwitches(unittest.TestCase):
     def test_relaunch_keeps_the_switches(self):
         probe.SELFTEST.update({"pretend-usbpcap"})
         _prog, params, _f = probe.relaunch_command()
-        self.assertTrue(params.endswith("--i1pro --selftest pretend-usbpcap"))
+        self.assertTrue(params.endswith("--i1pro --relaunched --selftest pretend-usbpcap"))
 
     def test_hidden_from_help(self):
         out = io.StringIO()
@@ -514,6 +516,101 @@ class OnlyWhatIsPluggedInIsOffered(unittest.TestCase):
         screen, prompts = self.run_main([(0x0765, 0x6008)])
         self.assertIn("Plugged in now: ColorMunki Photo / Design or i1Studio", " ".join(screen.split()))
         self.assertIn("or just press Enter for 2", prompts)
+
+
+class AfterTheReview(unittest.TestCase):
+    """Fixes for the independent review of 1.5.3."""
+
+    def setUp(self):
+        t152._clean_state(self)
+        self.addCleanup(probe._RUN.clear)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        p = mock.patch.object(probe, "USBPCAP_INSTALLER", FAKE_INFO)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_a_cut_off_download_says_so(self):
+        got = probe.fetch_usbpcap_installer(self.tmp.name, fetch=lambda u, n: FAKE[:10],
+                                            info=FAKE_INFO)
+        self.assertEqual(got["kind"], "download failed")
+        self.assertIn("The download was cut off", got["message"])
+        self.assertEqual(os.listdir(self.tmp.name), [])
+
+    def test_the_file_is_checked_again_before_it_starts(self):
+        launched = []
+        real = probe.fetch_usbpcap_installer
+
+        def tamper(folder, fetch=None):
+            got = real(folder, fetch=lambda u, n: FAKE)
+            with open(got["path"], "ab") as fh:
+                fh.write(b"swapped")
+            return got
+        with mock.patch.object(probe, "fetch_usbpcap_installer", tamper), \
+                mock.patch.object(probe, "ask", mock.Mock(side_effect=["yes", "yes"])), \
+                redirect_stdout(io.StringIO()) as out:
+            result = probe.offer_usbpcap_install(self.tmp.name, launch=launched.append,
+                                                 installed=lambda: True)
+        self.assertEqual(result, "fingerprint mismatch")
+        self.assertEqual(launched, [])
+        self.assertIn("no longer matches its fingerprint", out.getvalue())
+        self.assertEqual(os.listdir(self.tmp.name), [])
+
+    def test_default_is_a_new_private_folder_removed_when_empty(self):
+        made = os.path.join(self.tmp.name, "chromiq-usbpcap-x")
+        os.mkdir(made)
+        with mock.patch.object(probe, "private_download_folder", lambda: made), \
+                mock.patch.object(probe, "ask", mock.Mock(side_effect=["yes", "yes", "yes"])), \
+                redirect_stdout(io.StringIO()):
+            result = probe.offer_usbpcap_install(fetch=lambda u, n: FAKE, launch=lambda p: 0,
+                                                 installed=lambda: True)
+        self.assertEqual(result, "installed")
+        self.assertFalse(os.path.exists(made))
+        self.assertTrue(probe.private_download_folder.__doc__)
+
+    def test_delete_question_matches_the_result(self):
+        for now, words in ((True, "now that USBPcap is installed"),
+                           (False, "Keep it if you want to try")):
+            asked = mock.Mock(side_effect=["yes", "yes", "no"])
+            with mock.patch.object(probe, "ask", asked), redirect_stdout(io.StringIO()):
+                probe.offer_usbpcap_install(self.tmp.name, fetch=lambda u, n: FAKE,
+                                            launch=lambda p: 0, installed=lambda n=now: n)
+            self.assertIn(words, asked.call_args_list[-1][0][0])
+            for f in os.listdir(self.tmp.name):
+                os.remove(os.path.join(self.tmp.name, f))
+
+    def test_relaunch_keeps_output_and_redaction_and_never_repeats(self):
+        probe._RUN.update(output="C:\\some folder\\r.txt", no_redact=True)
+        _p, params, _f = probe.relaunch_command()
+        self.assertIn('--relaunched -o "C:\\some folder\\r.txt" --no-redact', params)
+        probe._RUN["relaunched"] = True
+        asked = mock.Mock(return_value="yes")
+        launch = mock.Mock(return_value=0)
+        with mock.patch.object(probe, "ask", asked), redirect_stdout(io.StringIO()) as out:
+            self.assertFalse(probe.offer_relaunch_as_admin(launch=launch))
+        asked.assert_not_called()
+        launch.assert_not_called()
+        self.assertIn("still does not give it administrator rights", out.getvalue())
+
+    def test_no_pause_wording(self):
+        probe._RUN["no_pause"] = True
+        with mock.patch.object(probe, "ask", lambda *a, **k: "yes"), \
+                mock.patch.object(probe.time, "sleep", lambda s: None), \
+                redirect_stdout(io.StringIO()) as out:
+            with self.assertRaises(probe.Relaunched):
+                probe.offer_relaunch_as_admin(launch=lambda *a: 0)
+        self.assertIn("You can close this window now.", out.getvalue())
+
+    def test_ctrl_c_at_the_question_stops(self):
+        def interrupt(prompt, interruptible=False):
+            self.assertTrue(interruptible)
+            raise KeyboardInterrupt
+        args = mock.Mock(instrument=False, io=False, annotate=False, skip_annotate=False)
+        with mock.patch.object(probe, "ask", interrupt), \
+                mock.patch.object(probe, "_windows_driver_words", lambda: {}), \
+                redirect_stdout(io.StringIO()):
+            with self.assertRaises(KeyboardInterrupt):
+                probe.choose_what_to_do(args, "NO X-RITE DEVICES SEEN.")
 
 
 class Honesty(unittest.TestCase):

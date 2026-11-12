@@ -178,15 +178,17 @@ if ($f) {{ Upload $f.FullName ("report-" + (Split-Path "{folder}" -Leaf) + ".txt
             if WAIT_LINE in (lines[-1] if lines else ""):
                 return "WAITING", "\n".join(seen)
             for text, typed in answers:
-                if text in tail and tail != last_tail:
+                # answer only a prompt with nothing typed after it yet
+                ready = bool(lines) and lines[-1].rstrip().endswith((":", ">", "?"))
+                if text in tail and s != last_tail and ready:
                     if isinstance(typed, list):       # answers in turn, then Enter
                         typed = typed.pop(0) if typed else "\\n"
                     self.type(folder, typed)
-                    last_tail, since = tail, time.time()
+                    last_tail, since = s, time.time()
                     break
             else:
-                if tail != last_tail:
-                    last_tail, since = tail, time.time()
+                if s != last_tail:
+                    last_tail, since = s, time.time()
                 elif time.time() - since > stall:
                     self.shot(f"{key}-hung.png")
                     self.check(key, "no prompt left unanswered", False,

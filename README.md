@@ -336,10 +336,13 @@ showed, and (for instruments with lights) one line about what the lights did.
   screen naming its driver on Windows 11 25H2 (USBPcap issue #146), and how
   to remove it. Then it asks whether to fetch USBPcap's own installer. On a
   yes it downloads `USBPcapSetup-1.5.4.0.exe` from USBPcap's official GitHub
-  release over HTTPS (Python's standard `urllib`, nothing else) into the
-  folder next to the tool, and compares its SHA-256 fingerprint with the one
-  written into the tool's source (the same one Wireshark's build pins); on
-  any difference it deletes the file and starts nothing. It then asks again
+  release over HTTPS (Python's standard `urllib`, nothing else) into a new,
+  empty folder of your own (in your user's temporary folder; the tool shows
+  where), and compares its SHA-256 fingerprint with the one written into the
+  tool's source (the same one Wireshark's build pins), once after the
+  download and again just before starting it; on any difference it deletes
+  the file and starts nothing. (Not next to the tool: a Downloads folder can
+  hold old files that an installer running as administrator might pick up.) It then asks again
   before starting the installer, which it starts the normal, visible way: no
   silent switches, Windows asks its own User Account Control question, and
   USBPcap's installer shows its licence. Afterwards it checks whether USBPcap

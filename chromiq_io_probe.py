@@ -124,6 +124,8 @@ _LAST_REPORT: dict = {}
 # repository), never needed by a user: --selftest crash,bad-fingerprint,
 # offer-on-arm,pretend-usbpcap. See the README, "For testing".
 SELFTEST: set = set()
+# The options of this run that a copy started as administrator must keep.
+_RUN: dict = {}
 
 # How long to wait after starting the recorders before checking they are
 # alive. A module constant so the tests can shorten it.
@@ -4944,7 +4946,7 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
                                  "this tool needs on Windows) is not installed yet.")
             offer = "not offered (Windows on ARM)"
             if not checks.get("arm") or "offer-on-arm" in SELFTEST:
-                offer = offer_usbpcap_install(_writable_dir())
+                offer = offer_usbpcap_install()
             if offer == "installed":
                 outcome["reason"] = ("Nothing was recorded yet: USBPcap is now installed, "
                                      "and starts working after Windows has been restarted.")
@@ -4954,7 +4956,9 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
                 # screen: "HOW TO INSTALL IT" must not be repeated once it is.
                 outcome["help"] = [t for t in outcome["help"] if t != USBPCAP_INSTALL_TEXT]
             section("Instrument recording session",
-                    "[USBPcap is not installed]\n" + windows_checks_text(checks)
+                    ("[USBPcap was installed during this run; Windows needs a restart]\n"
+                     if offer == "installed" else "[USBPcap is not installed]\n")
+                    + windows_checks_text(checks)
                     + "\n\nThe offer to fetch and start USBPcap's installer: " + offer
                     + "\n\n" + "\n\n".join(outcome["help"]))
             return outcome
@@ -5137,11 +5141,15 @@ def main(argv: list | None = None) -> int:
     parser.add_argument("--pause", action="store_true",
                         help='always end with "Press Enter to close this window."')
     parser.add_argument("--selftest", default="", help=argparse.SUPPRESS)
+    parser.add_argument("--relaunched", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-pause", action="store_true",
                         help="never wait for Enter at the end (the launchers use this; "
                              "piped or redirected runs never wait anyway)")
     args = parser.parse_args(argv)
     REDACT = not args.no_redact
+    _RUN.clear()
+    _RUN.update(output=args.output, no_redact=args.no_redact, relaunched=args.relaunched,
+                no_pause=args.no_pause)
     SELFTEST.clear()
     SELFTEST.update(x.strip() for x in args.selftest.split(",") if x.strip())
     if SELFTEST:
@@ -5406,7 +5414,8 @@ def choose_what_to_do(args, summary: str) -> tuple:
         print("\n".join(what_to_do_question(sug, known, here, _windows_driver_words())))
         print()
         answer = ask(f"  Type 1, 2 or 3 (or  a  to look again), "
-                     f"or just press Enter for {sug['choice']}: ").strip().lower()
+                     f"or just press Enter for {sug['choice']}: ",
+                     interruptible=True).strip().lower()
         print()
         if answer == "":
             return sug["choice"], summary
@@ -5655,6 +5664,11 @@ def fetch_usbpcap_installer(folder: str, fetch=None, info=None) -> dict:
                                             type(exc).__name__) + "). This happens "
             "without internet, behind some company networks, or when GitHub is "
             "blocked. Nothing was saved. The steps above work without this tool.")}
+    if len(blob) < info["size"]:
+        return {"ok": False, "kind": "download failed", "path": None, "message": (
+            f"The download was cut off ({len(blob):,} of {info['size']:,} bytes arrived), "
+            "so it was thrown away and NOT started. Please try again later. The steps "
+            "above work without this tool.")}
     digest = hashlib.sha256(blob).hexdigest()
     if len(blob) != info["size"] or digest != info["sha256"]:
         return {"ok": False, "kind": "fingerprint mismatch", "path": None, "message": (
@@ -5684,6 +5698,28 @@ def fetch_usbpcap_installer(folder: str, fetch=None, info=None) -> dict:
         f"    into  {folder}\n"
         "    Its fingerprint (SHA-256) matches the one written into this tool, so it\n"
         "    is exactly the file USBPcap's author published.")}
+
+
+def file_matches(path: str, info=None) -> bool:
+    """The file on disk, checked again just before it is started (review,
+    1.5.3: the first check was on the downloaded bytes in memory)."""
+    info = info or USBPCAP_INSTALLER
+    if "bad-fingerprint" in SELFTEST:
+        info = dict(info, sha256="0" * 64)
+    try:
+        with open(path, "rb") as fh:
+            blob = fh.read(info["size"] + 1)
+    except OSError:
+        return False
+    return len(blob) == info["size"] and hashlib.sha256(blob).hexdigest() == info["sha256"]
+
+
+def private_download_folder() -> str:
+    """A new, empty folder only this user can write to (the user's own temp
+    folder). Not next to the tool: Downloads can hold old DLLs that an
+    installer running as administrator might load, and a shared folder lets
+    another account swap the file between the check and the start."""
+    return tempfile.mkdtemp(prefix="chromiq-usbpcap-")
 
 
 def _shell_execute(path: str, params: str = "", verb: str = "open",
@@ -5737,7 +5773,15 @@ def usbpcap_installed_now() -> bool:
     return parse_sc_query(run(["sc", "query", "USBPcap"], timeout=15))["installed"]
 
 
-def offer_usbpcap_install(folder: str, fetch=None, launch=None, installed=None) -> str:
+def _remove_empty(folder: str) -> None:
+    try:
+        os.rmdir(folder)
+    except OSError:
+        pass
+
+
+def offer_usbpcap_install(folder: str | None = None, fetch=None, launch=None,
+                          installed=None) -> str:
     """Windows, USBPcap missing: fetch and start its installer, by consent.
 
     Returns what happened, for the report: "declined", "download failed",
@@ -5755,7 +5799,17 @@ def offer_usbpcap_install(folder: str, fetch=None, launch=None, installed=None) 
         print("  All right. The steps above are all you need to do it yourself.")
         return "declined"
     print("\n  Downloading USBPcap's installer from its official page on GitHub...")
+    made = folder is None
+    if made:
+        try:
+            folder = private_download_folder()
+        except OSError as exc:
+            print(f"  No folder for the download could be made ({exc}). The steps above")
+            print("  work without this tool.")
+            return "download failed"
     got = fetch_usbpcap_installer(folder, fetch=fetch)
+    if not got["ok"] and made:
+        _remove_empty(folder)
     print("  " + got["message"].replace("\n", "\n  "))
     if not got["ok"]:
         return got["kind"]
@@ -5767,6 +5821,16 @@ def offer_usbpcap_install(folder: str, fetch=None, launch=None, installed=None) 
               f"      {got['path']}\n"
               "  Double-click it to start it, then restart Windows.")
         return "downloaded, not started"
+    if not file_matches(got["path"]):
+        print("\n  The saved file no longer matches its fingerprint, so it was NOT started")
+        print("  and has been deleted. That should not happen; please tell us.")
+        try:
+            os.remove(got["path"])
+        except OSError:
+            pass
+        if made:
+            _remove_empty(folder)
+        return "fingerprint mismatch"
     print("\n  Starting USBPcap's installer. Please answer Windows' question, then")
     print("  follow the installer's own pages. This window waits until it has closed.")
     try:
@@ -5791,11 +5855,16 @@ def offer_usbpcap_install(folder: str, fetch=None, launch=None, installed=None) 
         print("  it said it cannot install on this computer. Nothing else was changed.")
         print("  If it showed a message, please tell us what it said.")
         result = "still not installed"
-    if said_yes(ask("\n  Delete the downloaded installer file now? It is not needed any more\n"
-                    "  once USBPcap is installed. (yes / no): ")):
+    question = ("\n  Delete the downloaded installer file now? It is not needed any more\n"
+                "  now that USBPcap is installed. (yes / no): " if now else
+                "\n  Delete the downloaded installer file now? Keep it if you want to try\n"
+                "  again later by double-clicking it. (yes / no): ")
+    if said_yes(ask(question)):
         try:
             os.remove(got["path"])
             print("  Deleted.")
+            if made:
+                _remove_empty(folder)
         except OSError as exc:
             print(f"  It could not be deleted ({exc}). You can delete it yourself:")
             print(f"      {got['path']}")
@@ -5807,7 +5876,13 @@ def offer_usbpcap_install(folder: str, fetch=None, launch=None, installed=None) 
 def relaunch_command() -> tuple:
     """(program, parameters, folder) to start this tool again, straight into
     the handheld session."""
-    extra = f" --selftest {','.join(sorted(SELFTEST))}" if SELFTEST else ""
+    extra = " --relaunched"
+    if _RUN.get("output"):
+        extra += f' -o "{_RUN["output"]}"'
+    if _RUN.get("no_redact"):
+        extra += " --no-redact"
+    if SELFTEST:
+        extra += f" --selftest {','.join(sorted(SELFTEST))}"
     if getattr(sys, "frozen", False):
         return sys.executable, "--i1pro" + extra, os.getcwd()
     script = os.path.abspath(__file__)
@@ -5819,6 +5894,13 @@ def offer_relaunch_as_admin(launch=None) -> bool:
     Windows' own question. On success this copy closes (raises Relaunched)."""
     launch = launch or (lambda prog, params, folder: _shell_execute(
         prog, params, verb="runas", wait=False, folder=folder))
+    if _RUN.get("relaunched"):
+        # Started by this offer already and still not administrator (for
+        # example User Account Control is off): never offer again.
+        print("\n  This copy was started as administrator by the tool itself, but Windows")
+        print("  still does not give it administrator rights. The steps above say how")
+        print("  to start it as administrator yourself.")
+        return False
     if not said_yes(ask("\n  Start this tool again as administrator now? Windows will ask for\n"
                         "  permission, and a new window opens. (yes / no): ")):
         print("  All right. The steps above say how to do it yourself.")
@@ -5833,7 +5915,8 @@ def offer_relaunch_as_admin(launch=None) -> bool:
         print("  Nothing else happens; the steps above say how to do it yourself.")
         return False
     print("\n  A new window opens, running as administrator; carry on there.")
-    print("  This window closes now.")
+    print("  You can close this window now." if _RUN.get("no_pause")
+          else "  This window closes now.")
     time.sleep(3)
     raise Relaunched()
 
