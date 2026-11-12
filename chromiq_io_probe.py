@@ -74,6 +74,10 @@ ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/129"
 # that guess was wrong and has been removed. Anything not listed is reported
 # as "unknown" rather than guessed.
 XRITE_VID = 0x0971
+# 1.5: newer X-Rite / Calibrite products use this vendor ID (the i1Pro 3 and
+# the i1Studio, per ArgyllCMS's device table, insttypes.c:439-450).
+XRITE_VIDS = (0x0971, 0x0765)
+SESSION_KIND = "chromiq-instrument-session"
 KNOWN_PIDS = {
     0x2000: 'i1Pro family, reports itself as "eye-one" (seen from an i1Pro 2)',
     0x2004: 'i1iO table, reports itself as "Eye-One iO" (seen from an i1iO 2)',
@@ -1621,6 +1625,7 @@ _DARWIN_HDR = 40
 def _read_pcapng(blob: bytes):
     """Minimal pcapng reader: first interface's link type + packet blocks."""
     off, recs, linktype, endian = 0, [], None, "<"
+    tsdiv = 1e6                          # default: microseconds
     while off + 12 <= len(blob):
         btype = struct.unpack(endian + "I", blob[off:off + 4])[0]
         if btype == 0x0A0D0D0A:
@@ -1632,9 +1637,19 @@ def _read_pcapng(blob: bytes):
         body = blob[off + 8:off + blen - 4]
         if btype == 1 and linktype is None and len(body) >= 2:
             linktype = struct.unpack(endian + "H", body[:2])[0]
+            # Options: code 9 (if_tsresol) sets the time stamp resolution.
+            opt = 8
+            while opt + 4 <= len(body):
+                code, olen = struct.unpack(endian + "HH", body[opt:opt + 4])
+                if code == 0:
+                    break
+                if code == 9 and olen >= 1:
+                    res = body[opt + 4]
+                    tsdiv = float(2 ** (res & 0x7f)) if res & 0x80 else float(10 ** res)
+                opt += 4 + olen + ((-olen) % 4)
         elif btype == 6 and len(body) >= 20:
             _ifid, ts_hi, ts_lo, cap = struct.unpack(endian + "IIII", body[:16])
-            ts = ((ts_hi << 32) | ts_lo) / 1e6
+            ts = ((ts_hi << 32) | ts_lo) / tsdiv
             recs.append((ts, body[20:20 + cap]))
         elif btype == 3 and len(body) >= 4:
             recs.append((0.0, body[4:]))
@@ -1786,12 +1801,26 @@ def check_capture(path: str) -> dict:
     except (OSError, ValueError) as exc:
         return {"ok": False, "packets": 0, "xrite_packets": 0, "linktype": None,
                 "code": "unreadable", "verdict": f"not a readable recording: {exc}"}
+    identified = True
     if linktype == LINKTYPE_USB_DARWIN:
         mine = [d for _ts, d in recs if _darwin_vid(d) == XRITE_VID]
         xrite = len(mine)
     else:
-        mine = [d for _ts, d in recs]
-        xrite = len(recs)       # other formats: no per-packet device ID here
+        # 1.5: Windows and Linux records carry a bus and device address but no
+        # vendor ID, so the X-Rite device is found from its USB description
+        # (or its i1Pro commands). If the recording shows no device at all,
+        # every record counts, as in 1.4.
+        keys = record_device_keys(linktype, recs)
+        devices = device_map(capture_events(linktype, recs))
+        wanted = set(xrite_devices(devices))
+        if wanted:
+            mine = [d for (_ts, d), k in zip(recs, keys) if k in wanted]
+        elif any(v.get("vid") for v in devices.values()):
+            mine = []
+        else:
+            mine = [d for _ts, d in recs]
+            identified = False
+        xrite = len(mine)
     # Only the X-Rite packets count: a busy keyboard on the same bus must not
     # hide the fact that the table's own data came out as zeros.
     payload_bytes = 0
@@ -1802,9 +1831,9 @@ def check_capture(path: str) -> dict:
         nonzero += len(payload) - payload.count(0)
     if not recs:
         code, verdict = "empty", "EMPTY: nothing at all was recorded on this bus."
-    elif linktype == LINKTYPE_USB_DARWIN and not xrite:
+    elif not xrite and (linktype == LINKTYPE_USB_DARWIN or identified):
         code, verdict = "no-xrite", ("No X-Rite traffic on this bus. That is normal for "
-                                     "the buses the table is not plugged into.")
+                                     "the buses the instrument is not plugged into.")
     elif payload_bytes == 0:
         code, verdict = "no-payload", ("NO DATA: only the outline of the traffic was "
                                        "recorded, without any data bytes.")
@@ -1817,12 +1846,74 @@ def check_capture(path: str) -> dict:
     else:
         code, verdict = "ok", (f"OK: real data recorded ({nonzero:,} non-zero data "
                                f"bytes out of {payload_bytes:,}).")
+    if code == "ok" and not identified:
+        verdict += (" Which device each packet belongs to could not be told from this "
+                    "recording (it holds no USB description).")
     return {"ok": code == "ok", "packets": len(recs), "xrite_packets": xrite,
             "linktype": linktype, "code": code, "verdict": verdict,
-            "payload_bytes": payload_bytes, "nonzero_bytes": nonzero}
+            "payload_bytes": payload_bytes, "nonzero_bytes": nonzero,
+            "identified": identified}
+
+
+def record_device_keys(linktype: int, recs) -> list:
+    """(bus, device address) of each record, or None, in the same order."""
+    keys = []
+    for _ts, d in recs:
+        key = None
+        if linktype == LINKTYPE_USBPCAP and len(d) >= 27:
+            bus, dev = struct.unpack_from("<HH", d, 17)
+            key = (bus, dev)
+        elif linktype in (LINKTYPE_USB_LINUX, LINKTYPE_USB_LINUX_MMAPPED) and len(d) >= 14:
+            dev = d[11]
+            bus = struct.unpack_from("<H", d, 12)[0]
+            key = (bus, dev)
+        keys.append(key)
+    return keys
+
+
+def _write_pcap(dst: str, linktype: int, recs) -> bool:
+    out = [struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 262144, linktype)]
+    for ts, data in recs:
+        sec = int(ts)
+        usec = int(round((ts - sec) * 1e6))
+        if usec >= 1000000:
+            sec, usec = sec + 1, usec - 1000000
+        out.append(struct.pack("<IIII", sec, usec, len(data), len(data)))
+        out.append(data)
+    try:
+        with open(dst, "wb") as fh:
+            fh.write(b"".join(out))
+    except OSError:
+        return False
+    return True
 
 
 def filter_xrite_capture(src: str, dst: str) -> int:
+    """Write a copy holding only the X-Rite device's records. Returns count.
+
+    macOS: by the vendor ID in each record (1.4). Windows (USBPcap) and Linux
+    (usbmon): by the bus and device address that the recording's own USB
+    description shows for the X-Rite device (or, failing that, the device
+    that uses the i1Pro's commands). Nothing from any other device address
+    is copied: not the keyboard, not the mouse, not the hub.
+    """
+    try:
+        linktype, recs = _read_pcap(src)
+    except (OSError, ValueError):
+        return 0
+    if linktype in (LINKTYPE_USBPCAP, LINKTYPE_USB_LINUX, LINKTYPE_USB_LINUX_MMAPPED):
+        wanted = set(xrite_devices(device_map(capture_events(linktype, recs))))
+        if not wanted:
+            return 0
+        keys = record_device_keys(linktype, recs)
+        kept = [r for r, k in zip(recs, keys) if k in wanted]
+        if not kept or not _write_pcap(dst, linktype, kept):
+            return 0
+        return len(kept)
+    return _filter_darwin_capture(src, dst)
+
+
+def _filter_darwin_capture(src: str, dst: str) -> int:
     """Write a copy of a macOS pcap holding only X-Rite records. Returns count."""
     try:
         with open(src, "rb") as fh:
@@ -1935,6 +2026,1396 @@ def summarize_captures(paths):
         out.append("  Record again and TAKE A MEASUREMENT while it records.")
     out.append("=" * 68)
     return "\n".join(out)
+
+
+# --------------------------------------------------------------------------
+# 1.5: format-independent view of a recording
+#
+# Every supported capture format (Windows USBPcap, Linux usbmon, macOS) is
+# turned into the same list of events, so the i1Pro decoder below works on
+# all of them:
+#   {"kind": "control", "t", "bus", "dev", "rt", "req", "wValue", "wIndex",
+#    "wLength", "out": bytes, "in": bytes}
+#   {"kind": "data", "t", "bus", "dev", "ep", "type", "dir_in", "data": bytes}
+#
+# USBPcap header (27 bytes, little-endian), from the USBPcap documentation:
+#   headerLen u16, irpId u64, status u32, function u16, info u8 (bit 0 set
+#   = completion travelling back to the host), bus u16, device u16,
+#   endpoint u8 (bit 7 = IN), transfer u8 (0 iso, 1 interrupt, 2 control,
+#   3 bulk), dataLength u32; control transfers add one "stage" byte
+#   (0 setup, 1 data, 2 status, 3 complete).
+# Linux usbmon header (48 or 64 bytes, host byte order), from the kernel's
+#   usbmon documentation: id u64, type 'S'/'C'/'E', xfer_type u8 (same
+#   numbers as USBPcap), epnum u8, devnum u8, busnum u16, flag_setup,
+#   flag_data, ts_sec s64, ts_usec s32, status s32, length u32, len_cap u32,
+#   setup[8].
+# macOS: the 40-byte header described above; byte 29 is the device address,
+#   30 the endpoint address and 31 the endpoint type (USB descriptor order:
+#   0 control, 1 isochronous, 2 bulk, 3 interrupt). Only the vendor/product
+#   fields were checked against real recordings so far.
+# --------------------------------------------------------------------------
+
+_XFER_NAMES = {0: "isochronous", 1: "interrupt", 2: "control", 3: "bulk"}
+_DARWIN_EP_TYPES = {0: "control", 1: "isochronous", 2: "bulk", 3: "interrupt"}
+
+
+def _setup_fields(setup: bytes) -> dict:
+    rt, req, wvalue, windex, wlen = struct.unpack("<BBHHH", setup[:8])
+    return {"rt": rt, "req": req, "wValue": wvalue, "wIndex": windex, "wLength": wlen}
+
+
+def _plausible_setup(setup: bytes) -> bool:
+    return (len(setup) >= 8 and ((setup[0] >> 5) & 3) <= 2 and (setup[0] & 0x1f) <= 3)
+
+
+def _events_usbpcap(recs) -> list:
+    events = []
+    pending = {}                      # (bus, irp) -> control event being built
+    for ts, d in recs:
+        if len(d) < 27:
+            continue
+        (hlen, irp, _status, _func, info, bus, dev, ep, xfer,
+         dlen) = struct.unpack_from("<HQIHBHHBBI", d, 0)
+        if hlen < 27 or hlen > len(d):
+            continue
+        data = d[hlen:hlen + dlen]
+        completion = bool(info & 1)
+        if xfer == 2:
+            stage = d[27] if hlen >= 28 else None
+            key = (bus, irp)
+            if stage == 0 and not completion and _plausible_setup(data):
+                ev = {"kind": "control", "t": ts, "bus": bus, "dev": dev,
+                      "out": bytes(data[8:]), "in": b"", "_done": False}
+                ev.update(_setup_fields(data))
+                pending[key] = ev
+                events.append(ev)
+                continue
+            ev = pending.get(key)
+            if ev is None:
+                continue
+            if not completion and stage == 1 and not (ev["rt"] & 0x80):
+                ev["out"] += bytes(data)
+            elif completion:
+                if (ev["rt"] & 0x80) and data and not ev["in"]:
+                    ev["in"] = bytes(data)
+                if stage in (2, 3) or stage is None:
+                    ev["_done"] = True
+                    pending.pop(key, None)
+            continue
+        dir_in = bool(ep & 0x80)
+        if not data:
+            continue
+        # OUT data travels with the request, IN data with its completion.
+        if dir_in != completion:
+            continue
+        events.append({"kind": "data", "t": ts, "bus": bus, "dev": dev, "ep": ep,
+                       "type": _XFER_NAMES.get(xfer, f"type {xfer}"),
+                       "dir_in": dir_in, "data": bytes(data)})
+    for ev in events:
+        ev.pop("_done", None)
+    return events
+
+
+def _events_usbmon(recs, hdr_len: int) -> list:
+    events = []
+    pending = {}
+    for ts, d in recs:
+        if len(d) < hdr_len:
+            continue
+        (uid, typ, xfer, epnum, devnum, busnum, flag_setup, _flag_data, _sec, _usec,
+         _status, _length, len_cap, setup) = struct.unpack_from("<QcBBBHccqiiII8s", d, 0)
+        data = d[hdr_len:hdr_len + len_cap]
+        key = (busnum, uid)
+        if xfer == 2:
+            if typ == b"S" and flag_setup == b"\x00" and _plausible_setup(setup):
+                ev = {"kind": "control", "t": ts, "bus": busnum, "dev": devnum,
+                      "out": bytes(data), "in": b""}
+                ev.update(_setup_fields(setup))
+                pending[key] = ev
+                events.append(ev)
+            elif typ == b"C":
+                ev = pending.pop(key, None)
+                if ev is not None and (ev["rt"] & 0x80):
+                    ev["in"] = bytes(data)
+            continue
+        dir_in = bool(epnum & 0x80)
+        if not data:
+            continue
+        if (typ == b"C") != dir_in:
+            continue
+        events.append({"kind": "data", "t": ts, "bus": busnum, "dev": devnum, "ep": epnum,
+                       "type": _XFER_NAMES.get(xfer, f"type {xfer}"),
+                       "dir_in": dir_in, "data": bytes(data)})
+    return events
+
+
+def _events_darwin(recs) -> list:
+    events = []
+    pending = {}
+    for ts, d in recs:
+        if len(d) < _DARWIN_HDR:
+            continue
+        direction = d[3]
+        dlen = struct.unpack("<I", d[4:8])[0]
+        seq = struct.unpack("<I", d[0x10:0x14])[0]
+        dev = d[29]
+        ep = d[30]
+        etype = _DARWIN_EP_TYPES.get(d[31] & 3, "unknown")
+        vid = struct.unpack("<H", d[0x24:0x26])[0]
+        pid = struct.unpack("<H", d[0x26:0x28])[0]
+        payload = d[_darwin_hdr_len(d):]
+        bus = (vid << 16) | pid if not dev else 0
+        if direction == 0 and _plausible_setup(payload[:8]) and (ep & 0x7f) == 0:
+            wlen = struct.unpack("<H", payload[6:8])[0]
+            if len(payload) in (8, 8 + wlen):
+                ev = {"kind": "control", "t": ts, "bus": bus, "dev": dev,
+                      "out": bytes(payload[8:]), "in": b"", "vid": vid, "pid": pid}
+                ev.update(_setup_fields(payload))
+                pending[seq] = ev
+                events.append(ev)
+                continue
+        if direction == 1 and seq in pending:
+            ev = pending.pop(seq)
+            if ev["rt"] & 0x80:
+                ev["in"] = bytes(payload[:dlen] if dlen else payload)
+            continue
+        dir_in = bool(ep & 0x80)
+        data = payload[:dlen] if dlen else payload
+        if not data or (direction == 1) != dir_in:
+            continue
+        events.append({"kind": "data", "t": ts, "bus": bus, "dev": dev, "ep": ep,
+                       "type": etype, "dir_in": dir_in, "data": bytes(data),
+                       "vid": vid, "pid": pid})
+    return events
+
+
+def capture_events(linktype: int, recs) -> list:
+    """The recording as a list of control and data events (see above)."""
+    if linktype == LINKTYPE_USBPCAP:
+        return _events_usbpcap(recs)
+    if linktype == LINKTYPE_USB_LINUX:
+        return _events_usbmon(recs, 48)
+    if linktype == LINKTYPE_USB_LINUX_MMAPPED:
+        return _events_usbmon(recs, 64)
+    if linktype == LINKTYPE_USB_DARWIN:
+        return _events_darwin(recs)
+    return []
+
+
+def device_map(events) -> dict:
+    """(bus, dev) -> {"vid", "pid", "how", "config": [lines]} for every device
+    whose identity the recording shows.
+
+    The identity comes from the device descriptor in the recording (USBPcap
+    adds it when "inject already connected devices descriptors" is on, and
+    any replug or enumeration carries it), from the macOS header, or, as a
+    last resort, from the device using one instrument family's own commands.
+    """
+    devices: dict = {}
+    for ev in events:
+        key = (ev["bus"], ev["dev"])
+        if "vid" in ev and ev["vid"]:
+            devices.setdefault(key, {"vid": ev["vid"], "pid": ev["pid"],
+                                     "how": "from the recording's own header",
+                                     "config": []})
+        if ev["kind"] != "control" or ev["rt"] != 0x80 or ev["req"] != 6:
+            continue
+        dtype = ev["wValue"] >> 8
+        blob = ev["in"]
+        if dtype == 1 and len(blob) >= 12 and blob[1] == 1:
+            vid, pid = struct.unpack("<HH", blob[8:12])
+            have = devices.get(key)
+            if have is None or have["how"] != "from its USB description":
+                devices[key] = {"vid": vid, "pid": pid, "how": "from its USB description",
+                                "config": have["config"] if have else []}
+        elif dtype == 2 and len(blob) >= 9 and blob[1] == 2:
+            lines = parse_config_descriptor(blob)
+            entry = devices.setdefault(key, {"vid": None, "pid": None,
+                                             "how": "unknown", "config": []})
+            if len(lines) > len(entry["config"]):
+                entry["config"] = lines
+    # Last resort: the families' vendor requests are distinctive enough to
+    # point at the instrument when no description was recorded.
+    votes: dict = {}
+    for ev in events:
+        if ev["kind"] != "control" or (ev["rt"] & 0x60) != 0x40 or not ev["dev"]:
+            continue
+        key = (ev["bus"], ev["dev"])
+        if key in devices and devices[key].get("vid"):
+            continue
+        for fam_key, fam in FAMILIES.items():
+            if fam_key != "generic" and ev["req"] in fam["requests"]:
+                votes.setdefault(key, {}).setdefault(fam_key, 0)
+                votes[key][fam_key] += 1
+    for key, fams in votes.items():
+        best = max(fams, key=lambda k: fams[k])
+        entry = devices.setdefault(key, {"vid": None, "pid": None, "how": "unknown",
+                                         "config": []})
+        entry["how"] = (f"guessed: it uses the {FAMILIES[best]['short']}'s own commands")
+        entry["guess_family"] = best
+    return devices
+
+
+def xrite_devices(devices: dict) -> list:
+    return [k for k, v in devices.items()
+            if v.get("vid") in XRITE_VIDS or v.get("guess_family")]
+
+
+# --------------------------------------------------------------------------
+# 1.5: what the open driver knows about each instrument family
+#
+# LICENCE NOTE. This tool is MIT licensed. ArgyllCMS, where these facts come
+# from, is GPL (version 2 or later). No Argyll code or table is copied here:
+# the decoders below are written from scratch from the facts (request
+# numbers, field order, sizes, byte order), and the comments only point at
+# where ArgyllCMS 3.5.0 documents each fact (spectro/i1pro_imp.c, .h;
+# i1pro3_imp.c, .h; munki_imp.c, .h; insttypes.c), so anyone can check them.
+#
+# Byte order differs per family: the i1Pro and i1Pro 2 use BIG-endian fields
+# (i1pro_imp.c:6203-6240); the i1Pro 3 (read_ORD32_le, i1pro3_imp.c:5021)
+# and the ColorMunki (munki_imp.c:441-446) use LITTLE-endian.
+# --------------------------------------------------------------------------
+
+def _be(data: bytes, start: int, size: int):
+    if len(data) < start + size:
+        return None
+    return int.from_bytes(data[start:start + size], "big")
+
+
+def _le(data: bytes, start: int, size: int):
+    if len(data) < start + size:
+        return None
+    return int.from_bytes(data[start:start + size], "little")
+
+
+def _short_hash(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()[:8]
+
+
+def _raw(out, inn):
+    parts = []
+    if out:
+        parts.append(f"out={out.hex()}")
+    if inn:
+        parts.append(f"in={inn.hex()}")
+    return " ".join(parts)
+
+
+# ---- i1Pro (Rev A to D) and i1Pro 2 (Rev E) ------------------------------
+
+I1PRO2_FLAG_SCAN = 0x0001          # i1pro_imp.h:1078
+I1PRO2_FLAG_RULER_START = 0x0004   # i1pro_imp.h:1079
+I1PRO2_FLAG_RULER_END = 0x0008     # i1pro_imp.h:1080
+I1PRO2_ILLUMINANT_MASK = 0x0300    # i1pro_imp.h:1073-1075
+I1PRO2_KNOWN_FLAGS = 0x030D
+_ILLUMINANTS = {0x0000: "no light (dark reading)", 0x0100: "lamp",
+                0x0200: "UV LED", 0x0300: "wavelength LED"}
+
+
+def i1pro2_flag_text(flags: int) -> str:
+    parts = ["scan" if flags & I1PRO2_FLAG_SCAN else "spot",
+             _ILLUMINANTS[flags & I1PRO2_ILLUMINANT_MASK]]
+    if flags & I1PRO2_FLAG_RULER_START:
+        parts.append("RULER START")
+    if flags & I1PRO2_FLAG_RULER_END:
+        parts.append("RULER END")
+    other = flags & ~I1PRO2_KNOWN_FLAGS & 0xFFFF
+    if other:
+        parts.append(f"UNKNOWN BITS 0x{other:04x}")
+    return " + ".join(parts)
+
+
+def _legacy_flag_text(flags: int) -> str:
+    # i1pro_imp.h:984-987, the original i1Pro's one-byte flags
+    parts = ["scan" if flags & 0x01 else "spot",
+             "no lamp" if flags & 0x02 else "lamp",
+             "normal gain" if flags & 0x04 else "high gain"]
+    if flags & 0x08:
+        parts.append("bit 0x08 (meaning unknown)")
+    if flags & 0xF0:
+        parts.append(f"UNKNOWN BITS 0x{flags & 0xF0:02x}")
+    return " + ".join(parts)
+
+
+def _d_setparams(out, inn):
+    blob = out or inn
+    if len(blob) < 7:
+        return _raw(out, inn)
+    return (f"integration {_be(blob, 0, 2)} clocks, lamp {_be(blob, 2, 2)} clocks, "
+            f"{_be(blob, 4, 2)} readings, flags 0x{blob[6]:02x} = {_legacy_flag_text(blob[6])}")
+
+
+def _d_eeprom(out, inn):
+    if len(out) < 6:
+        return _raw(out, inn)
+    return f"address 0x{_be(out, 0, 4):x}, {_be(out, 4, 2)} bytes"
+
+
+def _d_misc(out, inn):
+    if len(inn) < 8:
+        return _raw(out, inn)
+    power = {0: "high power", 8: "low power"}.get(inn[7], f"power mode {inn[7]}")
+    return (f"firmware {_be(inn, 0, 2)}, (unknown 0x{_be(inn, 2, 2):04x}), "
+            f"max sensor value {_be(inn, 4, 2)}, (unknown 0x{inn[6]:02x}), {power}")
+
+
+def _d_reset(out, inn):
+    if not out:
+        return ""
+    return f"mask 0x{out[0]:02x}" + (f", second byte 0x{out[1]:02x}" if len(out) > 1 else "")
+
+
+def _d_mcmode_get(out, inn):
+    if len(inn) < 6:
+        return _raw(out, inn)
+    return (f"max mode {inn[0]}, mode {inn[1]}, (unknown {inn[2]}), sub-clock divider "
+            f"{inn[3]}, integration clock {inn[4]} us, subtract mode 0x{inn[5]:02x}")
+
+
+def _d_chipid(out, inn):
+    return f"chip ID <hashed:{_short_hash(inn)}>" if inn else ""
+
+
+def _d_trigger2(out, inn):
+    if len(out) < 14:
+        return _raw(out, inn)
+    flags = _be(out, 12, 2)
+    return (f"integration {_be(out, 0, 4)} clocks, lamp {_be(out, 4, 4)} clocks, "
+            f"{_be(out, 8, 4)} readings, flags 0x{flags:04x} = {i1pro2_flag_text(flags)}")
+
+
+def _d_measchar(out, inn):
+    if len(inn) < 16:
+        return _raw(out, inn)
+    return (f"clock {_be(inn, 0, 4)} us, {_be(inn, 4, 4)} extra bands, "
+            f"{_be(inn, 8, 4)} bands, sub divider {_be(inn, 12, 4)}")
+
+
+def _d_i1pro_ledseq(out, inn):
+    return f"light sequence of {_be(out, 0, 4)} bytes follows on 0x03" if len(out) >= 4 \
+        else _raw(out, inn)
+
+
+def _d_ruler(out, inn):
+    return f"parameter 0x{_be(out, 0, 2):04x}" if len(out) >= 2 else _raw(out, inn)
+
+
+def _d_uvvolts(out, inn):
+    if len(inn) < 4:
+        return _raw(out, inn)
+    return f"before {_be(inn, 0, 2)}, after {_be(inn, 2, 2)}"
+
+
+def _d_eesize(out, inn):
+    return f"{_be(inn, 0, 4)} bytes" if len(inn) >= 4 else _raw(out, inn)
+
+
+def _i1pro_trigger(req, out):
+    """(flags or None, flag text, readings asked for, integration clocks)."""
+    if req == 0xD4 and len(out) >= 14:
+        flags = _be(out, 12, 2)
+        return flags, i1pro2_flag_text(flags), _be(out, 8, 4), _be(out, 0, 4)
+    return None, "trigger (parameters set earlier with 0xC1)", None, None
+
+
+# request -> (name, where Argyll sends it, decoder, does Argyll's live code send it)
+I1PRO_REQUESTS = {
+    0xC0: ("trigger measurement (original i1Pro)", "i1pro_imp.c:11571", _raw, True),
+    0xC1: ("set measurement parameters (original i1Pro)", "i1pro_imp.c:11530",
+           _d_setparams, True),
+    0xC2: ("get measurement parameters", "i1pro_imp.c:11465", _d_setparams, True),
+    # Argyll's EEPROM write is compiled only with ENABLE_WRITE (i1pro_imp.c:11328).
+    0xC3: ("write EEPROM", "i1pro_imp.c:11336", _d_eeprom, False),
+    0xC4: ("read EEPROM", "i1pro_imp.c:11248", _d_eeprom, True),
+    0xC9: ("get status", "i1pro_imp.c:11413", _d_misc, True),
+    0xCA: ("reset", "i1pro_imp.c:11200", _d_reset, True),
+    0xCF: ("set measurement clock mode", "i1pro_imp.c:11846", _raw, True),
+    0xD0: ("end button handling", "i1pro_imp.c:12016", _raw, True),
+    0xD1: ("get measurement clock mode", "i1pro_imp.c:11890", _d_mcmode_get, True),
+    0xD2: ("get chip ID", "i1pro_imp.c:12082", _d_chipid, True),
+    0xD4: ("trigger measurement (i1Pro 2)", "i1pro_imp.c:12178", _d_trigger2, True),
+    0xD5: ("get measurement characteristics (i1Pro 2)", "i1pro_imp.c:12115",
+           _d_measchar, True),
+    # Every call of the light functions is inside #ifdef NEVER (:584, :1448, :12380).
+    0xD6: ("indicator lights: sequence", "i1pro_imp.c:12331", _d_i1pro_ledseq, False),
+    # i1pro2_stop_ruler is never called (i1pro_imp.c:12264).
+    0xD7: ("RULER: stop tracking (?)", "i1pro_imp.c:12277", _d_ruler, False),
+    0xD8: ("get UV LED voltages", "i1pro_imp.c:12241", _d_uvvolts, True),
+    0xD9: ("get EEPROM size", "i1pro_imp.c:12051", _d_eesize, True),
+}
+
+# Indicator lights of the i1Pro 2 (i1pro_imp.c:12291-12317 documents it):
+#   BE32 number of blocks, then per block: BE32 block length (the repeat
+#   field plus the codes), BE32 repeats (0xFFFFFFFF = forever), then codes of
+#   3 bytes: a light mask and a BE16 time in clocks of about 73 us.
+#   Mask: 0x01 red right, 0x02 green right, 0x04 blue right,
+#         0x08 red left,  0x10 green left,  0x20 blue left.
+LED_CLOCK_SECONDS = 73e-6
+
+
+def _rgb_name(r, g, b) -> str:
+    return {(0, 0, 0): "off", (1, 0, 0): "red", (0, 1, 0): "green", (0, 0, 1): "blue",
+            (1, 1, 0): "yellow", (0, 1, 1): "cyan", (1, 0, 1): "magenta",
+            (1, 1, 1): "white"}[(int(bool(r)), int(bool(g)), int(bool(b)))]
+
+
+def led_mask_text(mask: int) -> str:
+    right = _rgb_name(mask & 0x01, mask & 0x02, mask & 0x04)
+    left = _rgb_name(mask & 0x08, mask & 0x10, mask & 0x20)
+    text = right if right == left else f"left {left}, right {right}"
+    if mask & 0xC0:
+        text += f" (unknown bits 0x{mask & 0xC0:02x})"
+    return text
+
+
+def decode_led_sequence(blob: bytes) -> dict:
+    """Decode an i1Pro 2 light sequence. Returns {"ok", "blocks", "text", "colours"}."""
+    nblocks = _be(blob, 0, 4)
+    if nblocks is None or nblocks > 64:
+        return {"ok": False, "blocks": [], "colours": [],
+                "text": f"undecodable: {blob[:48].hex()}"}
+    off = 4
+    blocks = []
+    for _ in range(nblocks):
+        blen = _be(blob, off, 4)
+        reps = _be(blob, off + 4, 4)
+        if blen is None or reps is None or blen < 4 or off + 4 + blen > len(blob):
+            return {"ok": False, "blocks": blocks, "colours": [],
+                    "text": f"undecodable after {len(blocks)} block(s): {blob[:48].hex()}"}
+        codes = []
+        pos = off + 8
+        while pos + 3 <= off + 4 + blen:
+            codes.append((blob[pos], _be(blob, pos + 1, 2)))
+            pos += 3
+        blocks.append({"repeats": reps, "codes": codes})
+        off += 4 + blen
+    parts = []
+    for blk in blocks:
+        steps = ", ".join(f"{led_mask_text(m)} {c * LED_CLOCK_SECONDS * 1000:.0f} ms"
+                          for m, c in blk["codes"])
+        reps = "forever" if blk["repeats"] == 0xFFFFFFFF else f"x{blk['repeats']}"
+        parts.append(f"[{steps}] {reps}")
+    colours = sorted({led_mask_text(m) for blk in blocks for m, _c in blk["codes"]} - {"off"})
+    return {"ok": True, "blocks": blocks, "text": " then ".join(parts) or "(empty)",
+            "colours": colours}
+
+
+# ---- i1Pro 3 and 3 Plus -------------------------------------------------
+
+def _i1pro3_meas_flags(flags: int, reflective: bool) -> str:
+    # i1pro3_imp.h:1335-1351
+    parts = []
+    if reflective:
+        ill = flags & 0x07
+        parts.append({0: "no light", 3: "lamp (all LEDs)", 4: "lamp, polarised mode"}.get(
+            ill, f"light code {ill}"))
+        known = 0x17
+    else:
+        parts.append("green wavelength LED" if flags & 0x40 else "no light")
+        if flags & 0x80:
+            parts.append("bit 0x80 (Argyll: white flash before integration)")
+        known = 0xD0
+    if flags & 0x10:
+        parts.append("RULER (zebra) read")
+    if flags & ~known:
+        parts.append(f"UNKNOWN BITS 0x{flags & ~known:x}")
+    return " + ".join(parts)
+
+
+def _d3_fw(out, inn):
+    if len(inn) < 6:
+        return _raw(out, inn)
+    n = _le(inn, 2, 4) or 0
+    text = inn[6:6 + min(n, 49)].decode("ascii", "replace").strip("\x00")
+    return f"firmware {inn[0]}.{inn[1]} '{text}'"
+
+
+def _d3_params(out, inn):
+    if len(inn) < 12:
+        return _raw(out, inn)
+    clk = struct.unpack("<f", inn[8:12])[0]
+    return f"min integration {_le(inn, 0, 4)} clocks, clock {clk * 1e6:.3f} us"
+
+
+def _d3_eeprom(out, inn):
+    if len(out) < 6:
+        return _raw(out, inn)
+    return f"address 0x{_le(out, 0, 4):x}, {_le(out, 4, 2)} bytes"
+
+
+def _d3_ledcur(out, inn):
+    return "currents " + ", ".join(str(b) for b in out) if out else ""
+
+
+def _d3_scanind(out, inn):
+    if len(out) < 2:
+        return _raw(out, inn)
+    return (f"green light on after {out[0]} and off after {out[1]} units of two "
+            f"minimum integration times (255 = until the end)")
+
+
+def _d3_meas_refl(out, inn):
+    if len(out) < 8:
+        return _raw(out, inn)
+    n, f = _le(out, 0, 4), _le(out, 4, 4)
+    return (f"{n} readings{' (scan: until released)' if n == 0 else ''}, flags 0x{f:x} = "
+            f"{_i1pro3_meas_flags(f, True)}")
+
+
+def _d3_meas_emis(out, inn):
+    if len(out) < 12:
+        return _raw(out, inn)
+    n, c, f = _le(out, 0, 4), _le(out, 4, 4), _le(out, 8, 4)
+    return (f"{n} readings, integration {c} clocks, flags 0x{f:x} = "
+            f"{_i1pro3_meas_flags(f, False)}")
+
+
+def _d3_ledseq(out, inn):
+    return f"light sequence of {_le(out, 0, 4)} bytes follows on 0x02" if len(out) >= 4 \
+        else _raw(out, inn)
+
+
+def _d3_lasterr(out, inn):
+    return f"error code {_le(inn, 0, 4)}" if len(inn) >= 4 else _raw(out, inn)
+
+
+def _i1pro3_trigger(req, out):
+    if req == 0x22 and len(out) >= 8:
+        f = _le(out, 4, 4)
+        return f, _i1pro3_meas_flags(f, True), _le(out, 0, 4), None
+    if req == 0x27 and len(out) >= 12:
+        f = _le(out, 8, 4)
+        return f, _i1pro3_meas_flags(f, False), _le(out, 0, 4), _le(out, 4, 4)
+    return None, "trigger", None, None
+
+
+I1PRO3_REQUESTS = {          # i1pro3_imp.h:1206-1220
+    0x20: ("get firmware version", "i1pro3_imp.c:5007", _d3_fw, True),
+    0x21: ("get parameters", "i1pro3_imp.c:5067", _d3_params, True),
+    0x22: ("measure (reflective)", "i1pro3_imp.c:5459", _d3_meas_refl, True),
+    0x24: ("read EEPROM", "i1pro3_imp.c:5119", _d3_eeprom, True),
+    0x25: ("simulate event", "i1pro3_imp.c:5803", _raw, True),
+    0x26: ("get chip ID", "i1pro3_imp.c:5170", _d_chipid, True),
+    0x27: ("measure (emissive / dark)", "i1pro3_imp.c:5463", _d3_meas_emis, True),
+    0x29: ("indicator lights: sequence", "i1pro3_imp.c:6162", _d3_ledseq, True),
+    0x2B: ("get last error", "i1pro3_imp.c:6054", _d3_lasterr, True),
+    0x2C: ("get board temperature", "i1pro3_imp.c:5292", _raw, True),
+    0x2D: ("set LED currents", "i1pro3_imp.c:5217", _d3_ledcur, True),
+    0x38: ("get adapter type", "i1pro3_imp.c:5253", _raw, True),
+    # Defined in Argyll but never called (i1pro3_imp.c:5380, :5317).
+    0x3A: ("set tint multiplier", "i1pro3_imp.c:5398", _raw, False),
+    0x3B: ("set scan-start indicator timing", "i1pro3_imp.c:5343", _d3_scanind, False),
+    0x66: ("start event reports on 0x83", "i1pro3_imp.c:5881", _raw, True),
+}
+
+
+def decode_i1pro3_led(blob: bytes) -> dict:
+    """i1Pro 3 light sequence: groups of 3 bytes (i1pro3_imp.c:6074-6141).
+
+    Argyll's notes on the first byte are partly guesses; only the colour
+    bits and blink/pulse it lists are decoded, the rest is shown raw.
+    """
+    groups = [blob[i:i + 3] for i in range(0, len(blob) - len(blob) % 3, 3)]
+    if not groups:
+        return {"ok": True, "text": "off" if len(blob) < 3 else blob.hex(), "colours": []}
+    parts = []
+    colours = set()
+    for g in groups:
+        b0, b1, b2 = g[0], g[1], g[2]
+        if b0 & 0x80:
+            colour = "unknown (top bit set)"
+        elif b0 & 0x10 and not b0 & 0x08:
+            colour = "white"
+        elif b0 & 0x0C == 0x0C:
+            colour = "red"
+        elif b0 & 0x0C == 0x08:
+            colour = "green"
+        else:
+            colour = "off"
+        style = "blink once" if b0 & 0x01 else "pulse"
+        if colour != "off":
+            colours.add(colour)
+        parts.append(f"{colour} {style} (timing 0x{b1:02x}, count {b2}) [{g.hex()}]")
+    return {"ok": True, "text": "; ".join(parts), "colours": sorted(colours)}
+
+
+# ---- ColorMunki Photo / Design and i1Studio ------------------------------
+
+_MUNKI_SPOS = {0: "between positions / projector", 1: "surface", 2: "calibration",
+               3: "ambient"}
+
+
+def _dm_trigger(out, inn):
+    if len(out) < 12:
+        return _raw(out, inn)
+    return (f"{'lamp' if out[0] else 'no lamp'}, {'scan' if out[1] else 'spot'}, "
+            f"{'high' if out[2] else 'normal'} gain, hold temperature duty {out[3]}, "
+            f"integration {_le(out, 4, 4)} clocks, {_le(out, 8, 4)} readings")
+
+
+def _dm_eeprom(out, inn):
+    if len(out) < 8:
+        return _raw(out, inn)
+    return f"address 0x{_le(out, 0, 4):x}, {_le(out, 4, 4)} bytes"
+
+
+def _dm_version(out, inn):
+    if not inn:
+        return ""
+    text = inn.split(b"\x00")[0].decode("ascii", "replace")
+    return f"'{text}'"
+
+
+def _dm_firmware(out, inn):
+    if len(inn) < 24:
+        return _raw(out, inn)
+    return (f"firmware {_le(inn, 0, 4)}.{_le(inn, 4, 4)}, tick {_le(inn, 8, 4)}, "
+            f"min integration {_le(inn, 12, 4)}, EEPROM {_le(inn, 16, 4)} x "
+            f"{_le(inn, 20, 4)}")
+
+
+def _dm_status(out, inn):
+    if len(inn) < 2:
+        return _raw(out, inn)
+    return (f"dial: {_MUNKI_SPOS.get(inn[0], f'unknown 0x{inn[0]:x}')}, button "
+            f"{'pressed' if inn[1] == 1 else 'released' if inn[1] == 0 else hex(inn[1])}")
+
+
+def _dm_measstate(out, inn):
+    if len(inn) < 16:
+        return _raw(out, inn)
+    return (f"LED temperature range {_le(inn, 0, 4)}, LED temperature {_le(inn, 4, 4)}, "
+            f"duty cycle {_le(inn, 8, 4)}, A/D feedback {_le(inn, 12, 4)}")
+
+
+def _dm_led(out, inn):
+    if len(out) < 16:
+        return _raw(out, inn)
+    pulses = struct.unpack("<i", out[12:16])[0]
+    return (f"on {_le(out, 0, 4)} ms, off {_le(out, 4, 4)} ms, transition "
+            f"{_le(out, 8, 4)} ms, pulses {'as many as possible' if pulses == -1 else pulses}")
+
+
+def _munki_trigger(req, out):
+    if len(out) >= 12:
+        flags = (out[0] and 1) | (out[1] and 2) | (out[2] and 4)
+        return flags, _dm_trigger(out, b""), _le(out, 8, 4), _le(out, 4, 4)
+    return None, "trigger", None, None
+
+
+MUNKI_REQUESTS = {           # munki_imp.c:8540-9100
+    0x80: ("trigger measurement", "munki_imp.c:8883", _dm_trigger, True),
+    0x81: ("read EEPROM", "munki_imp.c:8567", _dm_eeprom, True),
+    0x85: ("get version string", "munki_imp.c:8696", _dm_version, True),
+    0x86: ("get firmware parameters", "munki_imp.c:8631", _dm_firmware, True),
+    0x87: ("get status (dial position, button)", "munki_imp.c:8775", _dm_status, True),
+    0x8A: ("get chip ID", "munki_imp.c:8670", _d_chipid, True),
+    0x8E: ("simulate event", "munki_imp.c:9088", _raw, True),
+    0x8F: ("get measurement state", "munki_imp.c:8734", _dm_measstate, True),
+    0x92: ("indicator light", "munki_imp.c:8840", _dm_led, True),
+}
+
+
+def decode_munki_event(data: bytes) -> str:
+    code = _le(data, 0, 4)
+    stamp = _le(data, 4, 4)
+    name = {0: "none", 1: "button pressed", 2: "button released",
+            0x100: "dial turned"}.get(code, f"unknown 0x{code:x}" if code is not None else "?")
+    return f"{name}" + (f" at {stamp} ms" if stamp is not None else "")
+
+
+_STANDARD_REQUESTS = {0: "GET_STATUS", 1: "CLEAR_FEATURE", 3: "SET_FEATURE",
+                      5: "SET_ADDRESS", 6: "GET_DESCRIPTOR", 7: "SET_DESCRIPTOR",
+                      8: "GET_CONFIGURATION", 9: "SET_CONFIGURATION",
+                      10: "GET_INTERFACE", 11: "SET_INTERFACE", 12: "SYNCH_FRAME"}
+
+
+# ---- the family table ----------------------------------------------------
+
+FAMILIES = {
+    "i1pro2": {
+        "name": "i1Pro 2 (Rev E)", "short": "i1Pro 2",
+        "requests": I1PRO_REQUESTS, "trigger_reqs": {0xD4, 0xC0}, "parse_trigger": _i1pro_trigger,
+        "eeprom_req": 0xC4, "meas_ep": 0x82, "nsen": 134, "nsen_req": 0xD5,
+        "led_req": 0xD6, "led_ep": 0x03, "led_decode": decode_led_sequence,
+        "event_ep": 0x84, "event_decode": lambda d: f"button 0x{d.hex()}",
+        "zebra_ep": None, "scan_flag": I1PRO2_FLAG_SCAN,
+        # 0x82 readings and EEPROM, 0x84 button, 0x03 EEPROM write and lights
+        # (i1pro_imp.c:11258, 11698, 11931, 11346, 12343). Argyll tells an
+        # i1Pro 2 from an original i1Pro by its fifth endpoint 0x85
+        # (insttypes.c:482) and never reads that endpoint.
+        "argyll_eps": {0x82, 0x84, 0x03},
+    },
+    "i1pro": {
+        "name": "original i1Pro (Rev A to D)", "short": "i1Pro",
+        "requests": I1PRO_REQUESTS, "trigger_reqs": {0xC0, 0xD4},
+        "parse_trigger": _i1pro_trigger,
+        "eeprom_req": 0xC4, "meas_ep": 0x82, "nsen": 128, "nsen_req": None,
+        "led_req": None, "led_ep": None, "led_decode": None,
+        "event_ep": 0x84, "event_decode": lambda d: f"button 0x{d.hex()}",
+        "zebra_ep": None, "scan_flag": None, "argyll_eps": {0x82, 0x84, 0x03},
+    },
+    "i1pro3": {
+        "name": "i1Pro 3 / 3 Plus", "short": "i1Pro 3",
+        "requests": I1PRO3_REQUESTS, "trigger_reqs": {0x22, 0x27},
+        "parse_trigger": _i1pro3_trigger,
+        "eeprom_req": 0x24, "meas_ep": 0x81, "nsen": 282, "nsen_req": None,
+        "led_req": 0x29, "led_ep": 0x02, "led_decode": decode_i1pro3_led,
+        "event_ep": 0x83,
+        "event_decode": lambda d: {1: "button pressed", 2: "button released",
+                                   3: "adapter or tile changed"}.get(d[0], d.hex()) if d else "",
+        # 0x81 readings and EEPROM, 0x83 events, 0x84 the ruler (zebra) data,
+        # 0x02 lights (i1pro3_imp.c:5130, 5609, 5895, 5746, 6175).
+        "zebra_ep": 0x84, "scan_flag": None, "argyll_eps": {0x81, 0x83, 0x84, 0x02},
+    },
+    "munki": {
+        "name": "ColorMunki Photo / Design or i1Studio", "short": "ColorMunki",
+        "requests": MUNKI_REQUESTS, "trigger_reqs": {0x80}, "parse_trigger": _munki_trigger,
+        "eeprom_req": 0x81, "meas_ep": 0x81, "nsen": 137, "nsen_req": None,
+        "led_req": 0x92, "led_ep": None, "led_decode": None,
+        "event_ep": 0x83, "event_decode": decode_munki_event,
+        # 0x81 readings and EEPROM, 0x83 events (munki_imp.c:8575, 8954, 9116).
+        "zebra_ep": None, "scan_flag": 2, "argyll_eps": {0x81, 0x83},
+    },
+    "generic": {
+        "name": "X-Rite device the tool has no decoder for", "short": "device",
+        "requests": {}, "trigger_reqs": set(), "parse_trigger": None,
+        "eeprom_req": None, "meas_ep": None, "nsen": None, "nsen_req": None,
+        "led_req": None, "led_ep": None, "led_decode": None, "event_ep": None,
+        "event_decode": None, "zebra_ep": None, "scan_flag": None, "argyll_eps": set(),
+    },
+}
+
+
+def family_for(vid, pid, config_lines=(), events=()) -> str:
+    """Which decoder fits a device (insttypes.c:440-495 for the IDs)."""
+    has_85 = any("endpoint 0x85" in l for l in config_lines or ())
+    if vid == 0x0971 and pid == 0x2000:
+        if has_85:
+            return "i1pro2"
+        if config_lines:
+            return "i1pro"
+        codes = {e["req"] for e in events if e.get("kind") == "control"}
+        if codes & {0xD4, 0xD5, 0xD8, 0xD9}:
+            return "i1pro2"
+        if 0xC1 in codes:
+            return "i1pro"
+        return "i1pro2"
+    if vid == 0x0765 and pid == 0x6009:
+        return "i1pro3"
+    if (vid == 0x0971 and pid == 0x2007) or (vid == 0x0765 and pid == 0x6008):
+        return "munki"
+    return "generic"
+
+
+def ruler_like(data: bytes, packed: bool = False) -> str | None:
+    """A plain-words note if a data stream looks like ruler position samples.
+
+    The i1Pro 3 sends its ruler as two sensor bits per clock, four samples
+    to a byte, lowest bits first (i1pro3_imp.c:13134-13140); a real movement
+    changes one sensor at a time (i1pro3_imp.c:12498-12515). This only
+    checks that shape; for the i1Pro 2 it proves nothing by itself.
+    """
+    if len(data) < 16:
+        return None
+    if packed:
+        samples = [(b >> s) & 3 for b in data for s in (0, 2, 4, 6)]
+    else:
+        if max(data) > 3:
+            return None
+        samples = list(data)
+    steps = jumps = 0
+    for a, b in zip(samples, samples[1:]):
+        x = a ^ b
+        if x in (1, 2):
+            steps += 1
+        elif x == 3:
+            jumps += 1
+    if not packed or (steps > 8 and jumps * 4 < steps):
+        how = "2-bit samples packed four to a byte" if packed else "every byte is 0 to 3"
+        return (f"{how}, the shape of two-sensor position data: {steps} single steps, "
+                f"{jumps} impossible jumps")
+    return None
+
+
+# --------------------------------------------------------------------------
+# 1.5: analysing one step
+# --------------------------------------------------------------------------
+
+def _ep_key(ev) -> str:
+    return f"0x{ev['ep']:02x} {ev['type']} {'IN' if ev['dir_in'] else 'OUT'}"
+
+
+def analyze_step(events: list, family: str = "i1pro2") -> dict:
+    """Everything the report needs about one step's events."""
+    fam = FAMILIES.get(family, FAMILIES["generic"])
+    table = fam["requests"]
+    t0 = events[0]["t"] if events else 0.0
+    nsen = fam["nsen"]
+    result = {"family": family, "requests": {}, "unknown": [], "endpoints": {},
+              "measurements": [], "ruler": [], "leds": [], "eeprom_bytes": 0,
+              "timeline": [], "features": set(), "first_t": t0,
+              "last_t": events[-1]["t"] if events else 0.0, "nsen": nsen,
+              "odd_sizes": [], "ruler_like": [], "events": [], "codes": set()}
+    context = None
+    pending_led = False
+    current = None
+    for ev in events:
+        rel = ev["t"] - t0
+        if ev["kind"] == "control":
+            rt, req = ev["rt"], ev["req"]
+            rtype = (rt >> 5) & 3
+            if rtype == 0:
+                name = _STANDARD_REQUESTS.get(req, f"standard request {req}")
+                if req == 6:
+                    name += f" (type {ev['wValue'] >> 8}, index {ev['wValue'] & 0xff})"
+                result["requests"][name] = result["requests"].get(name, 0) + 1
+                result["timeline"].append((rel, name))
+                continue
+            result["codes"].add(req)
+            result["features"].add(f"request 0x{req:02X}")
+            known = table.get(req) if rtype == 2 else None
+            if known is None:
+                kind = "class" if rtype == 1 else "vendor"
+                text = (f"UNKNOWN {kind} request 0x{req:02X} "
+                        f"{'IN' if rt & 0x80 else 'OUT'} bmRequestType=0x{rt:02x} "
+                        f"wValue=0x{ev['wValue']:04x} wIndex=0x{ev['wIndex']:04x} "
+                        f"wLength={ev['wLength']} out={ev['out'].hex() or '-'} "
+                        f"in={ev['in'].hex() or '-'}")
+                result["unknown"].append((rel, text))
+                result["timeline"].append((rel, text))
+                label = f"UNKNOWN 0x{req:02X}"
+                result["requests"][label] = result["requests"].get(label, 0) + 1
+                continue
+            name, _where, decoder, _argyll = known
+            try:
+                args = decoder(ev["out"], ev["in"])
+            except Exception as exc:                      # noqa: BLE001
+                args = f"(could not decode: {exc}; {_raw(ev['out'], ev['in'])})"
+            label = f"0x{req:02X} {name}"
+            result["requests"][label] = result["requests"].get(label, 0) + 1
+            result["timeline"].append((rel, label + (f": {args}" if args else "")))
+            if req == fam["nsen_req"] and len(ev["in"]) >= 12:
+                bands = (_be(ev["in"], 4, 4) or 0) + (_be(ev["in"], 8, 4) or 0)
+                if 0 < bands < 1024:
+                    nsen = bands
+                    result["nsen"] = nsen
+            if req == fam["eeprom_req"]:
+                context = "eeprom"
+            elif req in fam["trigger_reqs"]:
+                flags, ftext, asked, ints = fam["parse_trigger"](req, ev["out"])
+                current = {"t": rel, "req": req, "flags": flags, "flag_text": ftext,
+                           "nummeas": asked, "intclocks": ints, "bytes": 0,
+                           "transfers": 0, "last": rel, "zebra_bytes": 0}
+                if family == "i1pro3":
+                    current["nsen"] = 282 if req == 0x22 else 134
+                result["measurements"].append(current)
+                context = "measure"
+                if flags is not None:
+                    result["features"].add(f"trigger 0x{req:02X} flags 0x{flags:x}")
+                if family in ("i1pro2", "i1pro") and req == 0xD4 and flags is not None \
+                        and flags & (I1PRO2_FLAG_RULER_START | I1PRO2_FLAG_RULER_END):
+                    result["ruler"].append((rel, f"0xD4 with ruler bits: {ftext}"))
+                if family == "i1pro3" and flags is not None and flags & 0x10:
+                    result["ruler"].append((rel, f"0x{req:02X} asks for the ruler: {ftext}"))
+            if family in ("i1pro2", "i1pro") and req == 0xD7:
+                result["ruler"].append((rel, f"0xD7 sent: {args}"))
+            if req == fam["led_req"]:
+                if fam["led_ep"] is None:          # the request itself is the command
+                    result["leds"].append((rel, {"ok": True, "text": args, "colours": []}))
+                    result["features"].add("light " + args)
+                else:
+                    pending_led = True
+            continue
+        # data
+        ep = ev["ep"]
+        key = _ep_key(ev)
+        size = len(ev["data"])
+        info = result["endpoints"].setdefault(key, {"count": 0, "bytes": 0, "sizes": {},
+                                                    "first": rel, "last": rel, "ep": ep})
+        info["count"] += 1
+        info["bytes"] += size
+        info["sizes"][size] = info["sizes"].get(size, 0) + 1
+        info["last"] = rel
+        result["features"].add(f"data on {key}")
+        foreign = ep not in fam["argyll_eps"]
+        if ep == fam["zebra_ep"] and ev["dir_in"]:
+            if current is not None:
+                current["zebra_bytes"] += size
+            note = ruler_like(ev["data"], packed=True)
+            if note:
+                result["ruler_like"].append((rel, key, note))
+            result["timeline"].append((rel, f"ruler data on {key}: {size} bytes"))
+            continue
+        if foreign:
+            note = ruler_like(ev["data"]) or ruler_like(ev["data"], packed=True)
+            if note:
+                result["ruler_like"].append((rel, key, note))
+        if ep == fam["meas_ep"] and ev["dir_in"]:
+            if context == "eeprom":
+                result["eeprom_bytes"] += size
+                result["timeline"].append((rel, f"EEPROM data on 0x{ep:02x}: {size} bytes "
+                                                f"(not shown: calibration and serial)"))
+                context = None
+                continue
+            if current is None:
+                current = {"t": rel, "req": None, "flags": None, "flag_text": "no trigger seen",
+                           "nummeas": None, "intclocks": None, "bytes": 0, "transfers": 0,
+                           "last": rel, "zebra_bytes": 0}
+                result["measurements"].append(current)
+            current["bytes"] += size
+            current["transfers"] += 1
+            current["last"] = rel
+            unit = 2 * current.get("nsen", nsen or 1)
+            if size % unit:
+                result["odd_sizes"].append((rel, size))
+            result["timeline"].append((rel, f"readings on 0x{ep:02x}: {size} bytes"))
+            continue
+        if pending_led and ep == fam["led_ep"] and not ev["dir_in"]:
+            dec = fam["led_decode"](ev["data"])
+            result["leds"].append((rel, dec))
+            result["features"].add("light " + dec["text"])
+            result["timeline"].append((rel, f"LIGHTS: {dec['text']}"))
+            pending_led = False
+            continue
+        if ep == fam["event_ep"] and ev["dir_in"]:
+            text = fam["event_decode"](ev["data"])
+            result["events"].append((rel, text))
+            result["timeline"].append((rel, f"event on 0x{ep:02x}: {text}"))
+            continue
+        flag = "  <-- endpoint the open driver never uses" if foreign and family != "generic" \
+            else ""
+        result["timeline"].append((rel, f"data on {key}: {size} bytes: "
+                                        f"{ev['data'][:24].hex()}{flag}"))
+    for m in result["measurements"]:
+        unit = 2 * m.get("nsen", result["nsen"] or 0)
+        m["readings"] = m["bytes"] // unit if unit else 0
+        m["duration"] = max(0.0, m["last"] - m["t"])
+    return result
+
+
+# Kept for 1.5's own callers and tests: the i1Pro 2 is the default family.
+def analyze_i1pro_step(events: list) -> dict:
+    return analyze_step(events, "i1pro2")
+
+
+def _collapse_timeline(timeline: list, limit: int = 300) -> list:
+    """Merge runs of the same line (for example 200 readings transfers)."""
+    size_re = re.compile(r"(\d+) bytes")
+    rows = []
+    for rel, text in timeline:
+        sig = size_re.sub("N bytes", text)
+        m = size_re.search(text)
+        size = int(m.group(1)) if m else 0
+        if rows and rows[-1][2] == sig:
+            rows[-1][3] += 1
+            rows[-1][4] = rel
+            rows[-1][5] += size
+            continue
+        rows.append([rel, text, sig, 1, rel, size])
+    lines = []
+    for rel, text, sig, count, last, total in rows:
+        if count == 1:
+            lines.append(f"{rel:9.3f}s  {text}")
+        else:
+            label = sig.replace("N bytes", f"{total} bytes in total")
+            lines.append(f"{rel:9.3f}s  {label}  (x{count}, until {last:.3f}s)")
+        if len(lines) >= limit:
+            lines.append(f"   ... {len(rows) - limit} more lines not shown")
+            break
+    return lines
+
+
+def format_step(name: str, res: dict, notes: dict | None = None) -> list:
+    fam = FAMILIES.get(res["family"], FAMILIES["generic"])
+    out = [f"--- {name} ---"]
+    notes = notes or {}
+    if notes.get("did"):
+        out.append(f"  operator, what happened: {notes['did']}")
+    if notes.get("lights"):
+        out.append(f"  operator, the lights: {notes['lights']}")
+    out.append(f"  length: {res['last_t'] - res['first_t']:.1f} s")
+    if res["requests"]:
+        out.append("  commands:")
+        for label, count in sorted(res["requests"].items()):
+            out.append(f"    {count:5d} x {label}")
+    if res["endpoints"]:
+        out.append("  endpoints that carried data:")
+        for key, info in sorted(res["endpoints"].items()):
+            sizes = ", ".join(f"{s} B x{c}" for s, c in sorted(info["sizes"].items(),
+                                                              key=lambda kv: -kv[1])[:5])
+            flag = "" if info["ep"] in fam["argyll_eps"] or res["family"] == "generic" \
+                else "   <-- NOT USED BY THE OPEN DRIVER"
+            out.append(f"    {key}: {info['count']} transfers, {info['bytes']:,} bytes "
+                       f"(sizes: {sizes}){flag}")
+    if res["measurements"]:
+        unit = res["nsen"]
+        out.append("  measurements" + (f" (one reading = {2 * unit} bytes):" if unit else ":"))
+        for m in res["measurements"]:
+            rate = (m["readings"] / m["duration"]) if m["duration"] > 0 else 0.0
+            asked = f", asked for {m['nummeas']}" if m["nummeas"] is not None else ""
+            ints = f", integration {m['intclocks']} clocks" if m["intclocks"] is not None else ""
+            zeb = f", ruler data {m['zebra_bytes']} bytes" if m.get("zebra_bytes") else ""
+            out.append(f"    {m['t']:8.3f}s  {m['flag_text']}{asked}{ints}: "
+                       f"{m['readings']} readings in {m['transfers']} transfers, "
+                       f"{m['bytes']:,} bytes over {m['duration']:.2f} s"
+                       + (f" (about {rate:.0f} readings/s)" if rate else "") + zeb)
+    if res["odd_sizes"]:
+        out.append(f"  NOTE: {len(res['odd_sizes'])} measurement transfer(s) are not a whole "
+                   f"number of readings, so something else may travel inside them "
+                   f"(first: {res['odd_sizes'][0][1]} bytes at {res['odd_sizes'][0][0]:.3f}s).")
+    if res["ruler"]:
+        out.append("  RULER COMMANDS:")
+        out.extend(f"    {rel:8.3f}s  {text}" for rel, text in res["ruler"])
+    if res["ruler_like"]:
+        out.append("  POSSIBLE POSITION DATA:")
+        for rel, key, note in res["ruler_like"][:10]:
+            out.append(f"    {rel:8.3f}s  {key}: {note}")
+    if res["leds"]:
+        out.append("  INDICATOR LIGHTS (what the program told the light(s) to do):")
+        out.extend(f"    {rel:8.3f}s  {dec['text']}" for rel, dec in res["leds"])
+    if res["events"]:
+        out.append(f"  instrument events: " + "; ".join(
+            f"{rel:.3f}s {text}" for rel, text in res["events"][:20]))
+    if res["unknown"]:
+        out.append("  REQUESTS THE DECODER DOES NOT KNOW, in full:")
+        out.extend(f"    {rel:8.3f}s  {text}" for rel, text in res["unknown"])
+    out.append("  timeline:")
+    out.extend("    " + line for line in _collapse_timeline(res["timeline"]))
+    return out
+
+
+def format_i1pro_step(name: str, res: dict, notes: dict | None = None) -> list:
+    return format_step(name, res, notes)
+
+
+# --------------------------------------------------------------------------
+# 1.5: a whole session (several steps), with the comparison and verdict
+# --------------------------------------------------------------------------
+
+def load_session(path: str) -> dict | None:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("kind") != SESSION_KIND:
+        return None
+    data["_dir"] = os.path.dirname(os.path.abspath(path))
+    return data
+
+
+def _xrite_events(path: str):
+    """(events of the X-Rite devices, device map, check) for one file."""
+    check = check_capture(path)
+    if check["code"] == "unreadable":
+        return [], {}, check
+    linktype, recs = _read_pcap(path)
+    events = capture_events(linktype, recs)
+    devices = device_map(events)
+    mine = set(xrite_devices(devices))
+    if mine:
+        events = [e for e in events if (e["bus"], e["dev"]) in mine]
+    return events, devices, check
+
+
+def session_steps(paths: list) -> tuple:
+    """Turn --analyze arguments into steps.
+
+    Returns (steps, devices, checks, session); each step is
+    (title, events, notes, is_control, key). A session file (session.json,
+    written by the guided session) names its steps and files; a plain
+    recording is one step named after the file, and a file whose name says
+    "noruler" or "control" is the control.
+    """
+    steps = []
+    devinfo: dict = {}
+    checks = []
+    session = None
+    whole = []
+    for path in paths:
+        if os.path.isdir(path):
+            cand = os.path.join(path, "session.json")
+            if os.path.exists(cand):
+                path = cand
+        if path.endswith(".json"):
+            session = load_session(path)
+            continue
+        whole.append(path)
+    if session:
+        base = session["_dir"]
+        if not whole and session.get("whole_recording"):
+            cand = os.path.join(base, session["whole_recording"])
+            if os.path.exists(cand):
+                whole.append(cand)
+        cache: dict = {}
+        for step in session.get("steps", []):
+            if step.get("skipped"):
+                continue
+            files = [os.path.join(base, f) for f in step.get("files_xrite") or []]
+            files = [f for f in files if os.path.exists(f)]
+            events = []
+            if files:
+                for f in files:
+                    evs, devs, check = _xrite_events(f)
+                    events += evs
+                    devinfo.update(devs)
+                    checks.append((os.path.basename(f), check))
+            elif whole and step.get("start_epoch") is not None:
+                # One recording for the whole session (Wireshark by hand):
+                # cut it at the times the tool noted.
+                for f in whole:
+                    if f not in cache:
+                        cache[f] = _xrite_events(f)
+                        devinfo.update(cache[f][1])
+                        checks.append((os.path.basename(f), cache[f][2]))
+                    lo, hi = step["start_epoch"], step.get("end_epoch") or 1e18
+                    events += [e for e in cache[f][0] if lo <= e["t"] <= hi]
+            events.sort(key=lambda e: e["t"])
+            title = f"step {step.get('number', '?')}: {step.get('title', step.get('key'))}"
+            if step.get("take", 1) > 1:
+                title += f" (take {step['take']})"
+            steps.append((title, events, {"did": step.get("notes", ""),
+                                          "lights": step.get("lights", "")},
+                          bool(step.get("control")), step.get("key", "")))
+        return steps, devinfo, checks, session
+    for f in whole:
+        evs, devs, check = _xrite_events(f)
+        devinfo.update(devs)
+        checks.append((os.path.basename(f), check))
+        low = os.path.basename(f).lower()
+        control = "noruler" in low or "no-ruler" in low or "control" in low
+        steps.append((os.path.basename(f), evs, {}, control, low))
+    return steps, devinfo, checks, None
+
+
+def session_family(devinfo: dict, steps: list, session: dict | None = None) -> str:
+    if session and session.get("family") in FAMILIES:
+        return session["family"]
+    all_events = [e for _n, evs, *_ in steps for e in evs]
+    for info in devinfo.values():
+        if info.get("vid") in XRITE_VIDS:
+            fam = family_for(info["vid"], info["pid"], info.get("config"), all_events)
+            if fam != "generic":
+                return fam
+    for info in devinfo.values():
+        if info.get("guess_family"):
+            fam = info["guess_family"]
+            if fam in ("i1pro2", "i1pro"):
+                return family_for(0x0971, 0x2000, (), all_events)
+            return fam
+    return "generic"
+
+
+def is_instrument_traffic(devinfo: dict, steps: list) -> bool:
+    """True when the files hold an X-Rite instrument the decoder knows."""
+    return session_family(devinfo, steps) != "generic"
+
+
+def is_i1pro_traffic(devinfo: dict, steps: list) -> bool:
+    return is_instrument_traffic(devinfo, steps)
+
+
+SESSION_PURPOSE_ANALYSIS = {
+    "i1pro2": "find where the ruler data travels, how the dual scan and the lights are driven",
+    "i1pro": "learn how the vendor program scans strips: rates, timing, retries",
+    "i1pro3": "compare the vendor program with what the open driver sends",
+    "munki": "learn how the vendor program scans strips: rates, timing, retries, the dial",
+    "generic": "list the traffic raw; no decoder for this device",
+}
+
+
+def summarize_session(paths: list) -> str:
+    steps, devinfo, checks, session = session_steps(paths)
+    family = session_family(devinfo, steps, session)
+    fam = FAMILIES[family]
+    out = ["=" * 68, "  Instrument recording analysis", "=" * 68, "",
+           "  Reads recordings you already made. It sends NOTHING to any device.", "",
+           f"  instrument family: {fam['name']}",
+           f"  what this analysis looks for: {SESSION_PURPOSE_ANALYSIS[family]}"]
+    if session:
+        out.append(f"  session: {session.get('created', '?')}, recorded with "
+                   f"{session.get('recorder', '?')}, program: "
+                   f"{session.get('program') or '?'} {session.get('program_version') or ''}")
+    out.append("")
+    out.append("  files:")
+    for name, check in checks:
+        out.append(f"    {name}: {check['verdict']}")
+    out.append("")
+    xr = {k: v for k, v in devinfo.items()
+          if v.get("vid") in XRITE_VIDS or v.get("guess_family")}
+    endpoints_seen = set()
+    for key, info in xr.items():
+        ident = (f"{info['vid']:04x}:{info['pid']:04x}" if info.get("vid") is not None
+                 else "identity not recorded")
+        out.append(f"  instrument at bus {key[0]}, address {key[1]}: {ident} ({info['how']})")
+        for line in info.get("config") or []:
+            out.append("      " + line)
+            m = re.search(r"endpoint 0x([0-9a-f]{2})", line)
+            if m:
+                endpoints_seen.add(int(m.group(1), 16))
+    if xr and not any(v.get("config") for v in xr.values()):
+        out.append("      (the recording holds no USB description with the endpoint list)")
+    if endpoints_seen and family != "generic":
+        if 0x85 in endpoints_seen and family == "i1pro2":
+            out.append("  Endpoint 0x85 is listed: this is an i1Pro 2 (Rev E), the way the "
+                       "open driver tells them apart.")
+        out.append("  Endpoints the open driver never uses: " +
+                   (", ".join(f"0x{e:02x}" for e in sorted(endpoints_seen)
+                              if e not in fam["argyll_eps"]) or "none"))
+    out.append("")
+
+    results = []
+    for name, events, notes, control, key in steps:
+        res = analyze_step(events, family)
+        results.append((name, res, notes, control, key))
+        out.extend(format_step(name + ("  [CONTROL: no ruler]" if control else ""),
+                               res, notes))
+        out.append("")
+
+    out.append("-" * 68)
+    out.append("  STEPS SIDE BY SIDE")
+    out.append(f"  {'step':32} {'meas':>4} {'readings':>8} {'secs':>6} {'rd/s':>5} "
+               f"{'ruler':>5} {'other ep B':>10} {'lights':>6}")
+    for name, res, _notes, _control, _key in results:
+        ms = res["measurements"]
+        reads = sum(m["readings"] for m in ms)
+        secs = sum(m["duration"] for m in ms)
+        rate = reads / secs if secs > 0 else 0
+        other = sum(i["bytes"] for i in res["endpoints"].values()
+                    if i["ep"] not in fam["argyll_eps"])
+        out.append(f"  {name[:32]:32} {len(ms):>4} {reads:>8} {secs:>6.2f} {rate:>5.0f} "
+                   f"{len(res['ruler']):>5} {other:>10} {len(res['leds']):>6}")
+    out.append("")
+
+    # The open driver against the recording.
+    if fam["requests"]:
+        seen = set().union(*(r[1]["codes"] for r in results)) if results else set()
+        live = {c for c, v in fam["requests"].items() if v[3]}
+        out.append("  THE OPEN DRIVER (ArgyllCMS) AGAINST THIS RECORDING:")
+        both = sorted(seen & live)
+        never = sorted(c for c in seen if c not in live)
+        unused = sorted(live - seen)
+        out.append("    requests both use: " + (", ".join(f"0x{c:02X}" for c in both) or "none"))
+        out.append("    requests the open driver never sends: " +
+                   (", ".join(f"0x{c:02X} ({fam['requests'][c][0]})" if c in fam["requests"]
+                              else f"0x{c:02X} (unknown)" for c in never) or "none"))
+        out.append("    open-driver requests that do not occur here: " +
+                   (", ".join(f"0x{c:02X}" for c in unused) or "none"))
+        out.append("")
+
+    controls = [r for r in results if r[3]]
+    if controls:
+        base = set().union(*(r[1]["features"] for r in controls))
+        out.append("  ONLY WITH THE RULER (seen in a ruler step, never in the no-ruler control):")
+        anything = False
+        for name, res, _n, control, key in results:
+            if control or "scan" not in key:
+                continue
+            extra = sorted(f for f in res["features"] - base if not f.startswith("light "))
+            if extra:
+                anything = True
+                out.append(f"    {name}: " + "; ".join(extra))
+        if not anything:
+            out.append("    nothing: the scan steps use the same commands and endpoints as "
+                       "the control.")
+        out.append("")
+
+    fast = [r for r in results if "fast" in r[4]]
+    slow = [r for r in results if "slow" in r[4]]
+    if fast and slow:
+        def stats(r):
+            ms = [m for m in r[1]["measurements"] if m["readings"]]
+            reads = sum(m["readings"] for m in ms)
+            secs = sum(m["duration"] for m in ms)
+            ints = sorted({m["intclocks"] for m in ms if m["intclocks"] is not None})
+            return reads, secs, ints, sorted(r[1]["features"])
+        fr, fs, fi, ff = stats(fast[-1])
+        sr, ss, si, sf = stats(slow[-1])
+        out.append("  FAST AGAINST SLOW SWIPE:")
+        out.append(f"    fast: {fr} readings in {fs:.2f} s, integration clocks {fi or '?'}")
+        out.append(f"    slow: {sr} readings in {ss:.2f} s, integration clocks {si or '?'}")
+        diff = sorted(set(ff) ^ set(sf))
+        out.append("    what differs apart from the length: " +
+                   ("; ".join(diff[:12]) if diff else "nothing in the commands"))
+        out.append("")
+
+    out.append("  THE LIGHTS' LANGUAGE (light commands per step, in order):")
+    any_led = False
+    for name, res, notes, _c, _k in results:
+        if res["leds"]:
+            any_led = True
+            out.append(f"    {name}: " + " | ".join(d["text"] for _r, d in res["leds"]))
+            if notes.get("lights"):
+                out.append(f"        operator saw: {notes['lights']}")
+        elif notes.get("lights"):
+            out.append(f"    {name}: no light command recorded; operator saw: {notes['lights']}")
+    if not any_led:
+        out.append("    No light command in any step. If the operator saw the light(s) "
+                   "change, the program drives them some other way: look at the unknown "
+                   "requests and at data on endpoints the open driver never uses, at the "
+                   "times the operator describes.")
+    out.append("")
+
+    all_ms = [m for _n, r, *_ in results for m in r["measurements"]]
+    zero = any(c["code"] == "all-zero" for _n, c in checks)
+    have_traffic = bool(results) and any(r[1]["requests"] for r in results) and not zero
+    scan_ms = [m for m in all_ms if m["readings"] > 1]
+    yes = {True: "yes", False: "NO"}
+    out.append("=" * 68)
+    out.append("  DOES THIS RECORDING HOLD WHAT WE NEED?")
+    out.append(f"    real instrument traffic, not zeros ... {yes[have_traffic]}")
+    out.append(f"    USB description (endpoint list) ...... "
+               f"{yes[any(v.get('config') for v in xr.values())]}")
+    out.append(f"    measurements with readings ........... {yes[bool(scan_ms)]}")
+    out.append(f"    a fast and a slow swipe .............. {yes[bool(fast and slow)]}")
+    if family in ("i1pro2", "i1pro3"):
+        out.append(f"    a dual-scan step ..................... "
+                   f"{yes[any('dual' in r[4] for r in results)]}")
+        out.append(f"    a no-ruler control ................... {yes[bool(controls)]}")
+    if family in ("i1pro2", "i1pro3", "munki"):
+        out.append(f"    light commands ....................... {yes[any_led]}")
+    out.append("")
+    ruler_cmd = any(r[1]["ruler"] for r in results)
+    other_ep = any(i["ep"] not in fam["argyll_eps"] for r in results
+                   for i in r[1]["endpoints"].values())
+    unknown = any(r[1]["unknown"] for r in results)
+    if family == "generic":
+        out.append("  In plain words: the tool has no decoder for this device; everything is "
+                   "listed raw above.")
+    elif family == "i1pro2" and (ruler_cmd or other_ep or unknown):
+        found = []
+        if ruler_cmd:
+            found.append("ruler commands (0xD7, or ruler bits in 0xD4)")
+        if other_ep:
+            found.append("data on endpoints the open driver never uses")
+        if unknown:
+            found.append("requests the open driver does not know")
+        out.append("  In plain words: the recording shows " + ", and ".join(found) +
+                   ". These are the places to look for how the program uses the ruler.")
+    elif family == "i1pro2" and scan_ms:
+        out.append("  In plain words: no sign of ruler traffic. No 0xD7, no ruler bits, no "
+                   "data on endpoints the open driver never uses, no unknown requests. "
+                   "Either the program did not use the ruler here, or its position data "
+                   "travels inside the normal measurement transfers; compare the transfer "
+                   "sizes and counts above.")
+    elif scan_ms:
+        out.append("  In plain words: the recording holds measurements to compare; "
+                   + ("it also shows requests or endpoints the open driver does not use, "
+                      "listed above." if (unknown or other_ep) else
+                      "it uses only requests and endpoints the open driver knows."))
+    else:
+        out.append("  In plain words: there is no measurement with readings in these files "
+                   "yet.")
+    if not have_traffic:
+        out.append("  The files hold no usable instrument traffic"
+                   + (" (every data byte is zero)." if zero else "."))
+    out.append("=" * 68)
+    return "\n".join(out)
+
+
+def summarize_i1pro_session(paths: list) -> str:
+    return summarize_session(paths)
 
 
 # --------------------------------------------------------------------------
