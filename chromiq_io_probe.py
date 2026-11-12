@@ -85,9 +85,19 @@ KNOWN_PIDS = {
 }
 
 
-def pid_label(pid) -> str:
+# 1.5: devices under X-Rite's newer vendor ID, named from ArgyllCMS's device
+# table (insttypes.c:439-450). Not yet seen in a report; said so.
+KNOWN_IDS_0765 = {
+    0x6009: "i1Pro 3 or i1Pro 3 Plus (per ArgyllCMS's device table)",
+    0x6008: "i1Studio (per ArgyllCMS's device table)",
+}
+
+
+def pid_label(pid, vid=XRITE_VID) -> str:
     if pid is None:
         return "unknown X-Rite device"
+    if vid == 0x0765:
+        return KNOWN_IDS_0765.get(pid, "unknown X-Rite device (not in this tool's list yet)")
     return KNOWN_PIDS.get(pid, "unknown X-Rite device (not in this tool's list yet)")
 
 
@@ -389,7 +399,7 @@ def detect_xrite(source_outputs: list) -> dict:
         if devices is None:
             statuses.append((label, "could not be read"))
             continue
-        xrite = [d for d in devices if d["vid"] == XRITE_VID]
+        xrite = [d for d in devices if d["vid"] in XRITE_VIDS]
         if not devices:
             statuses.append((label, "returned an empty list"))
         else:
@@ -437,7 +447,8 @@ def format_detection(result: dict) -> str:
             pid_txt = f"{pid:04x}" if isinstance(pid, int) else "????"
             loc = dev["location"]
             loc_txt = f"0x{loc:08x}" if isinstance(loc, int) else "unknown"
-            lines.append(f"  {dev['name']}   {XRITE_VID:04x}:{pid_txt}   {pid_label(pid)}")
+            vid = dev.get("vid", XRITE_VID)
+            lines.append(f"  {dev['name']}   {vid:04x}:{pid_txt}   {pid_label(pid, vid)}")
             lines.append(f"      Location ID {loc_txt}, revision {dev.get('revision') or '?'}")
             parents = [p for p in (dev.get("parents") or []) if p]
             if parents:
@@ -502,7 +513,7 @@ def xrite_subtrees(text: str) -> list:
     for i, node in enumerate(nodes):
         if node["cls"] not in _USB_DEVICE_CLASSES:
             continue
-        if _to_int(node["props"].get("idVendor")) != XRITE_VID:
+        if _to_int(node["props"].get("idVendor")) not in XRITE_VIDS:
             continue
         key = (node["name"], node["props"].get("locationID"))
         if key in seen_lines:
@@ -728,7 +739,8 @@ def sip_steps_text(apple_silicon: bool) -> str:
        and press Return. It should say "enabled"."""
 
 
-def recording_not_possible_text(r: dict) -> str:
+def recording_not_possible_text(r: dict, device: str = "table") -> str:
+    """device: "table" (the i1iO, 1.4) or "instrument" (the 1.5 session)."""
     reasons = "\n".join("    - " + _wrap(reason, 66, "      ") for reason in r["reasons"])
     return f"""\
   RECORDING THE USB TRAFFIC IS NOT POSSIBLE ON THIS MAC RIGHT NOW
@@ -743,7 +755,7 @@ def recording_not_possible_text(r: dict) -> str:
   All of them are optional. Pick whichever suits you.
 
   1. A WINDOWS PC WITH AN INTEL OR AMD PROCESSOR (the easiest way)
-     Connect the table to that PC, install the free program Wireshark
+     Connect the {device} to that PC, install the free program Wireshark
      (wireshark.org) and tick "USBPcap" when its installer offers it.
      Then run this tool on that PC and choose the recording step; it tells
      you exactly what to do.
@@ -767,7 +779,7 @@ def recording_not_possible_text(r: dict) -> str:
 
   3. A HARDWARE USB SNIFFER
      A small box that goes into the cable between the computer and the
-     table and records what passes through. It changes nothing on the
+     {device} and records what passes through. It changes nothing on the
      Mac. Examples: Cynthion with the free Packetry program (about 210
      EUR), or Taradov's open-hardware USB Sniffer (about 35 USD; its
      software is ready-made only for Windows and Linux). Only worth it if
@@ -920,7 +932,8 @@ def collect_linux() -> None:
     # The verbose dump is the single most valuable thing on any platform:
     # full configuration, interface and endpoint descriptors.
     section("Linux: lsusb -v for X-Rite devices",
-            run(["lsusb", "-v", "-d", f"{XRITE_VID:04x}:"], timeout=60))
+            "\n".join(run(["lsusb", "-v", "-d", f"{v:04x}:"], timeout=60)
+                      for v in XRITE_VIDS))
     section("Linux: USB topology", run(["lsusb", "-t"]))
 
     sysfs = "/sys/bus/usb/devices"
@@ -933,7 +946,7 @@ def collect_linux() -> None:
                     vid = fh.read().strip()
             except OSError:
                 continue
-            if vid.lower() != f"{XRITE_VID:04x}":
+            if vid.lower() not in [f"{v:04x}" for v in XRITE_VIDS]:
                 continue
             lines.append(f"--- {entry} ---")
             for attr in ("idProduct", "bcdDevice", "manufacturer", "product",
@@ -977,11 +990,11 @@ def collect_windows() -> None:
         return run([ps, "-NoProfile", "-NonInteractive", "-Command", script], timeout=60)
 
     section("Windows: X-Rite USB devices", psrun(
-        "Get-PnpDevice | Where-Object { $_.InstanceId -like '*VID_0971*' } | "
+        "Get-PnpDevice | Where-Object { ($_.InstanceId -like '*VID_0971*' -or $_.InstanceId -like '*VID_0765*') } | "
         "Format-List FriendlyName,InstanceId,Status,Class,Present"
     ))
     section("Windows: device properties (hardware + driver)", psrun(
-        "Get-PnpDevice | Where-Object { $_.InstanceId -like '*VID_0971*' } | "
+        "Get-PnpDevice | Where-Object { ($_.InstanceId -like '*VID_0971*' -or $_.InstanceId -like '*VID_0765*') } | "
         "ForEach-Object { '=== ' + $_.InstanceId + ' ==='; "
         "Get-PnpDeviceProperty -InstanceId $_.InstanceId | "
         "Select-Object KeyName,Data | Format-List }"
@@ -1160,13 +1173,13 @@ def quick_summary() -> str:
             return format_detection(result)
         if system == "Linux":
             for line in run(["lsusb"]).splitlines():
-                if f"{XRITE_VID:04x}:" in line.lower():
+                if any(f"{v:04x}:" in line.lower() for v in XRITE_VIDS):
                     found.append(line.strip())
         elif system == "Windows":
             ps = shutil.which("powershell") or shutil.which("pwsh")
             if ps:
                 out = run([ps, "-NoProfile", "-Command",
-                           "Get-PnpDevice | Where-Object { $_.InstanceId -like '*VID_0971*' } "
+                           "Get-PnpDevice | Where-Object { ($_.InstanceId -like '*VID_0971*' -or $_.InstanceId -like '*VID_0765*') } "
                            "| ForEach-Object { $_.FriendlyName + ' :: ' + $_.InstanceId }"])
                 found = [l.strip() for l in out.splitlines()
                          if l.strip() and not l.startswith("[")]
@@ -1803,7 +1816,7 @@ def check_capture(path: str) -> dict:
                 "code": "unreadable", "verdict": f"not a readable recording: {exc}"}
     identified = True
     if linktype == LINKTYPE_USB_DARWIN:
-        mine = [d for _ts, d in recs if _darwin_vid(d) == XRITE_VID]
+        mine = [d for _ts, d in recs if _darwin_vid(d) in XRITE_VIDS]
         xrite = len(mine)
     else:
         # 1.5: Windows and Linux records carry a bus and device address but no
@@ -1934,7 +1947,7 @@ def _filter_darwin_capture(src: str, dst: str) -> int:
         rec_end = off + 16 + incl
         if rec_end > len(blob):
             break
-        if _darwin_vid(blob[off + 16:rec_end]) == XRITE_VID:
+        if _darwin_vid(blob[off + 16:rec_end]) in XRITE_VIDS:
             out.append(blob[off:rec_end])
             kept += 1
         off = rec_end
@@ -3485,19 +3498,1165 @@ def recording_step(direct: bool) -> None:
 
 
 # --------------------------------------------------------------------------
+# 1.5: guided recording session for handheld instruments
+#
+# One session for the whole family (original i1Pro, i1Pro 2, i1Pro 3 / 3
+# Plus, ColorMunki Photo / Design and i1Studio, and any other X-Rite
+# device), with what we hope to learn layered on per instrument. Each step
+# is recorded into its own file, the session file (session.json) is written
+# after every step, so nothing finished is lost when the user stops, closes
+# the window or the program fails.
+#
+# The tool never sends anything to the instrument and never changes a
+# setting. It starts and stops the recording program (USBPcapCMD on
+# Windows, tcpdump on a Mac with SIP off or on Linux) and nothing else.
+# --------------------------------------------------------------------------
+
+# Which session fits which device. (vid, pid) -> profile; the i1Pro and the
+# i1Pro 2 share 0971:2000 and are told apart in the recording (endpoint
+# 0x85), so the session offers the choice.
+PROFILE_IDS = {
+    (0x0971, 0x2000): "i1pro2",
+    (0x0765, 0x6009): "i1pro3",
+    (0x0971, 0x2007): "munki",
+    (0x0765, 0x6008): "munki",
+}
+
+PROFILE_NAMES = {
+    "i1pro2": "i1Pro 2",
+    "i1pro": "original i1Pro (the first generation)",
+    "i1pro3": "i1Pro 3 or i1Pro 3 Plus",
+    "munki": "ColorMunki Photo / Design or i1Studio",
+    "generic": "another X-Rite instrument",
+}
+
+PROFILE_PURPOSE = {
+    "i1pro2": """\
+  The i1Pro 2 has a small sensor underneath that can read the striped
+  ("zebra") edge of its scanning ruler, so it can know where on the strip
+  it is. The free ArgyllCMS driver, which ChromIQ uses, never reads that
+  sensor: it finds the patches only from how the colour changes over
+  time, which is why a fast or uneven swipe can cause misreads. We would
+  like to learn three things from i1Profiler: how it switches the ruler
+  sensor on and where the position data arrives, how its "dual scan"
+  works, and how it drives the coloured lights on the instrument.""",
+    "i1pro": """\
+  The original i1Pro has no ruler sensor and no coloured lights. We would
+  like to learn how the vendor program reads a strip so reliably: how
+  many readings it takes per second, with which settings, how it reacts
+  to a fast or a slow swipe, and what it does when a scan fails.""",
+    "i1pro3": """\
+  The free ArgyllCMS driver, which ChromIQ uses, already reads the i1Pro
+  3's ruler. So this session is about comparing: what does the vendor
+  program do differently from the open driver during a strip scan?
+  Commands the open driver never sends, how the dual scan for M0, M1 and
+  M2 works, how the coloured lights are driven, how it reacts to a fast
+  or uneven swipe, how many readings it takes per patch, and whether it
+  reads again by itself.""",
+    "munki": """\
+  The ColorMunki and the i1Studio have no ruler sensor and no dual scan.
+  We would like to learn how the vendor program reads a strip so
+  reliably: how many readings it takes per second and per patch, how it
+  reacts to a fast or a slow swipe, what it does with a failed strip,
+  what the light on the instrument does, and how it asks about the
+  dial positions (calibration, measuring).""",
+    "generic": """\
+  The tool has no special knowledge of this instrument. It records the
+  conversation and lists it as it is, which can still be useful.""",
+}
+
+PROMISE_TEXT = """\
+  We cannot promise that anything will come of it. A recording helps us
+  understand; whether an open-source measurement engine can ever use what
+  we learn is a separate question, and the answer may be no."""
+
+VENDOR_PROGRAMS = [
+    "i1Profiler",
+    "ccStudio (ColorChecker Studio)",
+    "ColorMunki Photo / Design software",
+    "i1Studio software",
+]
+
+
+# Steps. "families" lists the profiles a step is offered to. Instructions
+# are generic on purpose: page names differ between programs and versions.
+SESSION_STEPS = [
+    {"key": "idle", "title": "start the program, then leave it idle",
+     "families": ("i1pro2", "i1pro", "i1pro3", "munki", "generic"),
+     "before": """\
+  Before you press Enter: quit the measuring program if it is open. Leave
+  the instrument plugged in and resting where it normally rests.""",
+     "during": """\
+  When the recording runs: start the measuring program and wait until it
+  shows that it has found the instrument. Then leave everything alone for
+  about 10 seconds and watch the instrument.""",
+     "lights": "What did the lights do while the program started and while it sat idle?"},
+    {"key": "calibrate", "title": "calibrate",
+     "families": ("i1pro2", "i1pro", "i1pro3", "munki", "generic"),
+     "before": """\
+  Before you press Enter: go to the page where you measure a printed test
+  chart, the way you normally would, up to the point where the program
+  asks you to calibrate. Use any test chart you have printed.
+  (In i1Profiler this is usually Printer, then Profiling or Measure Chart,
+  then the Measurement page. In the ColorMunki and i1Studio programs it is
+  the step where you measure the printed chart.)""",
+     "during": """\
+  When the recording runs: calibrate exactly as the program asks.
+  i1Pro family: on the white calibration tile.
+  ColorMunki / i1Studio: turn the dial to the calibration position when
+  asked, and back to the measuring position afterwards.
+  Wait until the program says calibration is done.""",
+     "lights": "What did the lights do during and after the calibration?"},
+    {"key": "scan-single", "title": "scan one strip (single scan, normal speed)",
+     "families": ("i1pro2", "i1pro", "i1pro3", "munki", "generic"),
+     "before": """\
+  Before you press Enter: choose ONE strip (row) of your chart that you
+  will use for all the scan steps, for example the first one. If the
+  program offers a choice of measurement mode, choose one that needs a
+  single pass per strip (for example M0 or M2 on its own, not "dual
+  scan"). Set the chart up as usual (with the ruler and backing board,
+  if your instrument has them).""",
+     "during": """\
+  When the recording runs: scan that one strip at your normal speed, as
+  you always do. Wait until the program accepts or refuses it. You do
+  not need to finish the chart.""",
+     "lights": "What did the lights do before, during and after the scan?"},
+    {"key": "scan-dual", "title": "the same strip, dual scan",
+     "families": ("i1pro2", "i1pro3"),
+     "before": """\
+  Before you press Enter: switch the program to its dual scan option, if
+  it has one (in i1Profiler it is offered with the M0, M1 and M2
+  measurement conditions; the lights flash while it measures). If you
+  cannot find such an option, type  s  to skip this step.""",
+     "during": """\
+  When the recording runs: scan the same strip, the way the program asks
+  for it (it may ask for two passes). Wait until it accepts or refuses
+  the strip.""",
+     "lights": "What did the lights do during the scan, and between the two passes if there were two?"},
+    {"key": "scan-fast", "title": "the same strip again, clearly faster",
+     "families": ("i1pro2", "i1pro", "i1pro3", "munki", "generic"),
+     "before": """\
+  Before you press Enter: go back to the single-pass mode (if you changed
+  it). Get ready to scan the same strip again.""",
+     "during": """\
+  When the recording runs: scan the same strip about twice as fast as you
+  normally would. If the program complains or refuses it, that is a
+  useful result too.""",
+     "lights": "What did the lights do? Was it different from the normal scan?"},
+    {"key": "scan-slow", "title": "the same strip again, slowly",
+     "families": ("i1pro2", "i1pro", "i1pro3", "munki", "generic"),
+     "before": """\
+  Before you press Enter: get ready to scan the same strip once more.""",
+     "during": """\
+  When the recording runs: scan the same strip slowly and steadily, so
+  that it takes about three times as long as usual.""",
+     "lights": "What did the lights do this time?"},
+    {"key": "scan-fail", "title": "let one scan fail on purpose",
+     "families": ("i1pro2", "i1pro", "i1pro3", "munki", "generic"),
+     "before": """\
+  Before you press Enter: get ready to scan the same strip, but so that
+  it fails: for example lift the instrument off the paper halfway along
+  the strip, or stop in the middle. Do nothing that could harm the
+  instrument. If you would rather not, type  s  to skip this step.""",
+     "during": """\
+  When the recording runs: start scanning the strip and make it fail as
+  described. Wait until the program reports the failure, then do what it
+  asks (it may ask you to scan the strip again; you may do that too).""",
+     "lights": "What did the lights do when the scan failed, and afterwards?"},
+    {"key": "spot", "title": "read one single patch",
+     "families": ("i1pro2", "i1pro", "i1pro3", "munki", "generic"),
+     "before": """\
+  Before you press Enter: find the program's way of reading a single
+  patch (often called spot or single patch measurement). If the program
+  offers none, or you cannot find it, type  s  to skip this step.""",
+     "during": """\
+  When the recording runs: read one single patch, then wait until the
+  program shows the result.""",
+     "lights": "What did the lights do?"},
+    {"key": "noruler", "title": "the same strip without the ruler (control)",
+     "families": ("i1pro2", "i1pro3"), "control": True,
+     "before": """\
+  Before you press Enter: go back to the single-pass mode. Take the ruler
+  away. This step only makes sense if the program lets you scan without
+  the ruler; if it does not, or you are unsure, type  s  to skip it.""",
+     "during": """\
+  When the recording runs: scan the same strip without the ruler, for
+  example by sliding the instrument along a straight edge or freehand.
+  If the program refuses or shows a message, that is useful too: note
+  what it said. Do not force anything.""",
+     "lights": "What did the lights do?"},
+]
+
+# Profiles whose instrument has lights worth asking about. The original
+# i1Pro has none (the i1Pro 2's Rev E capability bits are the first to list
+# indicator LEDs, i1pro_imp.h:165).
+PROFILES_WITH_LIGHTS = ("i1pro2", "i1pro3", "munki", "generic")
+
+
+def steps_for(profile: str) -> list:
+    return [s for s in SESSION_STEPS if profile in s["families"]]
+
+
+# ---- what the computer can do: checks ------------------------------------
+
+def windows_build_info() -> dict:
+    """Windows build and release name, read only. Empty off Windows."""
+    info = {"build": None, "display": None, "product": None}
+    if platform.system() != "Windows":
+        return info
+    try:
+        info["build"] = sys.getwindowsversion().build      # type: ignore[attr-defined]
+    except Exception:                                     # noqa: BLE001
+        pass
+    try:
+        import winreg                                     # noqa: PLC0415
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion") as key:
+            for name, field in (("DisplayVersion", "display"), ("ProductName", "product"),
+                                ("CurrentBuild", "build")):
+                try:
+                    value = winreg.QueryValueEx(key, name)[0]
+                except OSError:
+                    continue
+                if field == "build":
+                    info["build"] = info["build"] or int(value)
+                else:
+                    info[field] = str(value)
+    except Exception:                                     # noqa: BLE001
+        pass
+    return info
+
+
+# Windows 11 starts at build 22000; 24H2 is 26100, 25H2 is 26200.
+WIN11_FIRST_BUILD = 22000
+WIN11_25H2_BUILD = 26200
+
+
+def windows_release_check(build, display, arm: bool) -> dict:
+    """Plain facts about this Windows for the recording. Never blocks."""
+    if arm:
+        return {"level": "problem", "text": (
+            "This Windows runs on an ARM processor. X-Rite has no driver for these "
+            "instruments on Windows on ARM (that includes a Windows virtual machine on "
+            "an Apple Silicon Mac), so the vendor program cannot talk to the "
+            "instrument here.")}
+    if not build:
+        return {"level": "unknown", "text": "The Windows version could not be read."}
+    name = "Windows 11" if build >= WIN11_FIRST_BUILD else "Windows 10"
+    label = f"{name}{' version ' + display if display else ''} (build {build})"
+    if build >= WIN11_25H2_BUILD:
+        return {"level": "warning", "text": (
+            f"{label}. X-Rite says the driver for the i1Pro 2 and the i1iO 2 is "
+            "blocked on Windows 11 version 25H2 and newer. If the vendor program "
+            "still finds your instrument, carry on; if it does not, this is why.")}
+    return {"level": "ok", "text": label}
+
+
+def parse_sc_query(text: str) -> dict:
+    """`sc query USBPcap` -> {"installed", "running"}."""
+    low = (text or "").lower()
+    installed = "service_name" in low and "usbpcap" in low and "1060" not in low
+    return {"installed": installed, "running": installed and "running" in low}
+
+
+_EXTCAP_IFACE_RE = re.compile(r"^interface \{value=([^}]*)\}\{display=([^}]*)\}", re.M)
+_EXTCAP_VALUE_RE = re.compile(r"^value \{arg=(\d+)\}\{value=([^}]*)\}\{display=([^}]*)\}", re.M)
+_XRITE_NAME_RE = re.compile(r"x-?rite|eye-?one|i1 ?pro|i1 ?studio|colormunki|gretag|calibrite",
+                            re.I)
+
+
+def parse_extcap_interfaces(text: str) -> list:
+    """USBPcapCMD --extcap-interfaces -> [(device path, display name)]."""
+    return [(m.group(1), m.group(2)) for m in _EXTCAP_IFACE_RE.finditer(text or "")]
+
+
+def parse_extcap_devices(text: str) -> list:
+    """USBPcapCMD --extcap-config -> [(address, name)] of attached devices."""
+    out = []
+    for m in _EXTCAP_VALUE_RE.finditer(text or ""):
+        if not m.group(2).isdigit():
+            continue
+        out.append((int(m.group(2)), m.group(3)))
+    return out
+
+
+def parse_i1profiler_uninstall(text: str) -> str | None:
+    """PowerShell 'DisplayName :: DisplayVersion' lines -> i1Profiler's version."""
+    for line in (text or "").splitlines():
+        if "i1profiler" in line.lower() and "::" in line:
+            version = line.split("::", 1)[1].strip()
+            if version:
+                return version
+    return None
+
+
+def parse_program_versions(text: str) -> dict:
+    """All 'DisplayName :: DisplayVersion' lines for the vendor programs."""
+    found = {}
+    for line in (text or "").splitlines():
+        if "::" not in line:
+            continue
+        name, version = (part.strip() for part in line.split("::", 1))
+        low = name.lower()
+        if any(k in low for k in ("i1profiler", "ccstudio", "colorchecker studio",
+                                  "colormunki", "i1studio")):
+            found[name] = version
+    return found
+
+
+_USBPCAP_CMD_PLACES = [
+    r"C:\Program Files\USBPcap\USBPcapCMD.exe",
+    r"C:\Program Files\Wireshark\extcap\USBPcapCMD.exe",
+    r"C:\Program Files\Wireshark\extcap\wireshark\USBPcapCMD.exe",
+]
+
+
+def find_usbpcapcmd() -> str | None:
+    found = shutil.which("USBPcapCMD") or shutil.which("USBPcapCMD.exe")
+    if found:
+        return found
+    for place in _USBPCAP_CMD_PLACES:
+        if os.path.exists(place):
+            return place
+    return None
+
+
+def windows_is_admin() -> bool | None:
+    try:
+        import ctypes                                     # noqa: PLC0415
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())  # type: ignore[attr-defined]
+    except Exception:                                     # noqa: BLE001
+        return None
+
+
+def _powershell(script: str) -> str:
+    ps = shutil.which("powershell") or shutil.which("pwsh")
+    if not ps:
+        return "[PowerShell not found]"
+    return run([ps, "-NoProfile", "-NonInteractive", "-Command", script], timeout=60)
+
+
+def windows_program_versions() -> dict:
+    return parse_program_versions(_powershell(
+        "Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',"
+        "'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' "
+        "-ErrorAction SilentlyContinue | Where-Object { $_.DisplayName } | "
+        "ForEach-Object { $_.DisplayName + ' :: ' + $_.DisplayVersion }"))
+
+
+def i1profiler_check(version, profile: str) -> dict:
+    if not version:
+        return {"level": "unknown", "text": "not found (that is fine if you use another program)"}
+    if profile == "i1pro2" and version_tuple(version) >= (3, 8, 7):
+        return {"level": "warning", "text": (
+            f"{version}. i1Profiler 3.8.7 removed support for the i1Pro 2, so this "
+            "version cannot talk to it. Version 3.8.6 or older is needed.")}
+    return {"level": "ok", "text": f"{version}"}
+
+
+USBPCAP_INSTALL_TEXT = """\
+  HOW TO INSTALL USBPcap (free, about 5 minutes)
+  USBPcap is the small free program that lets Windows record USB traffic.
+  It comes with Wireshark.
+    1. Open https://www.wireshark.org/download.html and download the
+       "Windows x64 Installer".
+    2. Run it. Keep the suggested choices. On the page about USB capture,
+       tick "Install USBPcap", and accept USBPcap's licence when asked.
+    3. Finish the installation, then restart Windows. USBPcap only starts
+       watching the USB ports after a restart.
+    4. Run this tool again.
+  If the Wireshark installer does not offer USBPcap, install it on its
+  own from https://desowin.org/usbpcap/ and restart Windows."""
+
+
+def windows_capture_checks(profile: str) -> dict:
+    """Everything needed to say honestly whether a recording can work here."""
+    build = windows_build_info()
+    arm = windows_is_arm()
+    sc = run(["sc", "query", "USBPcap"], timeout=15)
+    service = parse_sc_query(sc)
+    cmd = find_usbpcapcmd()
+    interfaces = parse_extcap_interfaces(run([cmd, "--extcap-interfaces"], timeout=30)) \
+        if cmd else []
+    hubs = []
+    for path, display in interfaces:
+        devs = parse_extcap_devices(run([cmd, "--extcap-config", "--extcap-interface", path],
+                                        timeout=30))
+        hubs.append({"path": path, "display": display, "devices": devs,
+                     "instrument": [d for d in devs if _XRITE_NAME_RE.search(d[1])]})
+    programs = windows_program_versions()
+    i1p = next((v for k, v in programs.items() if "i1profiler" in k.lower()), None)
+    return {"windows": windows_release_check(build["build"], build["display"], arm),
+            "service": service, "usbpcapcmd": cmd, "hubs": hubs,
+            "admin": windows_is_admin(), "programs": programs,
+            "i1profiler": i1profiler_check(i1p, profile), "build": build}
+
+
+_LEVEL_WORDS = {"ok": "OK", "warning": "PLEASE READ", "problem": "PROBLEM",
+                "unknown": "not known"}
+
+
+def windows_checks_text(c: dict) -> str:
+    lines = ["  WHAT THIS PC OFFERS FOR A RECORDING (read only, nothing changed)", ""]
+
+    def row(label, level, text):
+        lines.append(f"  {label:<18} [{_LEVEL_WORDS[level]}] " + _wrap(text, 44, " " * 21 + "     "))
+
+    row("Windows:", c["windows"]["level"], c["windows"]["text"])
+    row("i1Profiler:", c["i1profiler"]["level"], c["i1profiler"]["text"])
+    others = {k: v for k, v in c["programs"].items() if "i1profiler" not in k.lower()}
+    if others:
+        row("Other programs:", "ok", ", ".join(f"{k} {v}" for k, v in others.items()))
+    svc = c["service"]
+    if svc["running"]:
+        row("USBPcap:", "ok", "installed and running")
+    elif svc["installed"]:
+        row("USBPcap:", "warning", "installed, but not running yet. Restart Windows once.")
+    else:
+        row("USBPcap:", "problem", "not installed (see below how to install it)")
+    row("USBPcapCMD:", "ok" if c["usbpcapcmd"] else "problem",
+        c["usbpcapcmd"] or "not found (it comes with USBPcap)")
+    admin = c["admin"]
+    row("Administrator:", "ok" if admin else "warning" if admin is False else "unknown",
+        "yes, this window runs as administrator" if admin else
+        "no. USBPcap may refuse to record. If it does, close this window, right-click "
+        "the tool and choose \"Run as administrator\"." if admin is False else "not known")
+    if c["hubs"]:
+        found = [h for h in c["hubs"] if h["instrument"]]
+        if found:
+            for h in found:
+                names = ", ".join(f"[{a}] {n}" for a, n in h["instrument"])
+                row("Instrument on:", "ok", f"{h['display']} ({names})")
+        else:
+            row("Instrument on:", "unknown",
+                "could not tell which USB root hub; the tool records on all of them "
+                f"({', '.join(h['display'] for h in c['hubs'])}) and keeps only the "
+                "instrument's traffic")
+    return "\n".join(lines)
+
+
+def windows_can_record(c: dict) -> bool:
+    return bool(c["usbpcapcmd"]) and c["service"]["installed"] and bool(c["hubs"])
+
+
+# ---- recorders -------------------------------------------------------------
+
+class RecorderError(Exception):
+    pass
+
+
+class _ProcRecorder:
+    """Shared start/stop logic: one recording process per interface per step."""
+
+    label = "recorder"
+
+    def __init__(self, interfaces: list, outdir: str):
+        self.interfaces = list(interfaces)
+        self.outdir = outdir
+        self.procs: dict = {}
+        self.files: dict = {}
+        self.notes: list = []
+
+    def command(self, iface, path) -> list:
+        raise NotImplementedError
+
+    def iface_label(self, iface) -> str:
+        return re.sub(r"[^A-Za-z0-9]+", "", str(iface)) or "bus"
+
+    def session_start(self) -> bool:
+        return True
+
+    def session_end(self) -> None:
+        pass
+
+    def _popen(self, cmd):
+        kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
+                  "stderr": subprocess.PIPE}
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        return subprocess.Popen(cmd, **kwargs)
+
+    def start(self, stem: str) -> list:
+        """Start recording; returns the interfaces that really record."""
+        self.procs, self.files = {}, {}
+        for iface in self.interfaces:
+            path = os.path.join(self.outdir, f"{stem}-{self.iface_label(iface)}-full.pcap")
+            try:
+                open(path, "wb").close()
+                self.procs[iface] = self._popen(self.command(iface, path))
+            except OSError as exc:
+                self.notes.append(f"{iface}: could not start ({exc})")
+                continue
+            self.files[iface] = path
+        time.sleep(RECORDER_STARTUP_WAIT)
+        live = []
+        for iface, proc in list(self.procs.items()):
+            if proc.poll() is None:
+                live.append(iface)
+                continue
+            err = (proc.stderr.read() if proc.stderr else b"").decode("utf-8", "replace")
+            self.notes.append(f"{iface}: stopped at once: " +
+                              (" ".join(err.split())[:200] or f"exit code {proc.returncode}"))
+            retry = self.retry_command(iface, self.files[iface], err)
+            if retry:
+                try:
+                    self.procs[iface] = self._popen(retry)
+                    time.sleep(RECORDER_STARTUP_WAIT)
+                    if self.procs[iface].poll() is None:
+                        live.append(iface)
+                        self.notes.append(f"{iface}: recording with simpler options")
+                except OSError:
+                    pass
+        return live
+
+    def retry_command(self, iface, path, err):
+        return None
+
+    def stop(self) -> list:
+        """Stop every recorder; returns the files that exist."""
+        for iface, proc in self.procs.items():
+            if proc.poll() is not None:
+                continue
+            try:
+                if os.name == "nt":
+                    try:
+                        proc.send_signal(signal.CTRL_BREAK_EVENT)   # type: ignore[attr-defined]
+                        proc.wait(timeout=4)
+                    except (subprocess.TimeoutExpired, OSError, ValueError, AttributeError):
+                        proc.terminate()
+                        proc.wait(timeout=6)
+                else:
+                    proc.terminate()
+                    proc.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+            except OSError:
+                pass
+        for proc in self.procs.values():
+            if proc.stderr:
+                try:
+                    proc.stderr.close()
+                except OSError:
+                    pass
+        files = [p for p in self.files.values() if os.path.exists(p)]
+        self.procs, self.files = {}, {}
+        return files
+
+
+class UsbPcapRecorder(_ProcRecorder):
+    """Windows: USBPcapCMD, one per root hub, with the device descriptions."""
+
+    label = "USBPcap (USBPcapCMD)"
+
+    def __init__(self, exe: str, interfaces: list, outdir: str):
+        super().__init__(interfaces, outdir)
+        self.exe = exe
+
+    def command(self, iface, path):
+        # -A: every device on this root hub (the X-Rite-only copy is made
+        # afterwards); --inject-descriptors: put the description of the
+        # devices already connected at the start of the file.
+        return [self.exe, "-d", iface, "-o", path, "-A", "--inject-descriptors"]
+
+    def retry_command(self, iface, path, err):
+        return [self.exe, "-d", iface, "-o", path, "-A"]
+
+    def iface_label(self, iface):
+        return str(iface).replace("\\\\.\\", "").replace("\\", "").replace(".", "") or "USBPcap"
+
+
+class TcpdumpRecorder(_ProcRecorder):
+    """Mac with SIP off (XHC* interfaces) or Linux (usbmon*), through sudo."""
+
+    label = "tcpdump"
+
+    def __init__(self, interfaces: list, outdir: str, mac: bool):
+        super().__init__(interfaces, outdir)
+        self.mac = mac
+        self.sudo = shutil.which("sudo")
+        self.tcpdump = shutil.which("tcpdump") or "/usr/sbin/tcpdump"
+        self.ifconfig = shutil.which("ifconfig") or "/sbin/ifconfig"
+        self.brought_up: list = []
+        self.stop_keepalive = threading.Event()
+
+    def session_start(self) -> bool:
+        if not self.sudo:
+            self.notes.append("sudo not found")
+            return False
+        print("\n  Your computer will now ask for your password (for its own \"sudo\"")
+        print("  command; this tool never sees or stores it).")
+        try:
+            if subprocess.call([self.sudo, "-v"]) != 0:
+                return False
+        except KeyboardInterrupt:
+            return False
+
+        def keepalive():
+            while not self.stop_keepalive.wait(50):
+                subprocess.call([self.sudo, "-n", "true"], stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
+
+        threading.Thread(target=keepalive, daemon=True).start()
+        if self.mac:
+            for iface in self.interfaces:
+                if not _iface_is_up(self.ifconfig, iface):
+                    if subprocess.call([self.sudo, "-n", self.ifconfig, iface, "up"],
+                                       stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL) == 0:
+                        self.brought_up.append(iface)
+        return True
+
+    def session_end(self) -> None:
+        for iface in self.brought_up:
+            subprocess.call([self.sudo, "-n", self.ifconfig, iface, "down"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if self.brought_up:
+            still = [i for i in self.brought_up if _iface_is_up(self.ifconfig, i)]
+            if still:
+                print(f"  Could not switch {', '.join(still)} off again. They switch off "
+                      "by themselves when you restart.")
+            else:
+                print(f"  Switched {', '.join(self.brought_up)} off again.")
+        self.brought_up = []
+        self.stop_keepalive.set()
+
+    def command(self, iface, path):
+        return [self.sudo, "-n", self.tcpdump, "-U", "-i", iface, "-w", path]
+
+
+def linux_usbmon_interfaces() -> list:
+    names = sorted({os.path.basename(p) for p in glob.glob("/dev/usbmon*")})
+    return [n for n in names if re.fullmatch(r"usbmon\d+", n)]
+
+
+# ---- the session itself ------------------------------------------------------
+
+def _write_session(session: dict, folder: str) -> None:
+    """Write session.json safely: a broken write never destroys the old one."""
+    path = os.path.join(folder, "session.json")
+    tmp = path + ".tmp"
+    clean = {k: v for k, v in session.items() if not k.startswith("_")}
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(clean, fh, indent=2)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+class _StopSession(Exception):
+    pass
+
+
+def _session_ask(prompt: str) -> str:
+    """ask(), but Ctrl-C and a closed window end the session cleanly."""
+    try:
+        return ask(prompt, interruptible=True)
+    except KeyboardInterrupt:
+        raise _StopSession("Ctrl-C") from None
+
+
+def choose_profile(pids: list) -> str:
+    """Which session fits the instruments seen. pids: [(vid, pid), ...]."""
+    for key in pids:
+        if key in PROFILE_IDS:
+            return PROFILE_IDS[key]
+    return "generic"
+
+
+def _ask_profile(default: str) -> str:
+    keys = ["i1pro2", "i1pro", "i1pro3", "munki", "generic"]
+    print("\n  Which instrument do you use for this session?")
+    for i, key in enumerate(keys, 1):
+        mark = "   <- seen on this computer" if key == default else ""
+        print(f"    {i}. {PROFILE_NAMES[key]}{mark}")
+    if default == "i1pro2":
+        print("  (The i1Pro and the i1Pro 2 look the same to the computer. The i1Pro 2")
+        print("  has \"i1Pro 2\" printed on it and a UV filter switch; if unsure, choose 1.)")
+    answer = _session_ask(f"  Type a number, or press Enter for {keys.index(default) + 1}: ")
+    if answer.isdigit() and 1 <= int(answer) <= len(keys):
+        return keys[int(answer) - 1]
+    return default
+
+
+def _ask_program(detected: dict) -> tuple:
+    print("\n  Which program do you measure with?")
+    for i, name in enumerate(VENDOR_PROGRAMS, 1):
+        print(f"    {i}. {name}")
+    print(f"    {len(VENDOR_PROGRAMS) + 1}. something else (type its name)")
+    if detected:
+        print("  Found on this computer: " +
+              ", ".join(f"{k} {v}".strip() for k, v in detected.items()))
+    answer = _session_ask("  Type a number or the program's name: ")
+    if answer.isdigit() and 1 <= int(answer) <= len(VENDOR_PROGRAMS):
+        program = VENDOR_PROGRAMS[int(answer) - 1]
+    else:
+        program = answer
+    guess = next((v for k, v in detected.items()
+                  if program and program.split()[0].lower() in k.lower()), "")
+    version = _session_ask("  Which version of it? (shown in its Help or About window)"
+                           + (f" Press Enter for {guess}: " if guess else ": ")) or guess
+    return program, version
+
+
+def privacy_text(profile: str) -> str:
+    return f"""\
+  WHAT THE RECORDING CONTAINS, AND WHAT HAPPENS TO IT
+  - The USB conversation between the program and the instrument. That
+    necessarily includes the instrument's serial number and its factory
+    calibration data, because the program reads them from the instrument
+    every time it connects. They identify your instrument, not you.
+  - While a step records, the recording program also sees the other USB
+    devices on the same USB port group, such as a keyboard. Please do not
+    type anything private during a step. After each step the tool makes a
+    copy that holds ONLY the instrument's traffic (its device address and
+    nothing else), and that copy is the only thing to send.
+  - Your short notes for each step.
+  Nothing is uploaded, ever. You decide whether to send the files, and you
+  send them yourself. At the end the tool offers to delete the full
+  recordings, which you never need to send."""
+
+
+def run_instrument_session(recorder, folder: str, profile: str, program: str = "",
+                           program_version: str = "", context: dict | None = None) -> dict:
+    """The guided steps. Returns the session dict (also written to session.json).
+
+    recorder: an object with start(stem) -> live interfaces, stop() -> files,
+    session_start(), session_end(), or None for time marks only (the user
+    records the whole session himself, for example with Wireshark).
+    """
+    os.makedirs(folder, exist_ok=True)
+    full_dir = folder + "-FULL-do-not-send"
+    if recorder is not None:
+        os.makedirs(full_dir, exist_ok=True)
+        recorder.outdir = full_dir
+    steps = steps_for(profile)
+    session = {
+        "kind": SESSION_KIND, "probe_version": PROBE_VERSION,
+        "created": datetime.datetime.now().isoformat(timespec="seconds"),
+        "family": profile, "instrument": PROFILE_NAMES[profile],
+        "program": program, "program_version": program_version,
+        "recorder": recorder.label if recorder else "time marks only",
+        "platform": platform.platform(), "steps": [], "ended": "",
+        "context": context or {},
+    }
+    if recorder is None:
+        session["whole_recording"] = "whole-session.pcapng"
+    _write_session(session, folder)
+    old_handlers = {}
+    for sig in (getattr(signal, "SIGHUP", None), signal.SIGTERM,
+                getattr(signal, "SIGBREAK", None)):
+        if sig is None:
+            continue
+        try:
+            old_handlers[sig] = signal.signal(sig, _raise_hangup)
+        except (ValueError, OSError):
+            pass
+    lights = profile in PROFILES_WITH_LIGHTS
+    recording = False
+    try:
+        if recorder is not None and not recorder.session_start():
+            session["ended"] = "the recording program could not be started"
+            print("\n  The recording could not be started, so no step was recorded.")
+            return session
+        index = 0
+        take = 1
+        while index < len(steps):
+            step = steps[index]
+            number = index + 1
+            print("\n" + "-" * 68)
+            print(f"  STEP {number} of {len(steps)}: {step['title']}"
+                  + (f"  (take {take})" if take > 1 else ""))
+            print("-" * 68)
+            print(step["before"])
+            print()
+            print(step["during"])
+            answer = _session_ask("\n  Press Enter to START recording this step, or type  s  "
+                                  "to skip it,\n  or  q  to stop the session here: ").lower()
+            if answer.startswith("q"):
+                session["ended"] = "stopped by the operator"
+                break
+            entry = {"number": number, "key": step["key"], "title": step["title"],
+                     "take": take, "control": bool(step.get("control"))}
+            if answer.startswith("s"):
+                entry["skipped"] = True
+                session["steps"].append(entry)
+                _write_session(session, folder)
+                print("  Skipped.")
+                index += 1
+                take = 1
+                continue
+            stem = f"step{number}-{step['key']}-take{take}"
+            live = ["(your own recording)"]
+            if recorder is not None:
+                live = recorder.start(stem)
+                recording = True
+                if not live:
+                    recording = False
+                    recorder.stop()
+                    print("\n  The recording did not start:")
+                    for note in recorder.notes[-3:]:
+                        print("    " + note)
+                    session["ended"] = "the recording program stopped at once"
+                    break
+            entry["start_epoch"] = time.time()
+            print(f"\n  RECORDING step {number} ({', '.join(str(x) for x in live)}).")
+            print("  Do the step in the program now. Press Enter here as soon as you have")
+            print("  finished (or type  q  to stop the whole session after this step).")
+            stop_after = False
+            try:
+                done = _session_ask("  > ").lower()
+                stop_after = done.startswith("q")
+            finally:
+                entry["end_epoch"] = time.time()
+                if recorder is not None and recording:
+                    entry["files_full"] = [os.path.basename(p) for p in recorder.stop()]
+                    recording = False
+            entry["files_xrite"] = []
+            entry["check"] = []
+            for name in entry.get("files_full", []):
+                src = os.path.join(full_dir, name)
+                check = check_capture(src)
+                entry["check"].append(f"{name}: {check['xrite_packets']} instrument packets; "
+                                      f"{check['verdict']}")
+                if check["xrite_packets"] and check["code"] in ("ok", "all-zero"):
+                    dst_name = name.replace("-full.pcap", "-instrument.pcap")
+                    if filter_xrite_capture(src, os.path.join(folder, dst_name)):
+                        entry["files_xrite"].append(dst_name)
+            session["steps"].append(entry)
+            _write_session(session, folder)
+            if recorder is not None:
+                if entry["files_xrite"]:
+                    print(f"  Recording stopped. Step {number} is saved "
+                          f"({', '.join(entry['files_xrite'])}).")
+                else:
+                    print("  Recording stopped, but no instrument traffic was found in this")
+                    print("  step. Was the program talking to the instrument? You can")
+                    print("  record the step again.")
+            entry["notes"] = _session_ask(
+                "\n  In one line: what did you do, and what did the program show?\n"
+                "  (for example: \"strip A, accepted\", or \"refused: too fast\")\n  > ")
+            if lights:
+                entry["lights"] = _session_ask(
+                    f"  {step['lights']}\n  (colours, blinking, when; Enter if you did not "
+                    "notice)\n  > ")
+            _write_session(session, folder)
+            if stop_after:
+                session["ended"] = "stopped by the operator"
+                break
+            again = _session_ask("\n  Press Enter to go on to the next step, or type  r  to "
+                                 "record this step again: ").lower()
+            if again.startswith("r"):
+                entry["kept"] = False
+                _write_session(session, folder)
+                take += 1
+                continue
+            entry["kept"] = True
+            _write_session(session, folder)
+            index += 1
+            take = 1
+        else:
+            session["ended"] = "all steps done"
+    except _StopSession as exc:
+        session["ended"] = f"ended early ({exc})"
+    except _Hangup:
+        session["ended"] = "ended early (window closed or stop signal)"
+    finally:
+        if recorder is not None:
+            if recording:
+                files = recorder.stop()
+                session["unfinished_files"] = [os.path.basename(p) for p in files]
+            recorder.session_end()
+        for sig, handler in old_handlers.items():
+            try:
+                signal.signal(sig, handler)
+            except (ValueError, OSError):
+                pass
+        _write_session(session, folder)
+    return session
+
+
+def finish_session(session: dict, folder: str) -> tuple:
+    """After the steps: summary lines, analysis file, offer to delete the full files."""
+    full_dir = folder + "-FULL-do-not-send"
+    whole = os.path.join(folder, "whole-session.pcapng")
+    if session.get("recorder") == "time marks only" and os.path.exists(whole):
+        # Recorded by hand with Wireshark: keep only the instrument's traffic
+        # in the folder that gets sent, and move the full file out of it.
+        copy = os.path.join(folder, "whole-session-instrument.pcap")
+        if filter_xrite_capture(whole, copy):
+            os.makedirs(full_dir, exist_ok=True)
+            try:
+                os.replace(whole, os.path.join(full_dir, "whole-session.pcapng"))
+            except OSError:
+                pass
+            session["whole_recording"] = "whole-session-instrument.pcap"
+            for s in session["steps"]:
+                if not s.get("skipped"):
+                    s["cut_from_whole_recording"] = True
+            _write_session(session, folder)
+    done = [s for s in session["steps"] if s.get("files_xrite")
+            or s.get("cut_from_whole_recording")]
+    lines = [f"Session folder: {os.path.basename(folder)}",
+             f"Ended: {session.get('ended') or 'unknown'}",
+             f"Steps with a saved recording: {len(done)}"]
+    for s in session["steps"]:
+        state = "skipped" if s.get("skipped") else (
+            ", ".join(s.get("files_xrite") or [])
+            or ("cut from whole-session-instrument.pcap" if s.get("cut_from_whole_recording")
+                else "no instrument traffic"))
+        lines.append(f"  step {s['number']} {s['title']} (take {s.get('take', 1)}): {state}")
+    analysis = None
+    if done:
+        try:
+            analysis = summarize_session([os.path.join(folder, "session.json")])
+            with open(os.path.join(folder, "analysis.txt"), "w", encoding="utf-8") as fh:
+                fh.write(analysis + "\n")
+            lines.append("The analysis was saved as analysis.txt in the session folder.")
+        except Exception as exc:                          # noqa: BLE001
+            lines.append(f"The analysis could not be made ({exc}); the recordings are fine.")
+    if os.path.isdir(full_dir) and os.listdir(full_dir):
+        print("\n  The full recordings (in the folder ending in -FULL-do-not-send) hold")
+        print("  everything that happened on those USB ports, possibly including what")
+        print("  you typed on a USB keyboard. They are not needed: the session folder")
+        print("  has the instrument-only copies.")
+        if said_yes(ask("  Delete the full recordings now? Recommended. (yes / no): ")):
+            for name in os.listdir(full_dir):
+                try:
+                    os.remove(os.path.join(full_dir, name))
+                except OSError:
+                    pass
+            try:
+                os.rmdir(full_dir)
+            except OSError:
+                pass
+            lines.append("The full recordings were deleted.")
+        else:
+            lines.append("The full recordings were kept in the -FULL-do-not-send folder. "
+                         "Please do not send them; delete them when you no longer need them.")
+    return lines, analysis
+
+
+def session_send_text(folder: str) -> str:
+    return f"""\
+  WHAT TO SEND (only if you want to)
+  The folder  {os.path.basename(folder)}  next to this tool holds
+  everything we need: the instrument-only recordings, session.json (the
+  steps and your notes) and analysis.txt (the tool's own reading of it).
+  Make a zip file of that folder (Windows: right-click it, then "Send to",
+  then "Compressed (zipped) folder"; Mac: right-click, then "Compress")
+  and attach the zip, together with the report, to:
+      {ISSUE_URL}
+  Do NOT send the folder ending in -FULL-do-not-send."""
+
+
+def manual_recording_text(folder: str) -> str:
+    return f"""\
+  RECORDING WITH WIRESHARK BY HAND
+  This tool could not start the recording itself, but you can record the
+  whole session with Wireshark while the tool notes the time of every
+  step. The analysis can then cut your recording into the steps.
+    1. Start Wireshark. Its list shows entries named USBPcap1, USBPcap2
+       and so on. If you do not know which one the instrument is on,
+       select all of them (hold Ctrl and click each one).
+    2. If the gear icon next to a USBPcap entry offers "Inject already
+       connected devices descriptors into capture data", tick it.
+    3. Start recording, then come back here and do the steps.
+    4. At the end, stop Wireshark and save the recording (File, then Save
+       As) into the folder  {os.path.basename(folder)}  under the name
+         whole-session.pcapng
+    5. Then run this tool with   --analyze {os.path.basename(folder)}"""
+
+
+def instrument_session_step(pids: list, direct: bool) -> None:
+    """The i1Pro / ColorMunki recording, from start to end, any platform."""
+    system = platform.system()
+    default = choose_profile(pids)
+    print("\n" + "=" * 68)
+    print("  RECORDING WHAT THE MEASURING PROGRAM SAYS TO YOUR INSTRUMENT")
+    print("=" * 68)
+    try:
+        profile = _ask_profile(default)
+    except _StopSession:
+        section("Instrument recording session", "[ended before it started]")
+        return
+    print("\n  WHAT THIS IS FOR")
+    print(PROFILE_PURPOSE[profile])
+    print()
+    print(PROMISE_TEXT)
+    steps = steps_for(profile)
+    print(f"\n  WHAT YOU WILL DO ({len(steps)} short steps, about 15 minutes)")
+    for i, s in enumerate(steps, 1):
+        print(f"    {i}. {s['title']}")
+    print("  Each step is recorded into its own small file. You can skip or repeat")
+    print("  any step and stop at any time; the steps you finished are kept.")
+    print("  You need: the instrument, the program you normally measure with, and")
+    print("  one printed test chart.")
+    print()
+    print(privacy_text(profile))
+    print()
+
+    context: dict = {}
+    recorder = None
+    detected_programs: dict = {}
+    manual = False
+    if system == "Windows":
+        checks = windows_capture_checks(profile)
+        detected_programs = checks["programs"]
+        context = {"windows": checks["windows"]["text"],
+                   "usbpcap": checks["service"], "admin": checks["admin"],
+                   "hubs": [h["display"] for h in checks["hubs"]]}
+        print(windows_checks_text(checks))
+        print()
+        if not checks["service"]["installed"]:
+            print(USBPCAP_INSTALL_TEXT)
+            section("Instrument recording session",
+                    "[USBPcap is not installed]\n" + windows_checks_text(checks))
+            return
+        if windows_can_record(checks):
+            hubs = [h["path"] for h in checks["hubs"] if h["instrument"]] or \
+                [h["path"] for h in checks["hubs"]]
+            recorder = UsbPcapRecorder(checks["usbpcapcmd"], hubs, "")
+        else:
+            manual = True
+    elif system == "Darwin":
+        readiness = macos_recording_readiness(_DETECTION.get("devices"))
+        context = {"sip": readiness["sip"], "interfaces": readiness["interfaces"]}
+        if readiness["possible"]:
+            print("  Good news: a recording looks possible on this Mac.")
+            print("  " + readiness_report(readiness).replace("\n", "\n  "))
+            recorder = TcpdumpRecorder(readiness["interfaces"], "", mac=True)
+        else:
+            print(recording_not_possible_text(readiness, device="instrument"))
+            print("\n  The vendor programs (i1Profiler, ccStudio, the ColorMunki and")
+            print("  i1Studio programs) run on Windows and on the Mac, so the Windows")
+            print("  route above works with the same instrument.")
+            section("Instrument recording session",
+                    "[not possible on this Mac: " + " ".join(readiness["reasons"]) + "]")
+            return
+    else:
+        ifaces = linux_usbmon_interfaces()
+        context = {"usbmon": ifaces}
+        if ifaces and shutil.which("tcpdump"):
+            print(f"  usbmon interfaces: {', '.join(ifaces)}. The tool records on all of them.")
+            print("  (The vendor programs do not run on Linux itself; this works when they")
+            print("  run in a virtual machine that the instrument is passed through to.)")
+            recorder = TcpdumpRecorder(ifaces, "", mac=False)
+        else:
+            print("  No usbmon interfaces. Load them first with   sudo modprobe usbmon")
+            print("  (and make sure tcpdump is installed), then run the tool again.")
+            section("Instrument recording session", "[usbmon not loaded or tcpdump missing]")
+            return
+    if not said_yes(ask("\n  Start the session now? (yes / no): ")):
+        print("\n  No problem at all. Nothing was recorded.\n")
+        section("Instrument recording session", "[declined by the operator]")
+        return
+    try:
+        program, version = _ask_program(detected_programs)
+    except _StopSession:
+        section("Instrument recording session", "[ended before the first step]")
+        return
+    if profile == "i1pro2" and "i1profiler" in (program or "").lower() \
+            and version and version_tuple(version) >= (3, 8, 7):
+        print("\n  Please note: i1Profiler 3.8.7 and newer no longer talk to the i1Pro 2.")
+        print("  If yours still finds the instrument, carry on.")
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    folder = os.path.join(_writable_dir(), f"instrument-session-{stamp}")
+    if manual:
+        os.makedirs(folder, exist_ok=True)
+        print()
+        print(manual_recording_text(folder))
+        if not said_yes(ask("\n  Is Wireshark recording now? (yes / no): ")):
+            section("Instrument recording session", "[no recording running]")
+            return
+    session = run_instrument_session(recorder, folder, profile, program, version, context)
+    if manual:
+        print("\n  Now stop Wireshark and save the recording into the folder")
+        print(f"  {os.path.basename(folder)}  as  whole-session.pcapng  (File, then Save As).")
+        ask("  Press Enter when it is saved (or if you did not save it): ")
+    print("\n" + "-" * 68)
+    lines, analysis = finish_session(session, folder)
+    print("\n" + "\n".join("  " + l for l in lines))
+    if analysis:
+        verdict = analysis.split("DOES THIS RECORDING HOLD WHAT WE NEED?")[-1]
+        print("\n  DOES THIS RECORDING HOLD WHAT WE NEED?" + verdict.replace("\n", "\n  "))
+    if any(s.get("files_xrite") for s in session["steps"]) or manual:
+        print()
+        print(session_send_text(folder))
+    if system == "Darwin":
+        print()
+        print(SIP_OFF_REMINDER)
+    body = "\n".join(lines)
+    if analysis:
+        body += "\n\n" + analysis
+    section("Instrument recording session", body)
+
+
+# --------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------
+
+def detected_ids(summary: str) -> list:
+    """(vid, pid) of every X-Rite device the detection step saw."""
+    ids = []
+    for dev in _DETECTION.get("devices") or []:
+        if dev.get("vid") is not None and dev.get("pid") is not None:
+            ids.append((dev["vid"], dev["pid"]))
+    for m in re.finditer(r"VID_([0-9A-Fa-f]{4})&PID_([0-9A-Fa-f]{4})", summary or ""):
+        ids.append((int(m.group(1), 16), int(m.group(2), 16)))
+    for m in re.finditer(r"\b([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})\b", summary or ""):
+        vid = int(m.group(1), 16)
+        if vid in XRITE_VIDS:
+            ids.append((vid, int(m.group(2), 16)))
+    out = []
+    for key in ids:
+        if key[0] in XRITE_VIDS and key not in out:
+            out.append(key)
+    return out
+
+
+def find_session_folders() -> list:
+    for directory in candidate_dirs():
+        hits = [h for h in glob.glob(os.path.join(directory, "instrument-session-*"))
+                if os.path.isdir(h) and not h.endswith("-FULL-do-not-send")
+                and os.path.exists(os.path.join(h, "session.json"))]
+        if hits:
+            return [max(hits, key=os.path.getmtime)]
+    return []
+
+
+def analyze_paths(paths: list) -> str:
+    """--analyze: the instrument analysis when it fits, else 1.4's summary."""
+    if any(os.path.isdir(p) or p.endswith(".json") for p in paths):
+        return summarize_session(paths)
+    text = summarize_captures(paths)
+    try:
+        steps, devinfo, _checks, _s = session_steps(paths)
+    except Exception:                                     # noqa: BLE001
+        return text
+    if is_instrument_traffic(devinfo, steps):
+        return text + "\n\n" + summarize_session(paths)
+    return text
+
 
 def main() -> int:
     global REDACT
 
     parser = argparse.ArgumentParser(
-        description="Collect i1iO diagnostics for ChromIQ issue #129. "
-                    "Never sends anything to the device and never changes a "
-                    "system setting."
+        description="Collect information about X-Rite instruments (i1iO, i1Pro family, "
+                    "ColorMunki / i1Studio) for ChromIQ, and optionally record what the "
+                    "vendor program says to them. Never sends anything to the device and "
+                    "never changes a system setting."
     )
     parser.add_argument("--annotate", "--record", action="store_true", dest="annotate",
                         help="go straight to the recording step (stage 2)")
+    parser.add_argument("--i1pro", "--instrument", action="store_true", dest="instrument",
+                        help="the guided recording session for a handheld instrument "
+                             "(i1Pro, i1Pro 2, i1Pro 3, ColorMunki, i1Studio)")
     parser.add_argument("--skip-annotate", action="store_true",
                         help="never offer the recording step")
     parser.add_argument("--no-redact", action="store_true",
@@ -3533,28 +4692,29 @@ def main() -> int:
         return 0
 
     if args.analyze is not None:
-        paths = args.analyze or find_captures()
+        paths = args.analyze or find_session_folders() or find_captures()
         if not paths:
             print("No recording given or found next to the tool.\n"
                   "Pass a path:\n"
-                  "    --analyze path/to/recording.pcap")
+                  "    --analyze path/to/recording.pcap\n"
+                  "    --analyze path/to/instrument-session-folder")
             return 1
-        print(summarize_captures(paths))
+        print(analyze_paths(paths))
         return 0
 
     print("=" * 68)
-    print("  ChromIQ: i1iO information collector " + PROBE_VERSION)
+    print("  ChromIQ: X-Rite instrument information collector " + PROBE_VERSION)
     print("=" * 68)
     print()
     print("  This only READS information your computer already has about the")
-    print("  connected hardware. It never sends anything to the table, it")
-    print("  cannot move the arm, and it changes no settings. It is safe to")
-    print("  run at any time.")
+    print("  connected hardware. It never sends anything to the instrument or")
+    print("  the table, it cannot move the i1iO's arm, and it changes no")
+    print("  settings. It is safe to run at any time.")
     print()
     print("  It takes about a minute. Let's go.")
     print()
     print("-" * 68)
-    print("STEP 1 of 3: looking for your i1iO")
+    print("STEP 1 of 3: looking for your X-Rite devices")
     print("-" * 68)
     print()
 
@@ -3562,7 +4722,7 @@ def main() -> int:
     print("  " + summary.replace("\n", "\n  ") + "\n")
 
     if summary.startswith("NO X-RITE DEVICES"):
-        print("  This usually means the table is switched off, unplugged, or")
+        print("  This usually means the device is switched off, unplugged, or")
         print("  connected to a different port. You can carry on anyway (the")
         print("  report is still useful), but plugging it in first is better.")
         print()
@@ -3607,6 +4767,28 @@ def main() -> int:
     collect_i1profiler_charts()
     print("  Done.\n")
 
+    ids = detected_ids(summary)
+    instrument_mode = args.instrument
+    has_handheld = any(k in PROFILE_IDS for k in ids)
+    if not instrument_mode and has_handheld and (XRITE_VID, 0x2004) not in ids \
+            and not args.skip_annotate and not args.annotate:
+        names = ", ".join(PROFILE_NAMES[PROFILE_IDS[k]] for k in ids if k in PROFILE_IDS)
+        print("-" * 68)
+        print(f"  This computer has a handheld instrument plugged in ({names}),")
+        print("  but no i1iO table. This tool has a guided recording session made")
+        print("  for handheld instruments: it records, step by step, what the")
+        print("  measuring program says to the instrument. It is optional.")
+        print("-" * 68)
+        instrument_mode = said_yes(ask("  Use the session for handheld instruments? (yes / no): "))
+        print()
+    if instrument_mode:
+        section("Detected X-Rite IDs", ", ".join(f"{v:04x}:{p:04x}" for v, p in ids) or "none")
+        print("-" * 68)
+        print("STEP 3 of 3: the recording session")
+        print("-" * 68)
+        instrument_session_step(ids, direct=True)
+        return finish_report(args, system, instrument=True)
+
     print("-" * 68)
     print("STEP 3 of 3: three quick questions")
     print("-" * 68)
@@ -3627,9 +4809,12 @@ def main() -> int:
         recording_step(direct=True)
     elif not args.skip_annotate:
         recording_step(direct=False)
+    return finish_report(args, system)
 
+
+def finish_report(args, system: str, instrument: bool = False) -> int:
     body = [
-        "ChromIQ i1iO probe report",
+        "ChromIQ X-Rite instrument probe report",
         f"Generated for {ISSUE_URL}",
         f"Redaction: {'ON (serials hashed, paths stripped)' if REDACT else 'OFF, raw values included'}",
         "",
@@ -3672,8 +4857,12 @@ def main() -> int:
         print()
         print(SIP_OFF_REMINDER)
     print()
-    print("  That's everything. Thank you for helping: this is the single")
-    print("  thing standing between the project and i1iO support.")
+    if instrument:
+        print("  That's everything. Thank you for helping. Whatever comes of it,")
+        print("  a recording like this teaches us more than any amount of guessing.")
+    else:
+        print("  That's everything. Thank you for helping: this is the single")
+        print("  thing standing between the project and i1iO support.")
     print()
     return 0
 
