@@ -386,5 +386,26 @@ class TheI1Pro2Path(unittest.TestCase):
         self.assertIn("THE WAY BACK", lines)
 
 
+class TheOriginalI1Pro(unittest.TestCase):
+
+    def test_i1profiler_version_for_the_original_i1pro(self):
+        self.assertEqual(probe.i1profiler_check("3.1.1.100", "i1pro")["level"], "ok")
+        late = probe.i1profiler_check("3.8.6.16077", "i1pro")
+        self.assertEqual(late["level"], "warning")
+        self.assertIn("revisions A to D", late["text"])
+        self.assertIn("3.2.0", late["text"])
+        self.assertIn("Version 3.1.1 is needed", late["text"])
+        # the i1Pro 2 rule is untouched
+        self.assertEqual(probe.i1profiler_check("3.8.6.16077", "i1pro2")["level"], "ok")
+
+    def test_shared_usb_id_one_instrument_at_a_time(self):
+        out = io.StringIO()
+        with mock.patch.object(probe, "ask", lambda *_a, **_k: "2"), redirect_stdout(out):
+            self.assertEqual(probe._ask_profile("i1pro2"), "i1pro")
+        text = " ".join(out.getvalue().split())
+        self.assertIn("look the same to the computer", text)
+        self.assertIn("If you have both, plug in only the one you record with", text)
+
+
 if __name__ == "__main__":
     unittest.main()

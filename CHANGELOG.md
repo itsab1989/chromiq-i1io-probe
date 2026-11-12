@@ -32,6 +32,10 @@ not yet installed). Still untested with a real recording.
 - **Remembered devices.** Windows remembers every instrument it has seen,
   once per USB socket. They are now marked "not plugged in now", and the
   session is chosen from the instrument that is plugged in.
+- **The original i1Pro:** the version check now says that X-Rite removed
+  revisions A to D from i1Profiler in 3.2.0 and that 3.1.1 is needed, and a
+  user with both an i1Pro and an i1Pro 2 (one USB ID for both) is asked to
+  plug in only the one being recorded.
 - **Chart list:** names that merely contain the letters "io" ("Studio",
   "option", "iteration") are no longer tagged as iO charts.
 

@@ -197,6 +197,9 @@ jobs:
               driver (as ArgyllCMS, ChromIQ or Zadig install it) the vendor
               program cannot see the instrument. The tool says how to give it
               X-Rite's driver back, and how to switch back for ChromIQ later.
+            - **Original i1Pro:** X-Rite removed revisions A to D from
+              i1Profiler in 3.2.0 (3.1.1 is needed); with both an i1Pro and an
+              i1Pro 2, plug in only the one you record.
             - Devices Windows only remembers no longer count as plugged in;
               chart names containing "Studio" are no longer tagged as iO charts.
 

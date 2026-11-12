@@ -3938,6 +3938,15 @@ def i1profiler_check(version, profile: str) -> dict:
         return {"level": "warning", "text": (
             f"{version}. i1Profiler 3.8.7 removed support for the i1Pro 2, so this "
             "version cannot talk to it. Version 3.8.6 or older is needed.")}
+    # 1.5.1: X-Rite's note "i1Pro 1 Support Dropped in i1Profiler 3.2.0"
+    # (xrite.com/service-support/i1pro1supportdroppedini1profiler320): 3.2.0
+    # "has removed the support for revisions A through D of the i1Pro"; keep
+    # 3.1.1, which X-Rite lists for Windows 7 to 10 and macOS 10.13 to 10.15.
+    if profile == "i1pro" and version_tuple(version) >= (3, 2, 0):
+        return {"level": "warning", "text": (
+            f"{version}. X-Rite removed the original i1Pro (revisions A to D) "
+            "from i1Profiler in version 3.2.0, so this version cannot talk to "
+            "it. Version 3.1.1 is needed (X-Rite lists it for Windows 7 to 10).")}
     return {"level": "ok", "text": f"{version}"}
 
 
@@ -4454,9 +4463,11 @@ def _ask_profile(default: str) -> str:
     for i, key in enumerate(keys, 1):
         mark = "   <- seen on this computer" if key == default else ""
         print(f"    {i}. {PROFILE_NAMES[key]}{mark}")
-    if default == "i1pro2":
+    if default in ("i1pro2", "i1pro"):
         print("  (The i1Pro and the i1Pro 2 look the same to the computer. If you are")
-        print("  not sure which one you have, choose 1: the recording tells them apart.)")
+        print("  not sure which one you have, choose 1: the recording tells them apart.")
+        print("  If you have both, plug in only the one you record with, so that the")
+        print("  recording holds just that one.)")
     answer = _session_ask(f"  Type a number, or press Enter for {keys.index(default) + 1}: ")
     if answer.isdigit() and 1 <= int(answer) <= len(keys):
         return keys[int(answer) - 1]
@@ -4893,6 +4904,11 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
             and version and version_tuple(version) >= (3, 8, 7):
         print("\n  Please note: i1Profiler 3.8.7 and newer no longer talk to the i1Pro 2.")
         print("  If yours still finds the instrument, carry on.")
+    if profile == "i1pro" and "i1profiler" in (program or "").lower() \
+            and version and version_tuple(version) >= (3, 2, 0):
+        print("\n  Please note: i1Profiler 3.2.0 and newer no longer talk to the original")
+        print("  i1Pro (revisions A to D); X-Rite says to use 3.1.1. If yours still")
+        print("  finds the instrument, carry on.")
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     folder = os.path.join(_writable_dir(), f"instrument-session-{stamp}")
     if manual:
