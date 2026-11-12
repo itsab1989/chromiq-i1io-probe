@@ -1226,10 +1226,12 @@ def windows_summary_lines(out: str) -> tuple:
             parts = parts[:-1]
         text = " :: ".join(parts)
         m = _INSTANCE_IDS_RE.search(text)
+        # 1.5.3: the note on a line of its own; after the name and the
+        # instance path it ran past 80 columns and wrapped mid-word.
         if is_here is False:
-            text += "   (not plugged in now; Windows remembers it from before)"
+            text += "\n    (not plugged in now; Windows remembers it from before)"
         elif is_here and m:
-            text += "   (plugged in now)"
+            text += "\n    (plugged in now)"
             key = (int(m.group(1), 16), int(m.group(2), 16))
             if key not in present:
                 present.append(key)

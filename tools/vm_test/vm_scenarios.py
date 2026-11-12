@@ -168,6 +168,10 @@ if ($f) {{ Upload $f.FullName ("report-" + (Split-Path "{folder}" -Leaf) + ".txt
         while time.time() < end:
             n += 1
             s = self.screen(folder, f"{key}-screen.txt")
+            if s is not None:
+                self.last_raw = s
+            with open(os.path.join(self.out, f"{key}-seen.txt"), "w", encoding="utf-8") as fh:
+                fh.write("\n".join(seen))
             if s is None:
                 return "ENDED", "\n".join(seen)
             for line in s.splitlines()[1:]:
@@ -314,12 +318,13 @@ Upload "$d\out.txt" "b-out.txt" | Out-Null
         self.ps(rf'''Start-Process conhost.exe -ArgumentList "cmd /c mode con cols=80 lines=50 & `"{f}\{EXE}`" --i1pro --pause"''', name="c80")
         state, s = self.dialogue("c80", f, [("Type a number", "1\\n"), ("Shall this tool fetch", "no\\n")]
                                  + self.BASE, limit=600)
-        lines = s.splitlines()
+        raw = getattr(self, "last_raw", "").splitlines()
         self.check("c80", "80 columns: window is 80 wide, the end is reached",
-                   bool(lines) and lines[0].startswith("COLUMNS 80") and state == "WAITING",
-                   lines[0] if lines else state)
-        longest = max((len(x) for x in lines[1:]), default=0)
-        self.check("c80", "80 columns: no line runs into the edge", longest < 80, f"longest {longest}")
+                   bool(raw) and raw[0].startswith("COLUMNS 80") and state == "WAITING",
+                   raw[0] if raw else state)
+        full = [x for x in s.splitlines() if len(x) >= 80]
+        self.check("c80", "80 columns: no line runs into the edge (in every screen seen)",
+                   not full, full[0][:60] if full else "")
         self.shot("c80-end.png")
         self.type(f, "\\n")
 
