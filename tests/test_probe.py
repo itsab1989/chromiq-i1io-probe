@@ -128,7 +128,7 @@ class DetectionTests(unittest.TestCase):
         self.assertIn("0971:2004", text)
         self.assertIn("i1iO table", text)
         self.assertIn("share one hub", text)
-        self.assertIn("legacy: returned an empty list", text)
+        self.assertIn("legacy:\n      returned an empty list", text)
 
     def test_all_sources_merge_without_duplicates(self):
         result = probe.detect_xrite([

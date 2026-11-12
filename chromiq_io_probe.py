@@ -502,7 +502,9 @@ def format_detection(result: dict) -> str:
     lines.append("")
     lines.append("Where the tool looked:")
     for label, status in result["sources"]:
-        lines.append(f"  {label}: {status}")
+        # 1.5.3: on a line of its own, so it fits an 80-column window
+        lines.append(f"  {label}:")
+        lines.append(f"      {status}")
     return "\n".join(lines)
 
 
@@ -4545,11 +4547,13 @@ def choose_profile(pids: list) -> str:
     return "generic"
 
 
-def _ask_profile(default: str) -> str:
+def _ask_profile(default: str, seen: bool = True) -> str:
     keys = ["i1pro2", "i1pro", "i1pro3", "munki", "generic"]
     print("\n  Which instrument do you use for this session?")
     for i, key in enumerate(keys, 1):
-        mark = "   <- seen on this computer" if key == default else ""
+        # 1.5.3: only when an instrument was really seen (found on a Mac
+        # with nothing plugged in: "another X-Rite instrument <- seen")
+        mark = "   <- seen on this computer" if key == default and seen else ""
         print(f"    {i}. {PROFILE_NAMES[key]}{mark}")
     if default in ("i1pro2", "i1pro"):
         print("  (The i1Pro and the i1Pro 2 look the same to the computer. If you are")
@@ -4898,7 +4902,7 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
     print("  RECORDING WHAT THE MEASURING PROGRAM SAYS TO YOUR INSTRUMENT")
     print("=" * 68)
     try:
-        profile = _ask_profile(default)
+        profile = _ask_profile(default, seen=any(k in PROFILE_IDS for k in pids))
     except _StopSession:
         section("Instrument recording session", "[ended before it started]")
         return outcome

@@ -284,6 +284,16 @@ class TheWholeRun(unittest.TestCase):
         self.assertIn("3: nothing more, just the report", report)
 
 
+class SeenMarkOnlyWhenSeen(unittest.TestCase):
+
+    def test_nothing_seen_no_mark(self):
+        for seen in (True, False):
+            out = io.StringIO()
+            with mock.patch.object(probe, "ask", lambda *a, **k: ""), redirect_stdout(out):
+                probe._ask_profile("generic", seen=seen)
+            self.assertEqual("<- seen on this computer" in out.getvalue(), seen)
+
+
 class TheDetectionFitsEightyColumns(unittest.TestCase):
     """Found in the VM's 80-column window: two detection lines wrapped."""
 
