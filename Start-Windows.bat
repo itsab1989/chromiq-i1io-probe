@@ -22,11 +22,11 @@ if %errorlevel%==0 goto usepython
 goto nopython
 
 :usepy
-py -3 chromiq_io_probe.py
+py -3 chromiq_io_probe.py --no-pause
 goto done
 
 :usepython
-python chromiq_io_probe.py
+python chromiq_io_probe.py --no-pause
 goto done
 
 :nopython
@@ -43,6 +43,7 @@ echo.
 pause
 exit /b 1
 
+REM --no-pause above: this file waits below, so the tool must not wait too.
 :done
 echo.
 pause

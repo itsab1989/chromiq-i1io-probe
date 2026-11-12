@@ -65,6 +65,12 @@ Apple Silicon Macs, so there's only one file to pick.
 Double-click the `.exe`. Windows will warn you once: click **More info**, then
 **Run anyway**.
 
+For a recording, start it as administrator instead: **right-click** the
+`.exe` and choose **Run as administrator** (since 1.5.2 the tool says so
+before the recording steps, and stops there if it is not). When the tool has
+finished, its window stays open with **"Press Enter to close this window."**,
+so you can read everything first.
+
 ### macOS
 
 Downloaded files aren't marked as runnable, so **double-clicking may appear to
@@ -297,8 +303,10 @@ showed, and (for instruments with lights) one line about what the lights did.
   Windows. No security setting has to be switched off: on Windows 10 and 11
   USBPcap installs a driver signed through Microsoft's signing service. The
   tool checks, without changing anything: the Windows version, whether USBPcap
-  is installed and running, whether the window runs as administrator (USBPcap
-  may need that: right-click the tool, "Run as administrator"), which driver
+  is installed and running, whether the window runs as administrator (a recording
+  needs that, because USBPcap lets only administrators listen to the USB
+  ports: right-click the tool, "Run as administrator"; since 1.5.2 the tool
+  stops before the steps and says how, instead of trying), which driver
   the instrument is on (since 1.5.1: on the ArgyllCMS driver the vendor
   program cannot see it, and the tool says how to switch it to X-Rite's driver
   and back), which USB root hub the instrument is on, and which measuring
@@ -406,6 +414,11 @@ Useful options:
 - `--capture-setup` (macOS): say whether this Mac can record USB traffic, and
   how, then exit. Changes nothing.
 - `--i1pro` (or `--instrument`): go straight to the handheld-instrument session.
+- `--pause` / `--no-pause`: always, or never, end with "Press Enter to close
+  this window." Without either, the tool waits only when it has a console
+  window of its own (a double-click on Windows); a run whose input or output
+  is piped or redirected, or under CI, never waits. The launchers pass
+  `--no-pause` because they wait themselves.
 - `--analyze [FILE or FOLDER ...]`: read USB recordings (`.pcap` or `.pcapng`,
   from Windows, macOS or Linux) or an `instrument-session-*` folder and print a
   plain verdict (real traffic, or only zeros?) plus a command timeline. For an

@@ -476,7 +476,7 @@ class TextRules(unittest.TestCase):
             self.assertEqual(count, 0, f"{name} has {count} em dash(es)")
 
     def test_version(self):
-        self.assertEqual(probe.PROBE_VERSION, "1.5.1")
+        self.assertEqual(probe.PROBE_VERSION, "1.5.2")
 
 
 @unittest.skipUnless(platform.system() == "Darwin", "macOS only")

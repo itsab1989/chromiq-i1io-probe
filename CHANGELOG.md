@@ -1,5 +1,40 @@
 # Changelog
 
+## v1.5.2
+
+After the second report from a user: the window closed before the
+instructions could be read. Still untested with a real recording.
+
+- **The window stays open.** Double-clicked on Windows, the tool's console
+  window closed the moment the tool finished, so the help it had just
+  printed vanished and the run looked like a crash. Now every way the tool
+  ends (the normal end, "nothing was recorded", typing q, Ctrl-C, an error)
+  finishes with "Press Enter to close this window." It waits only when it
+  has a console window of its own (a double-click); started from a command
+  window, with input or output piped or redirected, or under CI it does
+  not wait. `--pause` and `--no-pause` force it either way, and the three
+  launchers pass `--no-pause` because they wait themselves.
+- **WHAT TO DO NOW.** When something is missing (USBPcap, administrator
+  rights, X-Rite's driver, the instrument itself), the last thing above the
+  wait is a short box with the next steps, the single next action first,
+  and the name and folder of the report that holds the full instructions.
+  When USBPcap is missing, the tool offers to open Wireshark's download page
+  in the browser (only on a yes; Enter means no).
+- **Administrator rights are checked before the steps.** USBPcap lets only
+  administrators listen to the USB ports; without them its recorder would
+  ask Windows for permission at every step. The tool now says so before the
+  steps start, explains how to start it as administrator (right-click,
+  "Run as administrator"), and does not start the steps. 1.5.1 said "may
+  refuse" and let the session begin.
+- **An unexpected error** no longer makes the window vanish: the tool says
+  sorry in plain words, saves what it had collected with the technical
+  details, says where, and waits.
+- **Windows 11 25H2 and newer with an i1Pro 2:** when X-Rite's driver is
+  installed and Windows reports the instrument as working, the tool now
+  says so plainly and asks the user to carry on and tell us whether
+  i1Profiler measures with it, instead of a warning next to "[OK] X-Rite's
+  driver".
+
 ## v1.5.1
 
 After the first report from a user (Windows 11 25H2, an i1Pro 3, USBPcap

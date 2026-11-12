@@ -367,7 +367,8 @@ class WindowsTests(unittest.TestCase):
         self.assertIn("[OK] 3.8.6.16077", text)
         self.assertIn("USBPcap:", text)
         self.assertIn("installed and running", text)
-        self.assertIn("Run as administrator", text)
+        # 1.5.2: not "may refuse" any more; the session stops before the steps
+        self.assertIn("[PROBLEM] no. A recording needs it", text)
         self.assertIn("USBPcap2 ([3] X-Rite i1Pro 2)", text)
         self.assertIn("ccStudio 1.5.0", text)
 

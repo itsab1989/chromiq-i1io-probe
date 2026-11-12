@@ -59,7 +59,9 @@ repeat any step and stop at any time without losing finished steps.
 
 On Windows it needs the free USBPcap (comes with Wireshark; the tool
 tells you exactly how to install it, and no security setting has to be
-switched off). If ChromIQ or ArgyllCMS installed its own driver for
+switched off), and it must run as administrator for the recording:
+right-click it and choose "Run as administrator". At the end the window
+stays open until you press Enter, so you can read what to do next. If ChromIQ or ArgyllCMS installed its own driver for
 the instrument, the measuring program cannot see it until X-Rite's
 driver is back; the tool notices that and says how. The recording contains your
 instrument's serial number and calibration data, because the program

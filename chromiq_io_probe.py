@@ -74,7 +74,7 @@ import tempfile
 import threading
 import time
 
-PROBE_VERSION = "1.5.1"
+PROBE_VERSION = "1.5.2"
 
 ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/129"   # the i1iO only
 NEW_ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/new"
@@ -115,6 +115,11 @@ def pid_label(pid, vid=XRITE_VID) -> str:
 
 REDACT = True
 _SECTIONS: list = []
+# 1.5.2: why this run could not do its job ("usbpcap_missing", "not_admin",
+# "wrong_driver", "no_instrument"), for the WHAT TO DO NOW box printed as the
+# last thing before the window closes, and the report that was written.
+_CAUSES: list = []
+_LAST_REPORT: dict = {}
 
 # How long to wait after starting the recorders before checking they are
 # alive. A module constant so the tests can shorten it.
@@ -3807,11 +3812,16 @@ XRITE_25H2_NOTE_URL = ("https://www.xrite.com/service-support/"
 PROFILES_BLOCKED_ON_25H2 = ("i1pro2", "i1pro")
 
 
-def windows_release_check(build, display, arm: bool, profile: str | None = None) -> dict:
+def windows_release_check(build, display, arm: bool, profile: str | None = None,
+                          vendor_driver_working: bool = False) -> dict:
     """Plain facts about this Windows for the recording. Never blocks.
 
     profile: the session's instrument (None: not known, said for the i1Pro 2
-    and the iO2 as before)."""
+    and the iO2 as before).
+    vendor_driver_working (1.5.2): X-Rite's driver is bound to the plugged-in
+    instrument and Windows reports it as working. Then X-Rite's general note
+    is not this PC's state, and saying [PLEASE READ] next to "[OK] X-Rite's
+    driver" only confused the second user; it is useful evidence instead."""
     if arm:
         return {"level": "problem", "text": (
             "This Windows runs on an ARM processor. X-Rite has no driver for these "
@@ -3823,6 +3833,13 @@ def windows_release_check(build, display, arm: bool, profile: str | None = None)
     name = "Windows 11" if build >= WIN11_FIRST_BUILD else "Windows 10"
     label = f"{name}{' version ' + display if display else ''} (build {build})"
     if build >= WIN11_25H2_BUILD:
+        if profile in PROFILES_BLOCKED_ON_25H2 and vendor_driver_working:
+            return {"level": "ok", "text": (
+                f"{label}. X-Rite says its driver for the i1Pro 2 and the iO2 does "
+                "not work with Windows 11 version 25H2 or newer, but on this PC "
+                "X-Rite's driver is installed and Windows reports the instrument as "
+                "working, so please carry on. Please tell us whether i1Profiler "
+                "measures with it: that is useful to know.")}
         if profile is None or profile in PROFILES_BLOCKED_ON_25H2:
             return {"level": "warning", "text": (
                 f"{label}. X-Rite says its driver for the i1Pro 2 and the iO2 does "
@@ -4019,25 +4036,28 @@ _DRIVER_PS = (
     "-ErrorAction SilentlyContinue).Data; "
     "$p = (Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName DEVPKEY_Device_DriverProvider "
     "-ErrorAction SilentlyContinue).Data; "
-    "'DRV :: ' + $_.FriendlyName + ' :: ' + $_.InstanceId + ' :: ' + $_.Class + ' :: ' + $s + ' :: ' + $p }")
+    "'DRV :: ' + $_.FriendlyName + ' :: ' + $_.InstanceId + ' :: ' + $_.Class + ' :: ' + $s + ' :: ' + $p "
+    "+ ' :: ' + $_.Status }")
 
 _INSTANCE_IDS_RE = re.compile(r"VID_([0-9A-Fa-f]{4})&PID_([0-9A-Fa-f]{4})")
 
 
 def parse_driver_lines(text: str) -> list:
-    """The 'DRV :: name :: instance :: class :: service :: provider' lines."""
+    """The 'DRV :: name :: instance :: class :: service :: provider[ :: status]'
+    lines (the status, as Get-PnpDevice gives it, since 1.5.2)."""
     out = []
     for line in (text or "").splitlines():
         if not line.startswith("DRV :: "):
             continue
         parts = [p.strip() for p in line[len("DRV :: "):].split(" :: ")]
-        parts += [""] * (5 - len(parts))
-        name, instance, cls, service, provider = parts[:5]
+        parts += [""] * (6 - len(parts))
+        name, instance, cls, service, provider, status = parts[:6]
         m = _INSTANCE_IDS_RE.search(instance)
         if not m or "&MI_" in instance.upper():
             continue
         out.append({"vid": int(m.group(1), 16), "pid": int(m.group(2), 16), "name": name,
-                    "class": cls, "service": service, "provider": provider})
+                    "class": cls, "service": service, "provider": provider,
+                    "status": status})
     return out
 
 
@@ -4081,8 +4101,11 @@ def instrument_driver_checks(devices: list) -> list:
                 "The vendor program cannot see the instrument like this (see "
                 "below what to do).")})
         elif state == "vendor":
+            working = dev.get("status", "").upper() == "OK"
             checks.append({"name": label, "level": "ok", "help": False,
-                           "text": f"{label}: X-Rite's driver ({drv})"})
+                           "vendor_working": working,
+                           "text": f"{label}: X-Rite's driver ({drv})"
+                                   + (", and Windows reports it as working" if working else "")})
         elif state == "none":
             checks.append({"name": label, "level": "warning", "help": False, "text": (
                 f"{label}: Windows has no driver for it at the moment. Installing "
@@ -4150,11 +4173,14 @@ def windows_capture_checks(profile: str) -> dict:
                      "instrument": [d for d in devs if _XRITE_NAME_RE.search(d[1])]})
     programs = windows_program_versions()
     i1p = next((v for k, v in programs.items() if "i1profiler" in k.lower()), None)
-    return {"windows": windows_release_check(build["build"], build["display"], arm, profile),
+    drivers = instrument_driver_checks(windows_driver_devices())
+    working = any(d.get("vendor_working") for d in drivers)
+    return {"windows": windows_release_check(build["build"], build["display"], arm, profile,
+                                             vendor_driver_working=working),
             "service": service, "usbpcapcmd": cmd, "hubs": hubs,
             "admin": windows_is_admin(), "programs": programs,
             "i1profiler": i1profiler_check(i1p, profile), "build": build,
-            "drivers": instrument_driver_checks(windows_driver_devices())}
+            "drivers": drivers}
 
 
 def driver_help_needed(c: dict) -> bool:
@@ -4188,10 +4214,10 @@ def windows_checks_text(c: dict) -> str:
     for d in c.get("drivers") or []:
         row("Driver:", d["level"], d["text"])
     admin = c["admin"]
-    row("Administrator:", "ok" if admin else "warning" if admin is False else "unknown",
+    row("Administrator:", "ok" if admin else "problem" if admin is False else "unknown",
         "yes, this window runs as administrator" if admin else
-        "no. USBPcap may refuse to record. If it does, close this window, right-click "
-        "the tool and choose \"Run as administrator\"." if admin is False else "not known")
+        "no. A recording needs it (see below how to start the tool as "
+        "administrator)." if admin is False else "not known")
     if c["hubs"]:
         found = [h for h in c["hubs"] if h["instrument"]]
         if found:
@@ -4204,6 +4230,43 @@ def windows_checks_text(c: dict) -> str:
                 f"({', '.join(h['display'] for h in c['hubs'])}) and keeps only the "
                 "instrument's traffic")
     return "\n".join(lines)
+
+
+def tool_name() -> str:
+    """What the user double-clicked, for "right-click ... Run as administrator"."""
+    if getattr(sys, "frozen", False):
+        return os.path.basename(sys.executable)
+    if platform.system() == "Windows":
+        return "Start-Windows.bat"
+    return os.path.basename(__file__)
+
+
+# 1.5.2. Facts, checked 2026-11-13 in USBPcap's source (github.com/desowin/
+# usbpcap): the capture device is created with the security descriptor
+# "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GX;;;WD)(A;;GX;;;RC)"
+# (USBPcapDriver/USBPcapRootHubControl.c), so only SYSTEM and administrators
+# may open it to read. USBPcapCMD's manifest asks for "asInvoker"; when it is
+# not elevated it starts an elevated copy of itself through ShellExecuteEx
+# "runas" (USBPcapCMD/cmd.c, create_elevated_worker), that is one Windows
+# permission question per recorder start. This tool starts one recorder per
+# USB root hub for every step, so without administrator rights the user would
+# be asked again and again, and a missed or refused question records nothing.
+# 1.5.1 let the session start anyway and said "may refuse".
+def admin_help_text() -> str:
+    return f"""\
+  WHY ADMINISTRATOR RIGHTS ARE NEEDED
+  USBPcap only lets programs that run as administrator listen to the USB
+  ports. Started without those rights, its recorder would have to ask
+  Windows for permission again at every step, and a question that is
+  missed or answered "No" means nothing is recorded. So this tool does not
+  start the steps until it runs as administrator.
+
+  HOW TO START THIS TOOL AS ADMINISTRATOR
+    1. Close this window.
+    2. Right-click  {tool_name()}  and choose
+       "Run as administrator".
+    3. When Windows asks whether to allow it, click "Yes".
+    4. Choose the recording session again."""
 
 
 def windows_can_record(c: dict) -> bool:
@@ -4845,8 +4908,13 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
         print()
         if not checks["service"]["installed"]:
             outcome["help"].append(USBPCAP_INSTALL_TEXT)
+            _note_cause("usbpcap_missing")
         if driver_help_needed(checks):
             outcome["help"].append(DRIVER_HELP_TEXT)
+            _note_cause("wrong_driver")
+        if checks["admin"] is False:
+            outcome["help"].append(admin_help_text())
+            _note_cause("not_admin")
         if outcome["help"]:
             print(("\n\n  " + "-" * 66 + "\n\n").join(outcome["help"]))
             print()
@@ -4855,6 +4923,15 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
                                  "this tool needs on Windows) is not installed yet.")
             section("Instrument recording session",
                     "[USBPcap is not installed]\n" + windows_checks_text(checks)
+                    + "\n\n" + "\n\n".join(outcome["help"]))
+            return outcome
+        if checks["admin"] is False:
+            # 1.5.2: say it before the steps, not after the first one failed.
+            outcome["reason"] = ("Nothing was recorded, because this window does not run "
+                                 "as administrator, and USBPcap records only for "
+                                 "administrators.")
+            section("Instrument recording session",
+                    "[not running as administrator]\n" + windows_checks_text(checks)
                     + "\n\n" + "\n\n".join(outcome["help"]))
             return outcome
         if windows_can_record(checks):
@@ -4993,7 +5070,7 @@ def analyze_paths(paths: list) -> str:
     return text
 
 
-def main() -> int:
+def main(argv: list | None = None) -> int:
     global REDACT
 
     parser = argparse.ArgumentParser(
@@ -5019,7 +5096,12 @@ def main() -> int:
                              "verdict + command timeline; with no path, finds "
                              "the newest recording next to the tool")
     parser.add_argument("-o", "--output", default=None, help="output file path")
-    args = parser.parse_args()
+    parser.add_argument("--pause", action="store_true",
+                        help='always end with "Press Enter to close this window."')
+    parser.add_argument("--no-pause", action="store_true",
+                        help="never wait for Enter at the end (the launchers use this; "
+                             "piped or redirected runs never wait anyway)")
+    args = parser.parse_args(argv)
     REDACT = not args.no_redact
 
     if args.capture_setup:
@@ -5070,6 +5152,8 @@ def main() -> int:
 
     summary = quick_summary()
     print("  " + summary.replace("\n", "\n  ") + "\n")
+    if summary.startswith("NO X-RITE DEVICES") or "None of them is plugged in right now" in summary:
+        _note_cause("no_instrument")
 
     if summary.startswith("NO X-RITE DEVICES"):
         print("  This usually means the device is switched off, unplugged, or")
@@ -5194,8 +5278,7 @@ def show_i1profiler_warning(instrument: bool, outcome: dict | None) -> bool:
     return (outcome or {}).get("profile") in PROFILES_BLOCKED_ON_25H2
 
 
-def finish_report(args, system: str, instrument: bool = False,
-                  outcome: dict | None = None) -> int:
+def report_text(instrument: bool = False) -> str:
     body = [
         "ChromIQ X-Rite instrument probe report",
         ("Made by the handheld-instrument session" if instrument
@@ -5209,9 +5292,15 @@ def finish_report(args, system: str, instrument: bool = False,
         body.append("=" * 72)
         body.append(content)
         body.append("")
-    report = "\n".join(body)
+    return "\n".join(body)
 
+
+def finish_report(args, system: str, instrument: bool = False,
+                  outcome: dict | None = None) -> int:
+    report = report_text(instrument)
     out_path = write_report(report, args.output)
+    if out_path:
+        _LAST_REPORT["path"] = out_path
     if out_path is None:
         print("\n" + "!" * 68)
         print("Could not save the report anywhere. Please copy everything below")
@@ -5310,5 +5399,245 @@ def write_report(report: str, explicit) -> str | None:
     return None
 
 
+# --------------------------------------------------------------------------
+# 1.5.2: the end of every run. The second user double-clicked the Windows exe,
+# the tool printed its install help, and the console window closed the moment
+# it finished: he never saw the help and thought it had crashed. So every way
+# out (normal end, "nothing recorded", q, an error, Ctrl-C) ends here: what to
+# do now, where it is saved, and "Press Enter to close this window."
+# --------------------------------------------------------------------------
+
+WIRESHARK_DOWNLOAD_URL = "https://www.wireshark.org/download.html"
+
+
+def _note_cause(cause: str) -> None:
+    if cause not in _CAUSES:
+        _CAUSES.append(cause)
+
+
+def what_to_do_lines(causes: list, report_path: str | None) -> list:
+    """The short WHAT TO DO NOW box: the single next action first."""
+    if not causes:
+        return []
+    steps = []
+    if "no_instrument" in causes:
+        steps.append("Plug the instrument in (straight into the computer, not through "
+                     "a USB hub), and switch the table on if you have one.")
+    if "usbpcap_missing" in causes:
+        steps.append("Install USBPcap: open " + WIRESHARK_DOWNLOAD_URL + ", run the "
+                     "\"Windows x64 Installer\" and, on its page \"USB Capture\", tick "
+                     "\"Install USBPcap\".")
+        steps.append("Restart Windows.")
+    if "wrong_driver" in causes:
+        steps.append("Give the instrument X-Rite's driver back in Device Manager, and "
+                     "check that the measuring program finds it.")
+    if "not_admin" in causes:
+        steps.append(f"Then right-click  {tool_name()}  and choose \"Run as "
+                     "administrator\", and choose the recording session again.")
+    else:
+        steps.append("Then run this tool again.")
+    rule = "  " + "=" * 66
+    lines = ["", rule, "    WHAT TO DO NOW", ""]
+    for n, text in enumerate(steps, 1):
+        lines.append(f"    {n}. " + _wrap(text, 60, " " * 7))
+    lines.append("")
+    if report_path:
+        lines += ["    The same instructions, in full, are in your report. It stays",
+                  "    there after this window is closed:",
+                  "        " + os.path.basename(report_path),
+                  "    in the folder:",
+                  "        " + (os.path.dirname(report_path) or ".")]
+    else:
+        lines.append("    No report was saved this time.")
+    lines.append(rule)
+    return lines
+
+
+def _console_process_ids():
+    """Windows: the processes attached to this console, or None."""
+    try:
+        import ctypes                                     # noqa: PLC0415
+        arr = (ctypes.c_uint32 * 64)()
+        n = ctypes.windll.kernel32.GetConsoleProcessList(arr, 64)  # type: ignore[attr-defined]
+        if n <= 0:
+            return None
+        if n > 64:                                        # crowded: surely not ours alone
+            return list(arr) + [-1]
+        return list(arr[:n])
+    except Exception:                                     # noqa: BLE001
+        return None
+
+
+def _process_image(pid: int) -> str | None:
+    """Windows: the full path of a process's program, or None."""
+    try:
+        import ctypes                                     # noqa: PLC0415
+        from ctypes import wintypes                       # noqa: PLC0415
+        k32 = ctypes.windll.kernel32                      # type: ignore[attr-defined]
+        handle = k32.OpenProcess(0x1000, False, pid)      # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return None
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            size = wintypes.DWORD(1024)
+            if not k32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                return None
+            return buf.value
+        finally:
+            k32.CloseHandle(handle)
+    except Exception:                                     # noqa: BLE001
+        return None
+
+
+def owns_console(process_ids=None, self_pid=None, parent_pid=None,
+                 image_of=None, executable=None):
+    """Windows: True when this program has its console window to itself,
+    which is what a double-click gives; False when it was started from a
+    command window (cmd, PowerShell, a launcher .bat), whose window stays
+    open; None when it cannot be told.
+
+    Not "the console's process list holds only this process": a one-file
+    PyInstaller exe runs as two processes, the bootloader and its child, both
+    on the same console, and a double-clicked .py runs under py.exe. So our
+    own parent is not counted when it is that bootloader (the same program
+    file) or the py launcher."""
+    ids = _console_process_ids() if process_ids is None else process_ids
+    if not ids:
+        return None
+    self_pid = os.getpid() if self_pid is None else self_pid
+    parent_pid = os.getppid() if parent_pid is None else parent_pid
+    image_of = _process_image if image_of is None else image_of
+    executable = sys.executable if executable is None else executable
+    others = [p for p in ids if p != self_pid]
+    if parent_pid in others:
+        image = image_of(parent_pid) or ""
+        same = bool(image) and image.lower() == (executable or "").lower()
+        launcher = os.path.basename(image.replace("\\", "/")).lower() in ("py.exe", "pyw.exe")
+        if same or launcher:
+            others.remove(parent_pid)
+    return not others
+
+
+def _isatty(stream) -> bool:
+    try:
+        return bool(stream) and stream.isatty()
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
+def should_pause(argv, env=None, stdin=None, stdout=None, system=None,
+                 frozen=None, owns=None) -> bool:
+    """Whether to end with "Press Enter to close this window."
+
+    --no-pause never, --pause always. Otherwise never under CI or when input
+    or output is piped or redirected; on Windows when this program owns its
+    console window (a double-click). When that cannot be told, the frozen
+    exe waits (a double-click is how people start it, and one extra Enter in
+    a command window costs nothing) and the script does not. macOS keeps a
+    Terminal window open after the program ends ("[Process completed]"), and
+    the macOS and Linux launchers wait themselves."""
+    argv = list(argv or [])
+    env = os.environ if env is None else env
+    if "--no-pause" in argv or env.get("CHROMIQ_PROBE_NO_PAUSE"):
+        return False
+    if "--pause" in argv:
+        return True
+    if env.get("CI") or env.get("GITHUB_ACTIONS"):
+        return False
+    if not (_isatty(sys.stdin if stdin is None else stdin)
+            and _isatty(sys.stdout if stdout is None else stdout)):
+        return False
+    if (platform.system() if system is None else system) != "Windows":
+        return False
+    owned = owns_console() if owns is None else owns()
+    if owned is None:
+        return bool(getattr(sys, "frozen", False) if frozen is None else frozen)
+    return owned
+
+
+def wait_for_enter() -> None:
+    print()
+    try:
+        input("  Press Enter to close this window.")
+    except (EOFError, KeyboardInterrupt):
+        pass
+    print()
+
+
+def crash_text(trace: str, saved: str | None) -> list:
+    lines = ["", "!" * 68,
+             "  SORRY: THE TOOL STOPPED BECAUSE OF A MISTAKE IN IT",
+             "!" * 68, "",
+             "  This is our mistake, not something you did."]
+    if saved:
+        lines += ["  What the tool had collected so far, and the technical details of",
+                  "  the error, were saved here:", "", "      " + saved, "",
+                  "  Please send us that file (or a photo of this window), so we can",
+                  "  fix it."]
+    else:
+        lines += ["  It could not save a report. Please copy the text of this window",
+                  "  (or take a photo of it) and send it to us, so we can fix it."]
+    lines += ["", "  The technical details, for us:", "", trace.rstrip()]
+    return lines
+
+
+def offer_download_page(interactive: bool, system: str | None = None) -> None:
+    """Windows, USBPcap missing: offer to open the download page. Opens
+    nothing without a yes."""
+    if "usbpcap_missing" not in _CAUSES or not interactive:
+        return
+    if (platform.system() if system is None else system) != "Windows":
+        return
+    answer = ask("\n  Open the download page (" + WIRESHARK_SHORT + ") in your web browser\n"
+                 "  now? Type  yes  to open it, or just press Enter for no: ")
+    if said_yes(answer):
+        import webbrowser                                 # noqa: PLC0415
+        try:
+            webbrowser.open(WIRESHARK_DOWNLOAD_URL)
+            print("  Opened. If nothing appeared, type the address into your browser:")
+        except Exception:                                 # noqa: BLE001
+            print("  The browser could not be opened. Please type this address into it:")
+        print("      " + WIRESHARK_DOWNLOAD_URL)
+
+
+WIRESHARK_SHORT = "wireshark.org/download.html"
+
+
+def console_main(argv: list | None = None) -> int:
+    """main() inside the one way out every run takes."""
+    argv = sys.argv[1:] if argv is None else list(argv)
+    pause = should_pause(argv)
+    try:
+        code = main(argv)
+    except KeyboardInterrupt:
+        print("\n\n  Stopped (Ctrl-C). Nothing more was done; anything already saved"
+              "\n  is kept.")
+        code = 130
+    except SystemExit as exc:                             # argparse: --help, bad option
+        code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 2)
+    except Exception:                                     # noqa: BLE001
+        import traceback                                  # noqa: PLC0415
+        trace = traceback.format_exc()
+        saved = None
+        try:
+            section("The tool stopped because of an error", trace)
+            saved = write_report(report_text(), None)
+        except Exception:                                 # noqa: BLE001
+            saved = None
+        if saved:
+            _LAST_REPORT["path"] = saved
+        print("\n".join(crash_text(trace, saved)))
+        code = 1
+    try:
+        if _CAUSES:
+            print("\n".join(what_to_do_lines(_CAUSES, _LAST_REPORT.get("path"))))
+            offer_download_page(_isatty(sys.stdin))
+    except Exception:                                     # noqa: BLE001
+        pass
+    if pause:
+        wait_for_enter()
+    return code
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(console_main())

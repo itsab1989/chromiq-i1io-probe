@@ -180,6 +180,36 @@ jobs:
             recording only listens (on Windows through the free USBPcap, which
             you install yourself if you want to record).
 
+            ### What's new in 1.5.2
+
+            Changed after the second report from a user: the window closed
+            before the instructions could be read. Still untested with a real
+            recording.
+
+            - **The window stays open.** Double-clicked on Windows, the window
+              closed the moment the tool finished, so its help vanished and it
+              looked like a crash. Every ending (normal end, nothing recorded,
+              q, Ctrl-C, an error) now finishes with "Press Enter to close this
+              window." It waits only in a console window of its own; from a
+              command window, piped, redirected or under CI it does not.
+              `--pause` and `--no-pause` force it either way.
+            - **WHAT TO DO NOW:** when USBPcap, administrator rights, X-Rite's
+              driver or the instrument is missing, a short box with the next
+              steps is the last thing on the screen, with the name and folder
+              of the report that holds the full instructions. When USBPcap is
+              missing it offers to open Wireshark's download page (only on a
+              yes).
+            - **Administrator rights are checked before the steps:** USBPcap
+              lets only administrators listen to the USB ports, so the tool now
+              says so first and explains how to start it as administrator,
+              instead of letting the session begin.
+            - **An unexpected error** says sorry, saves what was collected with
+              the technical details, says where, and waits.
+            - **i1Pro 2 on Windows 11 25H2 or newer:** when X-Rite's driver is
+              installed and Windows reports the instrument as working, the tool
+              says so and asks to carry on and tell us whether i1Profiler
+              measures with it.
+
             ### What's new in 1.5.1
 
             Changed after the first report from a user. Still untested with a

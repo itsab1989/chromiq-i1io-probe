@@ -27,7 +27,8 @@ if ! python3 -c "print()" >/dev/null 2>&1; then
     exit 1
 fi
 
-python3 chromiq_io_probe.py
+# --no-pause: this script waits at the end itself, so the tool must not.
+python3 chromiq_io_probe.py --no-pause
 status=$?
 
 echo
