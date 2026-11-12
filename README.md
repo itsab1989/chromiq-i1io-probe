@@ -1,4 +1,4 @@
-# ChromIQ: X-Rite instrument information collector
+# ChromIQ X-Rite instrument probe
 
 <p align="center">
   <a href="https://ko-fi.com/itsab1989"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support ChromIQ on Ko-fi" height="36"></a>
@@ -119,15 +119,30 @@ repo). It's a short, plain Python file plus double-click launchers. See
 
 A window opens and walks you through three short steps:
 
-1. **It looks for your i1iO** and tells you straight away whether it found it.
+1. **It looks for your X-Rite instruments** and tells you straight away what
+   it found, and whether each one is plugged in right now or only remembered
+   by the computer.
 2. **It collects the details** (a few seconds, nothing needed from you).
-3. **It asks three easy questions**: which iO generation you have, which
-   instrument is mounted, and which software (and version) you use. Press
-   Enter to skip any.
+3. **It asks what you would like to do** (since 1.5.3), with the answer that
+   fits what is plugged in already suggested, so Enter is usually right:
 
-At the end it offers an **optional extra**: recording what i1Profiler says to
-the table while you use it. You are very welcome to say no; the basic report
-is already useful on its own.
+   ```
+     Plugged in now: i1Pro 2 (X-Rite's driver).
+
+     What would you like to do?
+       1. record an i1iO table
+       2. record a handheld instrument   <- suggested
+          (the i1Pro family, the ColorMunki, the i1Studio)
+       3. nothing more: just make the report
+       a. look again (after plugging something in)
+   ```
+
+   With nothing plugged in it says so, and `a` lets it look again after you
+   plug the instrument in. For the i1iO (choice 1) it asks three easy
+   questions (which iO generation, which instrument is mounted, which
+   software and version) and then offers an **optional extra**: recording
+   what i1Profiler says to the table. Choice 2 is the handheld session
+   described below. `--io` and `--i1pro` choose without asking.
 
 It then saves a plain-text file such as `chromiq-io-probe-20261111-143052.txt`.
 **Open it, have a look, then attach it to
@@ -429,6 +444,11 @@ python3 chromiq_io_probe.py
 
 Or use the double-click launchers in the scripts bundle: `Start-macOS.command`,
 `Start-Windows.bat`, `Start-Linux.sh`.
+
+For testing, `tools/vm_test/` drives the built Windows exe on a real Windows
+machine (a double-click start, every ending, an 80-column window, the
+questions) and writes a PASS / FAIL list; its README explains the hidden
+`--selftest` switch it uses.
 
 Useful options:
 

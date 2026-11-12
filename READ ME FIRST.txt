@@ -1,5 +1,5 @@
-ChromIQ - X-Rite instrument information collector
-=================================================
+ChromIQ X-Rite instrument probe
+===============================
 
 For the i1iO table, and since version 1.5 also for handheld
 instruments: i1Pro, i1Pro 2, i1Pro 3, ColorMunki and i1Studio.
@@ -10,7 +10,8 @@ Thank you for helping!  This takes about two minutes.
 THE SHORT VERSION
 -----------------
 
-1. Plug in your i1iO and switch it on.
+1. Plug in your instrument (the i1iO table, or a handheld i1Pro,
+   ColorMunki or i1Studio) and switch it on.
 
 2. Double-click the file for your system:
 
@@ -18,8 +19,10 @@ THE SHORT VERSION
        Windows  ->  Start-Windows.bat
        Linux    ->  Start-Linux.sh
 
-3. Follow what it says on screen.  It asks you three easy questions
-   at the end - you may skip them.
+3. Follow what it says on screen.  After a minute it shows what is
+   plugged in and asks what you would like to do: record the i1iO
+   table, record a handheld instrument, or just make the report.
+   Press Enter to take its suggestion.
 
 4. It saves a text file called  chromiq-io-probe-<date>.txt
    Have a look at it, then (for the i1iO) attach it to:

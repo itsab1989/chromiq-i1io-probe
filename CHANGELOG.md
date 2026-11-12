@@ -25,6 +25,18 @@ real recording, and the installer route was tested with stand-ins only.
 - A failed download, a "no" anywhere or a refused Windows question leads to
   the manual steps of 1.5.2, including the offer to open Wireshark's
   download page.
+- **Found by running the exe on a real Windows 11 (on ARM, the x64 exe
+  emulated):** with an instrument that Windows only remembers and nothing
+  plugged in, the tool said "None of them is plugged in right now" and then
+  "This computer has a handheld instrument plugged in" and offered the
+  session (also in 1.5.1 and 1.5.2). Only what is plugged in counts now.
+- **Helper programs never touch the window:** every program the tool asks
+  (PowerShell, `sc`, USBPcapCMD) now gets no input from the keyboard, has
+  its output and errors captured into the report, and on Windows runs
+  without a console of its own.
+- **For testing only:** a hidden `--selftest` switch and `tools/vm_test/`,
+  an automated end-to-end test that drives the built exe on a real Windows
+  (see its README).
 
 ## v1.5.2
 

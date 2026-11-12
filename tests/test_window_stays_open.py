@@ -206,9 +206,10 @@ class EveryWayOut(unittest.TestCase):
                 code = probe.console_main([])
         self.assertEqual(code, 0)
         screen = out.getvalue()
+        # 1.5.3: q at "What would you like to do?" means "just the report"
         self.assertIn("WHAT TO DO NOW", screen)
         self.assertIn("Plug the instrument in", screen)
-        self.assertIn("No report was saved this time.", screen)
+        self.assertIn("The same instructions, in full, are in your report", screen)
         self.assertEqual(events, ["  Press Enter to close this window."])
 
     def test_unhandled_error_apologises_saves_and_waits(self):

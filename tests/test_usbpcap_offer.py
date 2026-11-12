@@ -468,14 +468,14 @@ class OnlyWhatIsPluggedInIsOffered(unittest.TestCase):
 
     def test_remembered_only_is_not_offered(self):
         screen, prompts = self.run_main([])
-        self.assertNotIn("has a handheld instrument plugged in", screen)
-        self.assertNotIn("Use the session for handheld instruments?", prompts)
+        self.assertIn("Plugged in now: no X-Rite instrument.", screen)
+        self.assertIn("or just press Enter for 3", prompts)
         self.assertIn("no_instrument", probe._CAUSES)
 
     def test_plugged_in_is_offered(self):
         screen, prompts = self.run_main([(0x0765, 0x6008)])
-        self.assertIn("has a handheld instrument plugged in (", screen)
-        self.assertIn("Use the session for handheld instruments?", prompts)
+        self.assertIn("Plugged in now: ColorMunki Photo / Design or i1Studio", " ".join(screen.split()))
+        self.assertIn("or just press Enter for 2", prompts)
 
 
 class Honesty(unittest.TestCase):

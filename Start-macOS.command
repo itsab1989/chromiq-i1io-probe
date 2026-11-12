@@ -6,7 +6,7 @@ cd "$(dirname "$0")" || exit 1
 
 clear
 echo
-echo "  ChromIQ: i1iO information collector (macOS)"
+echo "  ChromIQ X-Rite instrument probe (macOS)"
 echo
 
 # /usr/bin/python3 exists on every Mac, but on a machine without the Xcode

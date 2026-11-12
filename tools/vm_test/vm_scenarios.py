@@ -36,7 +36,7 @@ function Screen([int]$id, [string]$name) {
     $p = Start-Process "$bin\conhelper.exe" -Wait -PassThru -ArgumentList @('read', $id, "`"$out`"")
     if (Test-Path $out) { Upload $out $name | Out-Null; Get-Content $out -Raw -Encoding UTF8 } else { "NO SCREEN " + $p.ExitCode }
 }
-function Type([int]$id, [string]$text) {
+function SendText([int]$id, [string]$text) {
     $p = Start-Process "$bin\conhelper.exe" -Wait -PassThru -ArgumentList @('type', $id, "`"$text`"")
     "typed exit " + $p.ExitCode
 }
@@ -111,6 +111,10 @@ Start-Process explorer.exe -ArgumentList "`"{folder}\probe.lnk`""
         else:
             script = rf'Start-Process explorer.exe -ArgumentList "`"{folder}\{EXE}`""'
         self.ps(script + "\n'started'", name="start")
+        for _ in range(30):                       # until Explorer has started it
+            if self.ids(folder):
+                return
+            time.sleep(1)
 
     def ids(self, folder):
         out = self.ps(f'(ProbeIds "{folder}") -join ","', name="ids").strip()
@@ -137,7 +141,7 @@ Start-Process explorer.exe -ArgumentList "`"{folder}\probe.lnk`""
 
     def type(self, folder, text):
         ids = self.ids(folder)
-        return self.ps(f'Type {ids[-1]} "{text}"', name="type") if ids else "no process"
+        return self.ps(f'SendText {ids[-1]} "{text}"', name="type") if ids else "no process"
 
     def shot(self, name):
         self.ps(f'Shot "{name}"', name="shot")
@@ -160,15 +164,19 @@ if ($f) {{ Upload $f.FullName ("report-" + (Split-Path "{folder}" -Leaf) + ".txt
         than `limit`, is recorded as hung, photographed and closed."""
         end = time.time() + limit
         last_tail, since, n = None, time.time(), 0
+        seen = []          # every line shown, in order: the window keeps only 30 rows
         while time.time() < end:
             n += 1
             s = self.screen(folder, f"{key}-screen.txt")
             if s is None:
-                return "ENDED", ""
+                return "ENDED", "\n".join(seen)
+            for line in s.splitlines()[1:]:
+                if line.strip() and line not in seen[-400:]:
+                    seen.append(line)
             lines = [x for x in s.splitlines()[1:] if x.strip()]
             tail = "\n".join(lines[-3:])
             if WAIT_LINE in (lines[-1] if lines else ""):
-                return "WAITING", s
+                return "WAITING", "\n".join(seen)
             for text, typed in answers:
                 if text in tail and tail != last_tail:
                     self.type(folder, typed)
@@ -182,7 +190,7 @@ if ($f) {{ Upload $f.FullName ("report-" + (Split-Path "{folder}" -Leaf) + ".txt
                     self.check(key, "no prompt left unanswered", False,
                                "hung at prompt: " + (lines[-1].strip() if lines else "?"))
                     self.kill(folder)
-                    return "HUNG", s
+                    return "HUNG", "\n".join(seen)
             time.sleep(2.5)
         self.shot(f"{key}-timeout.png")
         self.check(key, f"finished within {limit} s", False, "timed out")
@@ -242,9 +250,13 @@ if ($f) {{ Upload $f.FullName ("report-" + (Split-Path "{folder}" -Leaf) + ".txt
     def a4_ctrl_c(self):
         f = self.fresh("a4")
         self.double_click(f)
-        time.sleep(8)
-        self.type(f, "^C")       # a Ctrl-C keystroke record
+        # a real Ctrl-C while it collects (at a question, Ctrl-C counts as
+        # Enter by design, so it is sent while no question is open)
+        self.wait_for(f, "STEP 1 of 3", "a4-step1.txt", timeout=120)
+        ids = self.ids(f)
+        self.ps(f'Start-Process "$bin\\conhelper.exe" -Wait -ArgumentList @("ctrlc", {ids[-1]})', name="ctrlc")
         state, s = self.dialogue("a4", f, self.BASE, limit=180)
+        self.check("a4", "Ctrl-C while it looks for devices: says it stopped", "Stopped (Ctrl-C)" in s)
         self.ending("a4", "double-click, Ctrl-C", f, state, s)
 
     def b_redirected(self):

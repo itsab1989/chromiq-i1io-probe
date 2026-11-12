@@ -32,6 +32,9 @@ public static class ConHelper {
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     static extern bool WriteConsoleInputW(IntPtr h, KEYREC[] r, uint n, out uint w);
 
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetConsoleCtrlHandler(IntPtr h, bool add);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool GenerateConsoleCtrlEvent(uint ev, uint group);
+
     public static int Main(string[] args) {
         int pid = int.Parse(args[1]);
         if (!AttachConsole(pid)) return 2;
@@ -68,6 +71,12 @@ public static class ConHelper {
             }
             uint w;
             return WriteConsoleInputW(h, recs, (uint)recs.Length, out w) ? 0 : 4;
+        }
+        if (args[0] == "ctrlc") {
+            // A real Ctrl-C, as the keyboard sends it, to every program on
+            // that console; this helper ignores it itself.
+            SetConsoleCtrlHandler(IntPtr.Zero, true);
+            return GenerateConsoleCtrlEvent(0, 0) ? 0 : 5;
         }
         return 1;
     }

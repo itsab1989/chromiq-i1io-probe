@@ -8,7 +8,7 @@ cd "$(dirname "$0")" || exit 1
 
 clear
 echo
-echo "  ChromIQ: i1iO information collector (Linux)"
+echo "  ChromIQ X-Rite instrument probe (Linux)"
 echo
 
 if ! command -v python3 >/dev/null 2>&1; then

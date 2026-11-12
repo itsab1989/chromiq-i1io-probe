@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-chromiq_io_probe.py: X-Rite instrument information collector for ChromIQ
+chromiq_io_probe.py: the ChromIQ X-Rite instrument probe
 (the i1iO table, issue #129; since 1.5 also the i1Pro family, the ColorMunki
 and the i1Studio).
 
@@ -5116,6 +5116,9 @@ def main(argv: list | None = None) -> int:
     parser.add_argument("--i1pro", "--instrument", action="store_true", dest="instrument",
                         help="the guided recording session for a handheld instrument "
                              "(i1Pro, i1Pro 2, i1Pro 3, ColorMunki, i1Studio)")
+    parser.add_argument("--io", action="store_true",
+                        help="the i1iO table: its three questions and the optional "
+                             "recording (skips the question what to do)")
     parser.add_argument("--skip-annotate", action="store_true",
                         help="never offer the recording step")
     parser.add_argument("--no-redact", action="store_true",
@@ -5174,7 +5177,7 @@ def main(argv: list | None = None) -> int:
         return 0
 
     print("=" * 68)
-    print("  ChromIQ: X-Rite instrument information collector " + PROBE_VERSION)
+    print("  ChromIQ X-Rite instrument probe " + PROBE_VERSION)
     print("=" * 68)
     print()
     print("  This only READS information your computer already has about the")
@@ -5195,12 +5198,8 @@ def main(argv: list | None = None) -> int:
         _note_cause("no_instrument")
 
     if summary.startswith("NO X-RITE DEVICES"):
-        print("  This usually means the device is switched off, unplugged, or")
-        print("  connected to a different port. You can carry on anyway (the")
-        print("  report is still useful), but plugging it in first is better.")
-        print()
-        if ask("  Press Enter to continue anyway, or type q to quit: ").lower().startswith("q"):
-            return 0
+        print("  That is fine for now: in step 3 you can plug the instrument in and")
+        print("  let the tool look again.")
         print()
 
     system = platform.system()
@@ -5240,38 +5239,34 @@ def main(argv: list | None = None) -> int:
     collect_i1profiler_charts()
     print("  Done.\n")
 
+    choice, summary = choose_what_to_do(args, summary)
+    section("What the user chose", {1: "1: record an i1iO table",
+                                    2: "2: record a handheld instrument",
+                                    3: "3: nothing more, just the report"}[choice])
     ids = detected_ids(summary)
-    instrument_mode = args.instrument
-    # 1.5.3: where Windows says what is plugged in (present_ids is a list),
-    # only that counts. Found on a real Windows PC: with an instrument Windows
-    # only remembered, the tool said "None of them is plugged in right now"
-    # and then "This computer has a handheld instrument plugged in".
-    present = _DETECTION.get("present_ids")
-    here = [k for k in ids if present is None or k in present]
-    has_handheld = any(k in PROFILE_IDS for k in here)
-    if not instrument_mode and has_handheld and (XRITE_VID, 0x2004) not in ids \
-            and not args.skip_annotate and not args.annotate:
-        shown = [k for k in here if k in PROFILE_IDS]
-        names = ", ".join(dict.fromkeys(PROFILE_NAMES[PROFILE_IDS[k]] for k in shown))
-        print("-" * 68)
-        print(f"  This computer has a handheld instrument plugged in ({names}),")
-        print("  but no i1iO table. This tool has a guided recording session made")
-        print("  for handheld instruments: it records, step by step, what the")
-        print("  measuring program says to the instrument. It is optional.")
-        print("-" * 68)
-        instrument_mode = said_yes(ask("  Use the session for handheld instruments? (yes / no): "))
-        print()
-    if instrument_mode:
+    known, here = plugged_in_now(ids)
+    if choice == 3:
+        return finish_report(args, system, mode="report")
+    if choice == 2:
         section("Detected X-Rite IDs", ", ".join(f"{v:04x}:{p:04x}" for v, p in ids) or "none")
         print("-" * 68)
         print("STEP 3 of 3: the recording session")
         print("-" * 68)
+        if not any(k in PROFILE_IDS for k in here):
+            print()
+            print("  No handheld instrument is plugged in right now. You can still go")
+            print("  through the start of the session: it shows what this computer offers")
+            print("  for a recording and says what is missing. For the recording itself,")
+            print("  the instrument has to be plugged in.")
         outcome = instrument_session_step(ids, direct=True)
         return finish_report(args, system, instrument=True, outcome=outcome)
 
     print("-" * 68)
-    print("STEP 3 of 3: three quick questions")
+    print("STEP 3 of 3: three quick questions about your i1iO table")
     print("-" * 68)
+    if IO_ID not in here:
+        print("\n  (No i1iO table is plugged in right now. The answers and the report")
+        print("  still help.)")
     print("\n  Just press Enter to skip any of them.\n")
     answers = {
         "which iO generation (iO / iO2 / iO3)?":
@@ -5290,6 +5285,147 @@ def main(argv: list | None = None) -> int:
     elif not args.skip_annotate:
         recording_step(direct=False)
     return finish_report(args, system)
+
+
+IO_ID = (XRITE_VID, 0x2004)
+
+REPORT_SEND_WAYS = f"""\
+  If you would like to share it with us, choose whichever suits you:
+    - for the i1iO table: attach it to
+        {ISSUE_URL}
+    - for any other instrument: attach it in the forum thread where you
+      heard about this tool, or to a new issue at
+        {NEW_ISSUE_URL}"""
+
+
+def plugged_in_now(ids: list) -> tuple:
+    """(known, here): the X-Rite devices plugged in right now.
+
+    Windows also lists devices it only remembers, and says for each whether
+    it is present (present_ids). macOS and Linux list only what is connected.
+    known is False when Windows could not say which are present."""
+    present = _DETECTION.get("present_ids")
+    if present is None:
+        return platform.system() != "Windows", list(ids)
+    return True, [k for k in ids if k in present]
+
+
+def suggest(here: list) -> dict:
+    """The suggested answer to "What would you like to do?", from what is
+    plugged in now only (1.5.3; before, a remembered i1iO could hide a
+    plugged-in handheld instrument)."""
+    hand = [k for k in here if k in PROFILE_IDS]
+    other = [k for k in here if k != IO_ID and k not in PROFILE_IDS]
+    choice = 1 if IO_ID in here else 2 if hand else 3
+    return {"choice": choice, "io": IO_ID in here, "hand": hand, "other": other,
+            "nothing": not here}
+
+
+_DRIVER_WORDS = {"argyll": "on the ArgyllCMS driver", "winusb": "on WinUSB",
+                 "vendor": "X-Rite's driver", "none": "no driver yet"}
+
+
+def _windows_driver_words() -> dict:
+    """Windows: {(vid, pid): "X-Rite's driver"} for what is plugged in."""
+    if platform.system() != "Windows":
+        return {}
+    try:
+        out = {}
+        for dev in windows_driver_devices():
+            words = _DRIVER_WORDS.get(driver_state(dev))
+            if words:
+                out[(dev["vid"], dev["pid"])] = words
+        return out
+    except Exception:                                     # noqa: BLE001
+        return {}
+
+
+def device_name(key) -> str:
+    if key == IO_ID:
+        return "i1iO table"
+    if key in PROFILE_IDS:
+        return PROFILE_NAMES[PROFILE_IDS[key]]
+    return f"an X-Rite device this tool does not know ({key[0]:04x}:{key[1]:04x})"
+
+
+def what_to_do_question(sug: dict, known: bool, here: list, drivers: dict) -> list:
+    """The lines above the question, and the question itself."""
+    lines = []
+    if sug["nothing"]:
+        lines += ["  Plugged in now: no X-Rite instrument.", "",
+                  "  If you want to record an instrument, plug it in now (straight into",
+                  "  the computer, not through a USB hub), switch it on, wait a few",
+                  "  seconds, and type  a  to let the tool look again."]
+    else:
+        names = []
+        for key in here:
+            name = device_name(key)
+            if key in drivers:
+                name += f" ({drivers[key]})"
+            if name not in names:
+                names.append(name)
+        lines.append("  Plugged in now: " + _wrap(", ".join(names) + ".", 50, " " * 18))
+    if not known:
+        lines += ["  (Windows did not say which devices are plugged in right now and",
+                  "  which it only remembers from before, so all of them are listed.)"]
+    if sug["io"] and sug["hand"]:
+        hand = ", ".join(dict.fromkeys(device_name(k) for k in sug["hand"]))
+        lines += ["", f"  The instrument mounted on the table was seen too ({hand}).",
+                  "  Choose 2 instead if you want to record that instrument on its own,",
+                  "  off the table."]
+    if sug["other"] and not sug["io"] and not sug["hand"]:
+        lines += ["", "  This tool does not know that device yet. The report (choice 3)",
+                  "  is the most useful thing for it."]
+    mark = {n: "   <- suggested" if n == sug["choice"] else "" for n in (1, 2, 3)}
+    lines += ["", "  What would you like to do?",
+              "    1. record an i1iO table" + mark[1],
+              "    2. record a handheld instrument" + mark[2],
+              "       (the i1Pro family, the ColorMunki, the i1Studio)",
+              "    3. nothing more: just make the report" + mark[3],
+              "    a. look again (after plugging something in)"]
+    return lines
+
+
+def choose_what_to_do(args, summary: str) -> tuple:
+    """(choice, summary). The command line options decide without asking."""
+    if args.instrument:
+        return 2, summary
+    if args.io or args.annotate or args.skip_annotate:
+        return 1, summary
+    for _ in range(30):                                   # bounded, never endless
+        ids = detected_ids(summary)
+        known, here = plugged_in_now(ids)
+        sug = suggest(here)
+        print("-" * 68)
+        print("STEP 3 of 3: what would you like to do?")
+        print("-" * 68)
+        print()
+        print("\n".join(what_to_do_question(sug, known, here, _windows_driver_words())))
+        print()
+        answer = ask(f"  Type 1, 2 or 3 (or  a  to look again), "
+                     f"or just press Enter for {sug['choice']}: ").strip().lower()
+        print()
+        if answer == "":
+            return sug["choice"], summary
+        if answer in ("1", "2", "3"):
+            return int(answer), summary
+        if answer in ("q", "quit"):
+            return 3, summary
+        if answer in ("a", "again", "look again"):
+            print("  Looking again...")
+            summary = quick_summary()
+            print("  " + summary.replace("\n", "\n  ") + "\n")
+            section("Detection summary (looked again)", summary)
+            if summary.startswith("NO X-RITE DEVICES") or \
+                    "None of them is plugged in right now" in summary:
+                _note_cause("no_instrument")
+            elif "no_instrument" in _CAUSES:
+                _CAUSES.remove("no_instrument")
+            continue
+        print(f"  \"{answer}\" is not one of the choices. Please type 1, 2 or 3,")
+        print("  or  a  to look again.")
+        print()
+    return 3, summary
 
 
 def closing_words(outcome: dict | None) -> list:
@@ -5324,7 +5460,7 @@ def show_i1profiler_warning(instrument: bool, outcome: dict | None) -> bool:
 
 def report_text(instrument: bool = False) -> str:
     body = [
-        "ChromIQ X-Rite instrument probe report",
+        "ChromIQ X-Rite instrument probe report, version " + PROBE_VERSION,
         ("Made by the handheld-instrument session" if instrument
          else f"Generated for {ISSUE_URL}"),
         f"Redaction: {'ON (serials hashed, paths stripped)' if REDACT else 'OFF, raw values included'}",
@@ -5340,7 +5476,8 @@ def report_text(instrument: bool = False) -> str:
 
 
 def finish_report(args, system: str, instrument: bool = False,
-                  outcome: dict | None = None) -> int:
+                  outcome: dict | None = None, mode: str | None = None) -> int:
+    """mode "report" (1.5.3): the user chose "nothing more, just the report"."""
     report = report_text(instrument)
     out_path = write_report(report, args.output)
     if out_path:
@@ -5369,6 +5506,8 @@ def finish_report(args, system: str, instrument: bool = False,
     print()
     if instrument and recorded:
         print("\n".join(closing_words(outcome)))
+    elif mode == "report":
+        print(REPORT_SEND_WAYS)
     elif not instrument:
         print("  Then attach it to:")
         print(f"      {ISSUE_URL}")
@@ -5385,6 +5524,8 @@ def finish_report(args, system: str, instrument: bool = False,
     elif instrument:
         print("  That's everything. Thank you for helping. Whatever comes of it,")
         print("  a recording like this teaches us more than any amount of guessing.")
+    elif mode == "report":
+        print("  That's everything. Thank you for helping!")
     else:
         print("  That's everything. Thank you for helping: this is the single")
         print("  thing standing between the project and i1iO support.")

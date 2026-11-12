@@ -5,7 +5,7 @@ REM Pure ASCII on purpose: the console codepage mangles anything else.
 cd /d "%~dp0"
 cls
 echo.
-echo   ChromIQ - i1iO information collector (Windows)
+echo   ChromIQ X-Rite instrument probe (Windows)
 echo.
 
 REM Windows ships a fake "python.exe" that just opens the Microsoft Store, so
