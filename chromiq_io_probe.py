@@ -120,6 +120,10 @@ _SECTIONS: list = []
 # last thing before the window closes, and the report that was written.
 _CAUSES: list = []
 _LAST_REPORT: dict = {}
+# 1.5.3: hidden switches for the automated Windows test (tools/vm_test in the
+# repository), never needed by a user: --selftest crash,bad-fingerprint,
+# offer-on-arm,pretend-usbpcap. See the README, "For testing".
+SELFTEST: set = set()
 
 # How long to wait after starting the recorders before checking they are
 # alive. A module constant so the tests can shorten it.
@@ -4162,6 +4166,8 @@ def windows_capture_checks(profile: str) -> dict:
     arm = windows_is_arm()
     sc = run(["sc", "query", "USBPcap"], timeout=15)
     service = parse_sc_query(sc)
+    if "pretend-usbpcap" in SELFTEST:
+        service = {"installed": True, "running": True}
     cmd = find_usbpcapcmd()
     interfaces = parse_extcap_interfaces(run([cmd, "--extcap-interfaces"], timeout=30)) \
         if cmd else []
@@ -4922,7 +4928,7 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
             outcome["reason"] = ("Nothing was recorded, because USBPcap (the recorder "
                                  "this tool needs on Windows) is not installed yet.")
             offer = "not offered (Windows on ARM)"
-            if not checks.get("arm"):
+            if not checks.get("arm") or "offer-on-arm" in SELFTEST:
                 offer = offer_usbpcap_install(_writable_dir())
             if offer == "installed":
                 outcome["reason"] = ("Nothing was recorded yet: USBPcap is now installed, "
@@ -5109,11 +5115,18 @@ def main(argv: list | None = None) -> int:
     parser.add_argument("-o", "--output", default=None, help="output file path")
     parser.add_argument("--pause", action="store_true",
                         help='always end with "Press Enter to close this window."')
+    parser.add_argument("--selftest", default="", help=argparse.SUPPRESS)
     parser.add_argument("--no-pause", action="store_true",
                         help="never wait for Enter at the end (the launchers use this; "
                              "piped or redirected runs never wait anyway)")
     args = parser.parse_args(argv)
     REDACT = not args.no_redact
+    SELFTEST.clear()
+    SELFTEST.update(x.strip() for x in args.selftest.split(",") if x.strip())
+    if SELFTEST:
+        section("Self-test switches (for the automated test only)", ", ".join(sorted(SELFTEST)))
+    if "crash" in SELFTEST:
+        raise RuntimeError("self-test: a deliberate error, to test the error ending")
 
     if args.capture_setup:
         if platform.system() != "Darwin":
@@ -5468,6 +5481,8 @@ def fetch_usbpcap_installer(folder: str, fetch=None, info=None) -> dict:
     and never started."""
     info = info or USBPCAP_INSTALLER
     fetch = fetch or _download
+    if "bad-fingerprint" in SELFTEST:
+        info = dict(info, sha256="0" * 64)
     try:
         blob = fetch(info["url"], info["size"])
     except Exception as exc:                              # noqa: BLE001
@@ -5544,6 +5559,8 @@ def _shell_execute(path: str, params: str = "", verb: str = "open",
 
 
 def usbpcap_installed_now() -> bool:
+    if "pretend-usbpcap" in SELFTEST:
+        return True
     return parse_sc_query(run(["sc", "query", "USBPcap"], timeout=15))["installed"]
 
 
@@ -5617,10 +5634,11 @@ def offer_usbpcap_install(folder: str, fetch=None, launch=None, installed=None) 
 def relaunch_command() -> tuple:
     """(program, parameters, folder) to start this tool again, straight into
     the handheld session."""
+    extra = f" --selftest {','.join(sorted(SELFTEST))}" if SELFTEST else ""
     if getattr(sys, "frozen", False):
-        return sys.executable, "--i1pro", os.getcwd()
+        return sys.executable, "--i1pro" + extra, os.getcwd()
     script = os.path.abspath(__file__)
-    return sys.executable, f'"{script}" --i1pro', os.getcwd()
+    return sys.executable, f'"{script}" --i1pro' + extra, os.getcwd()
 
 
 def offer_relaunch_as_admin(launch=None) -> bool:

@@ -347,6 +347,42 @@ class InTheSession(unittest.TestCase):
         self.assertIn("HOW TO START THIS TOOL AS ADMINISTRATOR", screen)
 
 
+class SelfTestSwitches(unittest.TestCase):
+    """The hidden --selftest switches the Windows VM test uses."""
+
+    def setUp(self):
+        t152._clean_state(self)
+        self.addCleanup(probe.SELFTEST.clear)
+
+    def test_crash_goes_through_the_error_ending(self):
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(probe, "candidate_dirs", lambda: [tmp]), \
+                mock.patch.object(probe, "should_pause", lambda _a: False), redirect_stdout(out):
+            self.assertEqual(probe.console_main(["--selftest", "crash"]), 1)
+            self.assertEqual(len(os.listdir(tmp)), 1)
+        self.assertIn("SORRY: THE TOOL STOPPED", out.getvalue())
+        self.assertIn("self-test: a deliberate error", out.getvalue())
+
+    def test_bad_fingerprint(self):
+        probe.SELFTEST.add("bad-fingerprint")
+        with tempfile.TemporaryDirectory() as tmp:
+            got = probe.fetch_usbpcap_installer(tmp, fetch=lambda u, n: FAKE, info=FAKE_INFO)
+            self.assertEqual(got["kind"], "fingerprint mismatch")
+            self.assertEqual(os.listdir(tmp), [])
+
+    def test_relaunch_keeps_the_switches(self):
+        probe.SELFTEST.update({"pretend-usbpcap"})
+        _prog, params, _f = probe.relaunch_command()
+        self.assertTrue(params.endswith("--i1pro --selftest pretend-usbpcap"))
+
+    def test_hidden_from_help(self):
+        out = io.StringIO()
+        with redirect_stdout(out), self.assertRaises(SystemExit):
+            probe.main(["--help"])
+        self.assertNotIn("selftest", out.getvalue())
+
+
 class Honesty(unittest.TestCase):
 
     def test_no_silent_or_hidden_switches_in_the_source(self):
