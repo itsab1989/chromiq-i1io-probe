@@ -574,6 +574,64 @@ class SessionTests(TempDirCase):
                                 "scan-fail", "spot"])
 
 
+FAKE_SUDO = """#!/bin/bash
+echo "sudo $*" >> "$FAKE_LOG"
+while [ $# -gt 0 ] && [ "${1#-}" != "$1" ]; do shift; done
+[ $# -eq 0 ] && exit 0
+exec "$@"
+"""
+
+FAKE_TCPDUMP = """#!/bin/bash
+echo "tcpdump $*" >> "$FAKE_LOG"
+while [ $# -gt 0 ]; do
+  case "$1" in -i) IF="$2"; shift;; -w) OUT="$2"; shift;; esac; shift
+done
+[ -f "$FAKE_PCAPS/$IF.pcap" ] && cat "$FAKE_PCAPS/$IF.pcap" > "$OUT"
+trap 'echo "tcpdump $IF stopped" >> "$FAKE_LOG"; exit 0' TERM
+while true; do sleep 0.05; done
+"""
+
+
+@unittest.skipIf(os.name == "nt", "the fake tools are bash scripts")
+class LinuxRecorderTests(TempDirCase):
+    """Linux usbmon through sudo + tcpdump, both fake."""
+
+    def test_two_steps_on_usbmon(self):
+        bin_dir = os.path.join(self.dir, "bin")
+        pcaps = os.path.join(self.dir, "pcaps")
+        os.mkdir(bin_dir)
+        os.mkdir(pcaps)
+        for name, body in (("sudo", FAKE_SUDO), ("tcpdump", FAKE_TCPDUMP)):
+            path = os.path.join(bin_dir, name)
+            with open(path, "w") as fh:
+                fh.write(body)
+            os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+        log = os.path.join(self.dir, "fake.log")
+        w = synth.UsbPcapWriter()
+        synth.i1pro2_calibration(w)
+        with open(os.path.join(pcaps, "usbmon1.pcap"), "wb") as fh:
+            fh.write(w.pcap())          # the analyser does not care which tool wrote it
+        env = {"PATH": bin_dir + os.pathsep + os.environ.get("PATH", ""),
+               "FAKE_LOG": log, "FAKE_PCAPS": pcaps}
+        folder = os.path.join(self.dir, "instrument-session-linux")
+        answers = iter(["", "", "ok", "", "", "", "q", "ok2", ""])
+        with mock.patch.dict(os.environ, env), \
+                mock.patch.object(probe, "RECORDER_STARTUP_WAIT", 0.3), \
+                mock.patch.object(probe, "ask", lambda *_a, **_k: next(answers)), \
+                redirect_stdout(io.StringIO()):
+            recorder = probe.TcpdumpRecorder(["usbmon1"], "", mac=False)
+            session = probe.run_instrument_session(recorder, folder, "munki")
+        with open(log) as fh:
+            text = fh.read()
+        self.assertIn("sudo -v", text)
+        self.assertIn("-U -i usbmon1 -w", text)
+        self.assertEqual(text.count("tcpdump usbmon1 stopped"), 2)
+        self.assertEqual(session["ended"], "stopped by the operator")
+        self.assertEqual([s["number"] for s in session["steps"]], [1, 2])
+        self.assertEqual(session["steps"][0]["files_xrite"],
+                         ["step1-idle-take1-usbmon1-instrument.pcap"])
+
+
 class ManualRecordingTests(TempDirCase):
     """A whole-session Wireshark recording cut at the tool's time marks."""
 

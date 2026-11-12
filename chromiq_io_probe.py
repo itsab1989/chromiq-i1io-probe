@@ -3423,6 +3423,8 @@ def summarize_session(paths: list) -> str:
     if not have_traffic:
         out.append("  The files hold no usable instrument traffic"
                    + (" (every data byte is zero)." if zero else "."))
+    out = [line if not line.startswith("  In plain words") and not line.startswith(
+        "  The files hold") else "  " + _wrap(line.strip(), 64, "  ") for line in out]
     out.append("=" * 68)
     return "\n".join(out)
 
@@ -3597,9 +3599,9 @@ SESSION_STEPS = [
   Before you press Enter: go to the page where you measure a printed test
   chart, the way you normally would, up to the point where the program
   asks you to calibrate. Use any test chart you have printed.
-  (In i1Profiler this is usually Printer, then Profiling or Measure Chart,
-  then the Measurement page. In the ColorMunki and i1Studio programs it is
-  the step where you measure the printed chart.)""",
+  (In i1Profiler this is usually under Printer, in the profiling
+  workflow, on its measurement page. In the ColorMunki and i1Studio
+  programs it is the step where you measure the printed chart.)""",
      "during": """\
   When the recording runs: calibrate exactly as the program asks.
   i1Pro family: on the white calibration tile.
@@ -3625,9 +3627,10 @@ SESSION_STEPS = [
      "families": ("i1pro2", "i1pro3"),
      "before": """\
   Before you press Enter: switch the program to its dual scan option, if
-  it has one (in i1Profiler it is offered with the M0, M1 and M2
-  measurement conditions; the lights flash while it measures). If you
-  cannot find such an option, type  s  to skip this step.""",
+  it has one (in i1Profiler it is offered together with the M0, M1 and M2
+  measurement conditions). If you
+  cannot find such an option, type  s  to skip this step. (Owners say the
+  instrument's lights flash during a dual scan.)""",
      "during": """\
   When the recording runs: scan the same strip, the way the program asks
   for it (it may ask for two passes). Wait until it accepts or refuses
@@ -4177,8 +4180,8 @@ def _ask_profile(default: str) -> str:
         mark = "   <- seen on this computer" if key == default else ""
         print(f"    {i}. {PROFILE_NAMES[key]}{mark}")
     if default == "i1pro2":
-        print("  (The i1Pro and the i1Pro 2 look the same to the computer. The i1Pro 2")
-        print("  has \"i1Pro 2\" printed on it and a UV filter switch; if unsure, choose 1.)")
+        print("  (The i1Pro and the i1Pro 2 look the same to the computer. If you are")
+        print("  not sure which one you have, choose 1: the recording tells them apart.)")
     answer = _session_ask(f"  Type a number, or press Enter for {keys.index(default) + 1}: ")
     if answer.isdigit() and 1 <= int(answer) <= len(keys):
         return keys[int(answer) - 1]
@@ -4306,7 +4309,8 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                     session["ended"] = "the recording program stopped at once"
                     break
             entry["start_epoch"] = time.time()
-            print(f"\n  RECORDING step {number} ({', '.join(str(x) for x in live)}).")
+            where = ", ".join(recorder.iface_label(x) if recorder else str(x) for x in live)
+            print(f"\n  RECORDING step {number} ({where}).")
             print("  Do the step in the program now. Press Enter here as soon as you have")
             print("  finished (or type  q  to stop the whole session after this step).")
             stop_after = False
