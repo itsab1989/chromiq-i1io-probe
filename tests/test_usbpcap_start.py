@@ -326,9 +326,16 @@ class AllowListAndPaths(Base):
         self.assertNotIn("someone", text)
         self.assertNotIn("other", text)
         self.assertIn("Public", text)
+        self.assertEqual(probe.scrub("C:\\Users\\John Smith\\Desktop"), "C:\\Users\\USER\\Desktop")
 
     def test_interrupted_report_does_not_say_no_recording(self):
         probe._END.clear()
         self.addCleanup(probe._END.clear)
         probe._END["session_folder"] = self.dir
         self.assertIn("saved before the end of the run", probe.report_text(instrument=True))
+        # a run that ended normally says plainly that nothing was recorded, and why
+        probe._END["finished"] = True
+        probe._END["no_recording"] = "You stopped the session before the first step was recorded."
+        text = probe.report_text(instrument=True)
+        self.assertIn("THIS REPORT CONTAINS NO RECORDING. You stopped the session", text)
+        self.assertNotIn("saved before the end", text)

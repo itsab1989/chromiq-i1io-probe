@@ -238,7 +238,7 @@ def scrub(text: str) -> str:
         text = text.replace(home, "~")
     # 1.5.4 review: run as another administrator, the folder can belong to a
     # different user than the one this process runs as.
-    text = re.sub(r"(?i)\b([A-Z]:\\+Users\\+)(?!Public\b)[^\\/\s\"']+", r"\1USER", text)
+    text = re.sub(r"(?i)\b([A-Z]:\\+Users\\+)(?!Public\b)[^\\/\"'\r\n]+", r"\1USER", text)
     text = re.sub(r"(/Users/|/home/)(?!Shared\b)[^/\s\"']+", r"\1USER", text)
     for pattern, _name in _SERIAL_RULES:
         text = pattern.sub(_hash_secret, text)
@@ -7225,7 +7225,7 @@ def report_text(instrument: bool = False) -> str:
     if not _END.get("send"):
         # 1.5.4: said at the top, so nobody reads a report as if it held a
         # recording (a real tester sent only this file).
-        if _END.get("sip_box") or _END.get("session_folder"):
+        if (_END.get("sip_box") or _END.get("session_folder")) and not _END.get("finished"):
             line = ("This report was saved before the end of the run (after an "
                     "interruption or an error). Recordings may be next to it, in the "
                     "folder named in the report.")
@@ -7250,6 +7250,7 @@ def finish_report(args, system: str, instrument: bool = False,
             _END["no_recording"] = outcome["reason"]
         elif mode == "report":
             _END.setdefault("no_recording", "You chose to make only the report.")
+    _END["finished"] = True
     report = report_text(instrument)
     out_path = write_report(report, args.output)
     if out_path:
