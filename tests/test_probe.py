@@ -14,6 +14,7 @@ import struct
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from contextlib import redirect_stdout
 from unittest import mock
@@ -413,6 +414,49 @@ class RecordingTests(unittest.TestCase):
         left = sorted(os.listdir(self.out))
         self.assertEqual(len(left), 1, left)
         self.assertTrue(left[0].endswith("-XHC2-xrite.pcap"))
+
+    def test_each_step_is_checked_while_the_recording_runs(self):
+        """1.5.4: the table's commands of a step are looked for in the growing
+        recording right after the step, and again in the finished copy."""
+        sys.path.insert(0, HERE)
+        import synth_io as sio
+        appended = []
+
+        def fake_ask(prompt, interruptible=False):
+            if prompt.strip() == ">" and not appended:
+                # while step 1 runs, "i1Profiler" talks to the table: append
+                # the conversation to the file tcpdump is writing
+                full = [f for f in os.listdir(self.out) if f.endswith("XHC2-full.pcap")][0]
+                w = sio.DarwinWriter(t0=time.time())
+                w.simple("c4", data="B8")
+                w.move("m0", -1200, 1500, 300, seconds=0.05)
+                w.simple("c3")
+                with open(os.path.join(self.out, full), "ab") as fh:
+                    fh.write(w.pcap()[24:])
+                appended.append(w.t)
+                time.sleep(max(0.0, w.t - time.time()) + 0.05)
+                return ""
+            return answers.pop(0) if answers else ""
+        answers = ["yes"] + [""] * 11 + [""] + ["yes"] + [""] * 5
+        with open(os.path.join(self.pcaps, "XHC2.pcap"), "wb") as fh:
+            fh.write(pcap_bytes(io_records()))
+        readiness = probe.macos_recording_readiness([{"location": 0x02210000}])
+        buf = io.StringIO()
+        with mock.patch.object(probe, "ask", fake_ask), redirect_stdout(buf):
+            probe.macos_guided_recording(readiness)
+        screen = buf.getvalue()
+        self.assertIn("HAVE YOU GOT EVERYTHING READY?", screen)
+        self.assertRegex(screen, r"CHECK: this step recorded \d+ commands to the table: good")
+        self.assertIn("CHECK: no table command was recorded in this step: please repeat it",
+                      screen)
+        result = dict(probe._SECTIONS)["Stage 2: macOS recording result"]
+        self.assertRegex(result, r"A few patches, watching the head: this step recorded \d+ "
+                                 r"commands to the table: good")
+        glance = dict(probe._SECTIONS)["Stage 2: the steps at a glance"]
+        self.assertIn("Still missing: A small chart, measured to the end; Cancel", glance)
+        self.assertLess(screen.index("THE STEPS AT A GLANCE"), screen.rindex("csrutil enable"))
+        timeline = dict(probe._SECTIONS)["Stage 2: annotated capture timeline"]
+        self.assertIn("session start (UTC epoch seconds):", timeline)
 
     def test_all_zero_recording_is_reported_plainly(self):
         answers = ["yes"] + [""] * 12 + [""] + ["no"] + [""] * 5
