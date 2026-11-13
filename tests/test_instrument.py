@@ -27,6 +27,10 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE)
 
 import chromiq_io_probe as probe  # noqa: E402
+
+# 1.5.5: the steps of these tests take milliseconds; the "that was very
+# short" question has its own tests (test_enter_key.py).
+probe.SHORT_STEP_SECONDS = 0.0
 import synth  # noqa: E402
 
 
@@ -486,9 +490,9 @@ class SessionTests(TempDirCase):
             return json.load(fh)
 
     def test_record_repeat_skip_and_stop(self):
-        answers = ["", "", "started fine", "white, then off", "",          # 1 idle
-                   "", "", "cal ok", "blinked", "r",                       # 2 calibrate
-                   "", "", "cal ok again", "steady green", "",             # 2 take 2
+        answers = ["", "e", "started fine", "white, then off", "",          # 1 idle
+                   "", "e", "cal ok", "blinked", "r",                       # 2 calibrate
+                   "", "e", "cal ok again", "steady green", "",             # 2 take 2
                    "s",                                                    # 3 skipped
                    "q"]                                                    # stop at 4
         session, screen = self.run_session(answers)
@@ -518,7 +522,7 @@ class SessionTests(TempDirCase):
         self.assertEqual(set(probe.record_device_keys(lt, recs)), {(1, synth.I1PRO)})
 
     def test_ctrl_c_during_a_step_keeps_that_step_and_the_ones_before(self):
-        answers = ["", "", "ok", "white", "",                              # 1 idle
+        answers = ["", "e", "ok", "white", "",                             # 1 idle
                    "", KeyboardInterrupt()]                                # Ctrl-C in 2
         session, _screen = self.run_session(answers)
         self.assertIn("Ctrl-C", session["ended"])
@@ -531,7 +535,7 @@ class SessionTests(TempDirCase):
             self.assertEqual(self.fake_log().count("usbpcapcmd stopped"), 2)
 
     def test_ctrl_c_between_steps(self):
-        answers = ["", "", "ok", "white", "", KeyboardInterrupt()]
+        answers = ["", "e", "ok", "white", "", KeyboardInterrupt()]
         session, _screen = self.run_session(answers)
         self.assertIn("Ctrl-C", session["ended"])
         self.assertEqual(len(self.saved()["steps"]), 1)
@@ -552,7 +556,7 @@ class SessionTests(TempDirCase):
     def test_retry_without_inject_option(self):
         os.environ["FAKE_REJECT_INJECT"] = "1"
         try:
-            session, _screen = self.run_session(["", "", "ok", "white", "", "q"])
+            session, _screen = self.run_session(["", "e", "ok", "white", "", "q"])
         finally:
             del os.environ["FAKE_REJECT_INJECT"]
         log = self.fake_log()
@@ -566,14 +570,14 @@ class SessionTests(TempDirCase):
         w.describe(synth.KEYBOARD, 0x046D, 0xC31C, [(0x81, 3)])
         synth.keyboard_noise(w, 3)
         w.save(os.path.join(self.pcaps, "idle.pcap"))
-        _session, screen = self.run_session(["", "", "", "", "", "q"])
-        self.assertIn("no instrument traffic was found in this", screen)
+        _session, screen = self.run_session(["", "e", "", "", "", "q"])
+        self.assertIn("no instrument traffic was found in this", " ".join(screen.split()))
         self.assertEqual(self.saved()["steps"][0]["files_xrite"], [])
 
     def test_whole_session_then_finish_analysis_and_delete(self):
         answers = []
-        for _ in range(9):
-            answers += ["", "", "did it", "lights", ""]
+        for n in range(1, 10):
+            answers += ["", "e", "did it"] + (["dual, M1"] if n == 4 else []) + ["lights", ""]
         session, _screen = self.run_session(answers)
         self.assertEqual(session["ended"], "all steps done")
         with mock.patch.object(probe, "ask", lambda *_a, **_k: "yes"), \
@@ -594,7 +598,7 @@ class SessionTests(TempDirCase):
         self.assertNotIn("scan-dual", steps)
         self.assertNotIn("noruler", steps)
         self.assertNotIn("i1pro", probe.PROFILES_WITH_LIGHTS)
-        answers = ["", "", "ok", "", "q"]
+        answers = ["", "e", "ok", "", "q"]
         _session, _screen = self.run_session(answers, profile="i1pro")
         self.assertNotIn("lights", self.saved()["steps"][0])
 
@@ -644,7 +648,7 @@ class LinuxRecorderTests(TempDirCase):
         env = {"PATH": bin_dir + os.pathsep + os.environ.get("PATH", ""),
                "FAKE_LOG": log, "FAKE_PCAPS": pcaps}
         folder = os.path.join(self.dir, "instrument-session-linux")
-        answers = iter(["", "", "ok", "", "", "", "q", "ok2", ""])
+        answers = iter(["", "e", "ok", "", "", "", "q", "ok2", ""])
         with mock.patch.dict(os.environ, env), \
                 mock.patch.object(probe, "RECORDER_STARTUP_WAIT", 0.3), \
                 mock.patch.object(probe, "ask", lambda *_a, **_k: next(answers)), \

@@ -2596,24 +2596,36 @@ def check_capture(path: str) -> dict:
                 "code": "unreadable", "verdict": f"not a readable recording: {exc}"}
     identified = True
     if linktype == LINKTYPE_USB_DARWIN:
-        mine = [d for _ts, d in recs if _darwin_vid(d) in XRITE_VIDS]
+        mine_recs = [(ts, d) for ts, d in recs if _darwin_vid(d) in XRITE_VIDS]
+        mine = [d for _ts, d in mine_recs]
         xrite = len(mine)
+        mine_events = capture_events(linktype, mine_recs)
     else:
         # 1.5: Windows and Linux records carry a bus and device address but no
         # vendor ID, so the X-Rite device is found from its USB description
         # (or its i1Pro commands). If the recording shows no device at all,
         # every record counts, as in 1.4.
         keys = record_device_keys(linktype, recs)
-        devices = device_map(capture_events(linktype, recs))
+        all_events = capture_events(linktype, recs)
+        devices = device_map(all_events)
         wanted = set(xrite_devices(devices))
         if wanted:
             mine = [d for (_ts, d), k in zip(recs, keys) if k in wanted]
+            mine_events = [e for e in all_events if (e["bus"], e["dev"]) in wanted]
         elif any(v.get("vid") for v in devices.values()):
             mine = []
+            mine_events = []
         else:
             mine = [d for _ts, d in recs]
+            mine_events = all_events
             identified = False
         xrite = len(mine)
+    # 1.5.5: what the instrument really did: its own (vendor or class)
+    # requests and data on its endpoints. A step that was started and stopped
+    # at once holds only the descriptor fetch, which is not a recording.
+    activity = sum(1 for e in mine_events
+                   if (e["kind"] == "control" and (e["rt"] >> 5) & 3 in (1, 2))
+                   or (e["kind"] == "data" and e["ep"] & 0x7F))
     # Only the X-Rite packets count: a busy keyboard on the same bus must not
     # hide the fact that the table's own data came out as zeros.
     payload_bytes = 0
@@ -2636,6 +2648,9 @@ def check_capture(path: str) -> dict:
             "zero. macOS recorded the outline of the conversation without its "
             "content. This has been seen before on Apple Silicon Macs; it is not "
             "your mistake, and this recording cannot show us the commands.")
+    elif activity == 0 and identified:
+        code, verdict = "empty-step", ("EMPTY: nothing was recorded in this step (only "
+                                       "the USB description), please repeat it.")
     else:
         code, verdict = "ok", (f"OK: real data recorded ({nonzero:,} non-zero data "
                                f"bytes out of {payload_bytes:,}).")
@@ -2645,7 +2660,7 @@ def check_capture(path: str) -> dict:
     return {"ok": code == "ok", "packets": len(recs), "xrite_packets": xrite,
             "linktype": linktype, "code": code, "verdict": verdict,
             "payload_bytes": payload_bytes, "nonzero_bytes": nonzero,
-            "identified": identified}
+            "identified": identified, "activity": activity}
 
 
 def record_device_keys(linktype: int, recs) -> list:
@@ -4938,7 +4953,8 @@ SESSION_STEPS = [
      "during": """\
   When the recording runs: start the measuring program and wait until it
   shows that it has found the instrument. Then leave everything alone for
-  about 10 seconds and watch the instrument.""",
+  about 10 seconds and watch the instrument. Do NOT measure or scan
+  anything in this step: measuring comes in the later steps.""",
      "lights": "What did the lights do while the program started and while it sat idle?"},
     {"key": "calibrate", "title": "calibrate",
      "families": ("i1pro2", "i1pro", "i1pro3", "munki", "generic"),
@@ -4982,7 +4998,9 @@ SESSION_STEPS = [
   When the recording runs: scan the same strip, the way the program asks
   for it (it may ask for two passes). Wait until it accepts or refuses
   the strip.""",
-     "lights": "What did the lights do during the scan, and between the two passes if there were two?"},
+     "lights": "What did the lights do during the scan, and between the two passes if there were two?",
+     "setting": "Which setting was on in i1Profiler for this scan: single or dual scan,\n"
+                "  and M0, M1 or M2? (For example: \"dual, M1\")"},
     {"key": "scan-fast", "title": "the same strip again, clearly faster",
      "families": ("i1pro2", "i1pro", "i1pro3", "munki", "generic"),
      "before": """\
@@ -4998,8 +5016,9 @@ SESSION_STEPS = [
      "before": """\
   Before you press Enter: get ready to scan the same strip once more.""",
      "during": """\
-  When the recording runs: scan the same strip slowly and steadily, so
-  that it takes about three times as long as usual.""",
+  When the recording runs: scan the same strip slowly and steadily: take
+  3 to 5 seconds for the whole strip (count slowly to four while you
+  move).""",
      "lights": "What did the lights do this time?"},
     {"key": "scan-fail", "title": "let one scan fail on purpose",
      "families": ("i1pro2", "i1pro", "i1pro3", "munki", "generic"),
@@ -6021,8 +6040,32 @@ class _StopSession(Exception):
     pass
 
 
-def _session_ask(prompt: str) -> str:
-    """ask(), but Ctrl-C and a closed window end the session cleanly."""
+def flush_pending_input() -> int:
+    """1.5.5: throw away keys pressed while the tool was busy, so they cannot
+    answer the next question. A real tester pressed Enter several times while
+    the tool was silently stopping and checking a recording; the extra
+    Enters then started and stopped the next steps at once (0.0 s, empty
+    files). Returns how many keys were thrown away (when that can be told)."""
+    dropped = 0
+    try:
+        if os.name == "nt":
+            import msvcrt                                 # noqa: PLC0415
+            while msvcrt.kbhit():                         # type: ignore[attr-defined]
+                msvcrt.getwch()                           # type: ignore[attr-defined]
+                dropped += 1
+        elif _isatty(sys.stdin):
+            import termios                                # noqa: PLC0415
+            termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+    except Exception:                                     # noqa: BLE001
+        pass
+    return dropped
+
+
+def _session_ask(prompt: str, flush: bool = True) -> str:
+    """ask(), but Ctrl-C and a closed window end the session cleanly. Keys
+    pressed before the question appeared are thrown away first (1.5.5)."""
+    if flush:
+        flush_pending_input()
     try:
         return ask(prompt, interruptible=True)
     except KeyboardInterrupt:
@@ -6095,7 +6138,8 @@ def privacy_text(profile: str) -> str:
 
 
 def run_instrument_session(recorder, folder: str, profile: str, program: str = "",
-                           program_version: str = "", context: dict | None = None) -> dict:
+                           program_version: str = "", context: dict | None = None,
+                           only: list | None = None) -> dict:
     """The guided steps. Returns the session dict (also written to session.json).
 
     recorder: an object with start(stem) -> live interfaces, stop() -> files,
@@ -6108,7 +6152,9 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
     if recorder is not None:
         os.makedirs(full_dir, exist_ok=True)
         recorder.outdir = full_dir
-    steps = steps_for(profile)
+    numbered = [(i, st) for i, st in enumerate(steps_for(profile), 1)
+                if not only or i in only]
+    steps = [st for _i, st in numbered]
     session = {
         "kind": SESSION_KIND, "probe_version": PROBE_VERSION,
         "created": datetime.datetime.now().isoformat(timespec="seconds"),
@@ -6118,6 +6164,8 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
         "platform": platform.platform(), "steps": [], "ended": "",
         "context": context or {},
     }
+    if only:
+        session["only_steps"] = list(only)
     if recorder is None:
         session["whole_recording"] = "whole-session.pcapng"
     _write_session(session, folder)
@@ -6141,9 +6189,10 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
         take = 1
         while index < len(steps):
             step = steps[index]
-            number = index + 1
+            number = numbered[index][0]
+            total = len(steps_for(profile))
             print("\n" + "-" * 68)
-            print(f"  STEP {number} of {len(steps)}: {step['title']}"
+            print(f"  STEP {number} of {total}: {step['title']}"
                   + (f"  (take {take})" if take > 1 else ""))
             print("-" * 68)
             print(step["before"])
@@ -6194,15 +6243,23 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
             where = ", ".join(recorder.iface_label(x) if recorder else str(x) for x in live)
             print(f"\n  RECORDING STEP {number} NOW ({where}).")
             print("  Do the step in the measuring program now. Then come back to THIS")
-            print("  window and press Enter to stop (or type  q  to stop the whole")
-            print("  session after this step).")
+            print("  window, type  e  and press Enter to stop. (Type  q  and Enter to")
+            print("  stop the whole session after this step.)")
             stop_after = False
             interrupted = None
             ticker = LiveLine(recorder, entry["start_epoch"])
             try:
                 ticker.start()
-                done = _session_ask("  > ").lower()
+                while True:
+                    done = _session_ask("  > ").lower()
+                    if done.startswith("e") or done.startswith("q"):
+                        break
+                    if not done and _INPUT_ENDED:
+                        break
+                    print("    (still recording: type  e  and press Enter to stop)")
                 stop_after = done.startswith("q")
+                print("  Key received. Stopping the recording and checking it, please")
+                print("  wait a few seconds and do not press any key...")
             except _StopSession as exc:
                 interrupted = f"ended early ({exc}) during step {number}"
             except _Hangup:
@@ -6215,25 +6272,37 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                     recording = False
             entry["files_xrite"] = []
             entry["check"] = []
+            activity = 0
+            empty = False
             for name in entry.get("files_full", []):
                 src = os.path.join(full_dir, name)
                 check = check_capture(src)
                 entry["check"].append(f"{name}: {check['xrite_packets']} instrument packets; "
                                       f"{check['verdict']}")
+                activity += check.get("activity") or 0
+                empty = empty or check["code"] == "empty-step"
                 if check["xrite_packets"] and check["code"] in ("ok", "all-zero"):
                     dst_name = name.replace("-full.pcap", "-instrument.pcap")
                     if filter_xrite_capture(src, os.path.join(folder, dst_name)):
                         entry["files_xrite"].append(dst_name)
+            if recorder is not None and not entry["files_xrite"]:
+                entry["empty"] = True
             session["steps"].append(entry)
             _write_session(session, folder)
             if recorder is not None:
-                if entry["files_xrite"]:
-                    print(f"  Recording stopped. Step {number} is saved "
-                          f"({', '.join(entry['files_xrite'])}).")
-                else:
-                    print("  Recording stopped, but no instrument traffic was found in this")
-                    print("  step. Was the program talking to the instrument? You can")
-                    print("  record the step again.")
+                print("  CHECK: " + _wrap(handheld_step_verdict(entry, activity, empty), 64,
+                                          "  "))
+            seconds = entry["end_epoch"] - entry["start_epoch"]
+            if not interrupted and seconds < SHORT_STEP_SECONDS:
+                again = _session_ask(f"\n  That was very short ({seconds:.1f} s). Was it on "
+                                     "purpose? Type  r  to record\n  this step again, or "
+                                     "press Enter to keep it: ").lower()
+                if again.startswith("r"):
+                    entry["kept"] = False
+                    entry["too_short"] = True
+                    _write_session(session, folder)
+                    take += 1
+                    continue
             if interrupted:
                 # Keep what was recorded, ask nothing more, end the session.
                 entry["interrupted"] = True
@@ -6243,6 +6312,8 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
             entry["notes"] = _session_ask(
                 "\n  In one line: what did you do, and what did the program show?\n"
                 "  (for example: \"strip A, accepted\", or \"refused: too fast\")\n  > ")
+            if step.get("setting"):
+                entry["setting"] = _session_ask(f"  {step['setting']}\n  > ")
             if lights:
                 entry["lights"] = _session_ask(
                     f"  {step['lights']}\n  (colours, blinking, when; Enter if you did not "
@@ -6283,6 +6354,22 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
     return session
 
 
+SHORT_STEP_SECONDS = 2.0
+
+
+def handheld_step_verdict(entry: dict, activity: int, empty: bool) -> str:
+    """1.5.5: the per-step check of a handheld session, as the Mac table
+    session has it."""
+    if entry.get("files_xrite") and activity:
+        word = "request or data transfer" if activity == 1 else "requests and data transfers"
+        return f"this step recorded {activity} {word} of the instrument: good."
+    if empty:
+        return ("EMPTY: nothing was recorded in this step, please repeat it (type  r  "
+                "at the next question).")
+    return ("no instrument traffic was found in this step. Was the measuring program "
+            "talking to the instrument? Please repeat it (type  r  at the next question).")
+
+
 def step_box(during: str) -> str:
     """1.5.4: the three things to do in one step, framed, so the order is
     impossible to miss (a real tester measured in the program without ever
@@ -6293,22 +6380,30 @@ def step_box(during: str) -> str:
             text = text[len(prefix):].strip()
     rows = ["1. Press Enter HERE to start recording."]
     rows += _wrap("2. Then do this in the measuring program: " + text, 60, "   ").split("\n")
-    rows += ["3. Come back to THIS window and press Enter to stop."]
+    rows += ["3. Come back to THIS window, type  e  and press Enter to stop."]
     width = max(len(r) for r in rows) + 4
     line = "  +" + "-" * (width - 2) + "+"
     return "\n".join([line] + ["  | " + r.ljust(width - 4) + " |" for r in rows] + [line])
 
 
 class LiveLine:
-    """1.5.4: while a step records, one line that shows it is running:
-    elapsed seconds and the bytes recorded so far. Only in a real terminal
-    window (it rewrites itself with a carriage return)."""
+    """While a step records, show that it is running: elapsed seconds and the
+    bytes recorded so far.
 
-    def __init__(self, recorder, start: float, stream=None, interval: float = 1.0):
+    1.5.5: no longer redrawn on the line where the tester types. On a real
+    tester's Windows PC, 1.5.4's line (rewritten every second with a carriage
+    return) drew over what he typed, so his keys seemed to do nothing, and he
+    pressed Enter again and again. Now the window's title shows the running
+    count, and a short new line is printed every 20 seconds; nothing is ever
+    drawn over the input."""
+
+    def __init__(self, recorder, start: float, stream=None, interval: float = 1.0,
+                 every: float = 20.0):
         self.recorder = recorder
         self.start_t = start
         self.stream = stream or sys.stdout
         self.interval = interval
+        self.every = every
         self._stop = threading.Event()
         self._thread = None
 
@@ -6325,20 +6420,33 @@ class LiveLine:
         if size is None:
             what = "your own recording runs"
         elif size == 0 and secs >= 5:
-            what = "no data yet: is the instrument plugged in?"
+            what = "no data yet: instrument plugged in?"
         else:
             what = f"{size:,} bytes on this USB bus"
-        return f"  RECORDING {secs:4d} s | {what} | Enter = stop"
+        return f"  recording {secs} s | {what} | stop: e + Enter"
+
+    def _title(self, text: str) -> None:
+        text = text.strip()
+        try:
+            if os.name == "nt":
+                import ctypes                             # noqa: PLC0415
+                ctypes.windll.kernel32.SetConsoleTitleW(text)  # type: ignore[attr-defined]
+            else:
+                self.stream.write(f"\x1b]0;{text}\x07")
+                self.stream.flush()
+        except Exception:                                 # noqa: BLE001
+            pass
 
     def _run(self):
-        width = 0
+        last_line = time.time()
         while not self._stop.wait(self.interval):
             try:
                 text = self.text()
-                pad = max(0, width - len(text))
-                width = len(text)
-                self.stream.write("\r" + text + " " * pad)
-                self.stream.flush()
+                self._title(text)
+                if time.time() - last_line >= self.every:
+                    last_line = time.time()
+                    self.stream.write("\n" + text + "\n  > ")
+                    self.stream.flush()
             except (OSError, ValueError):
                 return
 
@@ -6351,10 +6459,7 @@ class LiveLine:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=2)
-            try:
-                self.stream.write("\n")
-            except (OSError, ValueError):
-                pass
+            self._title("ChromIQ instrument probe")
 
 
 def recorder_failure_words(diag: str) -> str:

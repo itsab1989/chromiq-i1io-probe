@@ -32,6 +32,22 @@ HUB2 = ("value {arg=99}{value=2}{display=[2] Generic USB Hub}{enabled=true}\n"
         "value {arg=99}{value=3}{display=[3] i1Pro3}{enabled=true}{parent=2}\n")
 
 
+# 1.5.5: these steps take milliseconds; the short-step question has its own tests.
+probe.SHORT_STEP_SECONDS = 0.0
+
+
+def _answers(it):
+    """A fake ask(): the given answers, then the end of the input (as a
+    closed stdin), so a step loop that waits for  e  cannot spin."""
+    def fake(*_a, **_k):
+        try:
+            return next(it)
+        except StopIteration:
+            probe._INPUT_ENDED[:] = [True]
+            return ""
+    return fake
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -49,6 +65,8 @@ class Base(unittest.TestCase):
             self.addCleanup(p.stop)
         probe._SECTIONS.clear()
         self.addCleanup(probe._SECTIONS.clear)
+        probe._INPUT_ENDED.clear()
+        self.addCleanup(probe._INPUT_ENDED.clear)
 
 
 class RecorderStart(Base):
@@ -122,7 +140,7 @@ class TheWindowsSessionReport(Base):
                  "service": "WinUSB", "provider": "libwdi", "status": "OK"}]),
             mock.patch.object(probe.platform, "system", lambda: "Windows"),
             mock.patch.object(probe, "_writable_dir", lambda: self.dir),
-            mock.patch.object(probe, "ask", lambda *_a, **_k: next(it, "")),
+            mock.patch.object(probe, "ask", _answers(it)),
             mock.patch.object(probe.UsbPcapRecorder, "precreate", fail),
         ]
         for p in patches:
@@ -168,7 +186,7 @@ class TheWindowsSessionReport(Base):
         self.assertIn("THE RECORDING PROGRAM DID NOT START", report)
 
     def test_with_the_fix_the_session_records(self):
-        _outcome, screen, report = self.run_step(self.START + ["", "", "", "q"], fail=False)
+        _outcome, screen, report = self.run_step(self.START + ["e", "", "", "q"], fail=False)
         self.assertNotIn("THE RECORDING DID NOT START", screen)
         self.assertIn("RECORDING STEP 1 NOW", screen)
         self.assertIn("administrator: yes", report)
@@ -209,7 +227,7 @@ class WhatTheTesterSees(Base):
         box = probe.step_box("  When the recording runs: scan the strip.")
         self.assertIn("1. Press Enter HERE to start recording.", box)
         self.assertIn("2. Then do this in the measuring program: scan the strip.", box)
-        self.assertIn("3. Come back to THIS window and press Enter to stop.", box)
+        self.assertIn("3. Come back to THIS window, type  e  and press Enter to stop.", box)
         self.assertEqual(len({len(l) for l in box.splitlines()}), 1)
 
     def test_the_live_line(self):
@@ -233,7 +251,7 @@ class WhatTheTesterSees(Base):
         it = iter(answers)
         recorder = probe.UsbPcapRecorder(self.exe, ["\\\\.\\USBPcap1"], "")
         folder = os.path.join(self.dir, "instrument-session-x")
-        with mock.patch.object(probe, "ask", lambda *_a, **_k: next(it, "")), \
+        with mock.patch.object(probe, "ask", _answers(it)), \
                 redirect_stdout(io.StringIO()) as out:
             session = probe.run_instrument_session(recorder, folder, "i1pro3", "i1Profiler", "")
         return session, out.getvalue()
@@ -245,7 +263,7 @@ class WhatTheTesterSees(Base):
         self.assertEqual(session["ended"], "stopped by the operator")
 
     def test_q_after_a_recorded_step_does_not_ask(self):
-        session, screen = self.run_session(["", "", "ok", "", "", "q"])
+        session, screen = self.run_session(["", "e", "ok", "", "", "q"])
         self.assertNotIn("Nothing was recorded yet.", screen)
         self.assertEqual(session["ended"], "stopped by the operator")
 
