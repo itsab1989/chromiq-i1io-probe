@@ -43,13 +43,16 @@ older.**
   already sent us an older file, tell us and we will delete it.
 - **New: `--clean`** writes a cleaned copy of a `SEND-THIS-....zip`, a
   session folder or a recording, makes `analysis.txt` again and replaces the
-  analysis inside the report. The original is not changed.
+  analysis inside the report. The original is not changed. It refuses
+  zip members far larger than any recording (over 200 MB, or 1 GB in all).
 - **Clearer steps** (from a tester's answer): every step is a short numbered
   list, one action per line. Scan steps say: press the button, wait until
   the instrument or program signals it is ready, then move. "Slow" now
   means about twice as long as the normal scan, with the seconds counted.
   The measurement condition (M0, M1, M2, dual scan) is asked where it
-  matters.
+  matters. After each step the tool first says that the recording has
+  stopped; a stop key typed again as the notes is asked about once more.
+  Every question fits an 80-column window.
 - **Analysis:** the i1Pro 2's lights in words (colour, side, pulses, how
   often), the ruler's position steps per scan (and "no motion" in the
   no-ruler control), fast and slow judged by the ruler against the normal
