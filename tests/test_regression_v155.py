@@ -92,6 +92,21 @@ class ReviewCases(unittest.TestCase):
         self.assertNotIn("i1iSis", " ".join(got["family"]))
         self.assertIn("0971:2000", got["instrument_ids"])
 
+    def test_finish_recordings_keeps_the_table_beside_an_isis(self):
+        # Third review nit: drive the table session's own finish, not its text.
+        import io as io_mod
+        import shutil
+        from contextlib import redirect_stdout
+        for name in ("F-i1io-table-with-isis", "H2-mac-i1io-table-with-isis"):
+            with self.subTest(recording=name):
+                full = os.path.join(self.tmp.name, f"io-capture-x-{name}-full.pcap")
+                shutil.copy(self.files[name], full)
+                with redirect_stdout(io_mod.StringIO()):
+                    probe.finish_recordings({"XHC0": full}, None, ask_delete=False)
+                copy = full.replace("-full.pcap", "-xrite.pcap")
+                self.assertIn("i1iO", rr.markers_in(copy))
+                self.assertNotIn("keyboard", rr.markers_in(copy))
+
     def test_the_finish_of_the_table_session_names_its_type(self):
         with open(os.path.join(ROOT, "chromiq_io_probe.py"), encoding="utf-8") as fh:
             src = fh.read()

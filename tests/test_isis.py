@@ -650,29 +650,54 @@ class ReviewTexts(unittest.TestCase):
 # the list of program names in step with it). A source check bans the
 # process functions above outright and allows ctypes only for the Windows
 # calls the tool names.
-PROGRAM_PATTERNS = [
-    r"usbpcapcmd --extcap-(interfaces|version)",
-    r"usbpcapcmd --extcap-config --extcap-interface \S+",
-    r"usbpcapcmd -d \S+ -o \S+ -A( --inject-descriptors)?",
-    r"sudo -v",
-    r"sudo -n true",
-    r"sudo -n \S*ifconfig \S+ (up|down)",
-    r"sudo -n \S*tcpdump -U -i \S+ -w \S+",
-    r"sudo -n pkill -TERM -f \S*tcpdump -U -i \S+ -w \S+",
-    r"ifconfig -l",
-    r"ifconfig \S+",
-    r"sysctl -n (hw\.optional\.arm64|machdep\.cpu\.brand_string)",
-    r"csrutil status",
-    r"system_profiler -json SPUSB(Host)?DataType",
-    r"ioreg -p IOUSB -l -w 0",
-    r"ioreg -l -w 0 -r -c IOUSBHostDevice",
-    r"find .+ -maxdepth 12 -name Info\.plist",
-    r"plutil -p .+",
-    r"lsusb( -t| -v -d [0-9a-f]{4}:)?",
-    r"bash -c " + re.escape("dmesg 2>/dev/null | grep -iE 'usb|ftdi' | tail -60"),
-    r"(powershell|pwsh) -NoProfile -NonInteractive -NoLogo -Command .*",
-    r"sc query USBPcap",
+# One list per command line the tool really builds: a pattern per argument
+# (an argument may hold spaces, such as a folder name). PowerShell is pinned
+# to the exact scripts in the tool's POWERSHELL_SCRIPTS.
+XRITE_FOLDER = "/Library/Application Support/X-Rite"
+ARG_PATTERNS = [
+    ["usbpcapcmd", r"--extcap-(interfaces|version)"],
+    ["usbpcapcmd", "--extcap-config", "--extcap-interface", r".+"],
+    ["usbpcapcmd", "-d", r".+", "-o", r".+", "-A"],
+    ["usbpcapcmd", "-d", r".+", "-o", r".+", "-A", "--inject-descriptors"],
+    ["sudo", "-v"],
+    ["sudo", "-n", "true"],
+    ["sudo", "-n", "ifconfig", r"\w+", "(up|down)"],
+    ["sudo", "-n", "tcpdump", "-U", "-i", r"\w+", "-w", r".+"],
+    ["sudo", "-n", "pkill", "-TERM", "-f", r"\S*tcpdump -U -i \w+ -w .+"],
+    ["ifconfig", "-l"],
+    ["ifconfig", r"\w+"],
+    ["sysctl", "-n", r"hw\.optional\.arm64|machdep\.cpu\.brand_string"],
+    ["csrutil", "status"],
+    ["system_profiler", "-json", r"SPUSB(Host)?DataType"],
+    ["ioreg", "-p", "IOUSB", "-l", "-w", "0"],
+    ["ioreg", "-l", "-w", "0", "-r", "-c", "IOUSBHostDevice"],
+    ["find", re.escape(XRITE_FOLDER), "-maxdepth", "12", "-name", r"Info\.plist"],
+    ["plutil", "-p", re.escape(XRITE_FOLDER) + r"/[^\n]+/Info\.plist"],
+    ["lsusb"],
+    ["lsusb", "-t"],
+    ["lsusb", "-v", "-d", r"[0-9a-f]{4}:"],
+    ["bash", "-c", re.escape("dmesg 2>/dev/null | grep -iE 'usb|ftdi' | tail -60")],
+    ["sc", "query", "USBPcap"],
 ]
+POWERSHELL_HEAD = ["-NoProfile", "-NonInteractive", "-NoLogo", "-Command"]
+
+
+def command_allowed(argv):
+    """Is this exact command line one the tool really builds?"""
+    words = [str(a) for a in argv]
+    if not words:
+        return False
+    words[0] = _program(words[0])
+    if words[0] == "sudo" and len(words) > 2:
+        words[2] = _program(words[2])            # /usr/sbin/tcpdump -> tcpdump
+    if words[0] in ("powershell", "pwsh"):
+        scripts = set(probe.POWERSHELL_SCRIPTS)
+        scripts |= {probe.PS_PREFIX + x for x in probe.POWERSHELL_SCRIPTS}
+        return words[1:5] == POWERSHELL_HEAD and len(words) == 6 and words[5] in scripts
+    return any(len(pat) == len(words) and all(re.fullmatch(p, w) for p, w in zip(pat, words))
+               for pat in ARG_PATTERNS)
+
+
 ALLOWED_PROGRAMS = {"usbpcapcmd", "tcpdump", "sudo", "ifconfig", "sysctl", "csrutil",
                     "system_profiler", "ioreg", "find", "plutil", "lsusb", "bash",
                     "powershell", "pwsh", "sc"}
@@ -698,14 +723,14 @@ def _called_from(filename):
     return False
 
 
-def _command_line(argv):
-    """The command as the patterns read it: program names without folder."""
-    words = [str(a) for a in argv]
-    out = [_program(words[0])]
-    for w in words[1:]:
-        out.append(_program(w) if _program(w) in ALLOWED_PROGRAMS and re.search(r"[\\/]", w)
-                   else w)
-    return " ".join(out)
+class _Refusing:
+    """Stands in for ctypes.pythonapi: any function taken from it is refused."""
+
+    def __init__(self, watch, name):
+        self._watch, self._name = watch, name
+
+    def __getattr__(self, attr):
+        self._watch._refuse(f"{self._name}.{attr}")
 
 
 class DeviceWatch:
@@ -748,9 +773,8 @@ class DeviceWatch:
             argv = ["usbpcapcmd"] + argv[2:]          # the tests' fake USBPcapCMD
         elif _program(argv[0]) in ("uname", "file") and _called_from("platform.py"):
             return                 # Python's own platform module asks (3.9 does)
-        line = _command_line(argv)
-        if not any(re.fullmatch(p, line) for p in PROGRAM_PATTERNS):
-            self._refuse(f"started a program not on the list: {line}")
+        if not command_allowed(argv):
+            self._refuse(f"started a program not on the list: {argv}")
 
     def __enter__(self):
         import ctypes
@@ -805,7 +829,15 @@ class DeviceWatch:
                          mock.patch.object(ctypes, "cdll", types.SimpleNamespace(
                              LoadLibrary=refuse("ctypes.cdll.LoadLibrary"))),
                          mock.patch.object(ctypes, "pydll", types.SimpleNamespace(
-                             LoadLibrary=refuse("ctypes.pydll.LoadLibrary")))]
+                             LoadLibrary=refuse("ctypes.pydll.LoadLibrary"))),
+                         mock.patch.object(ctypes, "pythonapi", _Refusing(watch, "ctypes.pythonapi")),
+                         mock.patch.object(ctypes, "_dlopen", refuse("ctypes._dlopen"))]
+        import pty
+        for mod, name in ((os, "forkpty"), (os, "openpty"), (os, "fork"), (pty, "fork"),
+                          (pty, "openpty"), (pty, "spawn")):
+            if hasattr(mod, name):
+                self._patches.append(mock.patch.object(
+                    mod, name, refuse(f"{mod.__name__}.{name}")))
         if real_posix_spawn:
             self._patches.append(mock.patch.object(
                 os, "posix_spawn", spawn_from_subprocess(real_posix_spawn, "os.posix_spawn")))
@@ -846,6 +878,9 @@ MUTATIONS = {
                  '"-exec", "sh", "-c", ":", ";"])',
     "sysctl_write": '__import__("subprocess").run(["sysctl", "-w", "kern.maxfiles=12288"])',
     "ctypes_open": '__import__("ctypes").CDLL(None).open(b"/dev/zero", 1)',
+    # third review
+    "pythonapi_open": '__import__("ctypes").pythonapi.open(b"/dev/zero", 1)',
+    "forkpty": '(lambda r: os._exit(0) if r[0] == 0 else os.waitpid(r[0], 0))(os.forkpty())',
 }
 MUTATION_ANCHOR = '    os.makedirs(folder, exist_ok=True)\n    _END["session_folder"] = folder\n'
 
@@ -898,6 +933,18 @@ class ReadOnlyPromise(_IsisSessionBase):
         self.assertFalse(os.path.exists(os.path.join(os.path.expanduser("~"),
                                                      "chromiq-probe-test-must-not-exist.txt")))
 
+    def test_every_powershell_call_uses_a_named_script(self):
+        with open(os.path.join(ROOT, "chromiq_io_probe.py"), encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertEqual(src.count('"-Command",'), 3)
+        tails = re.findall(r'"-Command",\s*([^\]]+)\]', src)
+        self.assertEqual(sorted(t.strip() for t in tails),
+                         ["PS_PREFIX + script", "PS_PREFIX + script", "PS_SUMMARY"])
+        names = re.findall(r"(?:psrun|_powershell)\((\w+)\)", src)
+        self.assertTrue(names)
+        for name in names:
+            self.assertIn(getattr(probe, name), probe.POWERSHELL_SCRIPTS, name)
+
     def test_the_allowlist_matches_the_source(self):
         with open(os.path.join(ROOT, "chromiq_io_probe.py"), encoding="utf-8") as fh:
             src = fh.read()
@@ -914,7 +961,9 @@ class ReadOnlyPromise(_IsisSessionBase):
                         r"os\.open\(", r"os\.system\b", r"os\.popen\b", r"os\.spawn",
                         r"os\.exec", r"posix_spawn", r"\bpty\.spawn", r"\bCDLL\b",
                         r"\bPyDLL\b", r"\bcdll\b", r"\bpydll\b", r"\boledll\b",
-                        r"LoadLibrary", r"find_library", r"-exec\b"):
+                        r"LoadLibrary", r"find_library", r"-exec\b", r"\bpythonapi\b",
+                        r"\b_dlopen\b", r"\bforkpty\b", r"\bopenpty\b", r"\bos\.fork\b",
+                        r"^\s*import pty\b", r"\bpty\.\w"):
             self.assertIsNone(re.search(pattern, src, re.M), pattern)
 
     def test_the_patterns_match_the_recorders_commands(self):
@@ -925,12 +974,24 @@ class ReadOnlyPromise(_IsisSessionBase):
         for argv in (rec.command("\\\\.\\USBPcap1", "C:\\x\\s1-full.pcap"),
                      rec.retry_command("\\\\.\\USBPcap1", "C:\\x\\s1-full.pcap", ""),
                      tcp.command("XHC0", "/x/s1-full.pcap")):
-            line = _command_line(argv)
-            self.assertTrue(any(re.fullmatch(p, line) for p in PROGRAM_PATTERNS), line)
+            self.assertTrue(command_allowed(argv), argv)
         for bad in (["sysctl", "-w", "kern.maxfiles=1"], ["find", "/", "-exec", "sh", ";"],
+                    ["find", "/", "-exec", "sh", "-c", "x", ";", "-maxdepth", "12", "-name",
+                     "Info.plist"],
+                    ["find", "/", "-maxdepth", "12", "-name", "Info.plist"],
+                    ["powershell", "-NoProfile", "-NonInteractive", "-NoLogo", "-Command",
+                     "Remove-Item C:\\x"],
                     ["sudo", "-n", "sh", "-c", "x"], ["sh", "-c", ":"]):
-            line = _command_line(bad)
-            self.assertFalse(any(re.fullmatch(p, line) for p in PROGRAM_PATTERNS), line)
+            self.assertFalse(command_allowed(bad), bad)
+        # the real ones, including a folder with a space and every PowerShell script
+        self.assertTrue(command_allowed(["C:\\Program Files\\USBPcap\\USBPcapCMD.exe",
+                                         "-d", "\\\\.\\USBPcap1", "-o",
+                                         "C:\\Users\\A B\\s1-full.pcap", "-A"]))
+        self.assertTrue(command_allowed(["find", XRITE_FOLDER, "-maxdepth", "12", "-name",
+                                         "Info.plist"]))
+        for script in probe.POWERSHELL_SCRIPTS:
+            self.assertTrue(command_allowed(["powershell.exe"] + POWERSHELL_HEAD
+                                            + [probe.PS_PREFIX + script]))
 
     def test_ctypes_only_for_the_named_windows_calls(self):
         with open(os.path.join(ROOT, "chromiq_io_probe.py"), encoding="utf-8") as fh:

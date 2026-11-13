@@ -245,6 +245,33 @@ _RUN: dict = {}
 # alive. A module constant so the tests can shorten it.
 RECORDER_STARTUP_WAIT = 2.0
 
+# 1.6 (third review): every PowerShell command the tool runs, here in one
+# place, so the read-only test can pin each one exactly. All of them only
+# READ: device lists, device properties, file versions, installed programs.
+PS_XRITE_DEVICES = (
+    "Get-PnpDevice | Where-Object { ($_.InstanceId -like '*VID_0971*' -or $_.InstanceId -like '*VID_0765*') } | "
+    "Format-List FriendlyName,InstanceId,Status,Class,Present")
+PS_DEVICE_PROPERTIES = (
+    "Get-PnpDevice | Where-Object { ($_.InstanceId -like '*VID_0971*' -or $_.InstanceId -like '*VID_0765*') } | "
+    "ForEach-Object { '=== ' + $_.InstanceId + ' ==='; "
+    "Get-PnpDeviceProperty -InstanceId $_.InstanceId | "
+    "Select-Object KeyName,Data | Format-List }")
+PS_USB_HUBS = "Get-PnpDevice -Class USB | Format-List FriendlyName,InstanceId,Status"
+PS_DRIVER_FILES = (
+    "Get-ChildItem -Path 'C:\\Program Files*\\X-Rite','C:\\Program Files*\\i1Profiler' "
+    "-Recurse -Include *.dll,*.exe -ErrorAction SilentlyContinue | "
+    "Select-Object FullName,Length,@{n='Version';e={$_.VersionInfo.FileVersion}} | "
+    "Format-List")
+PS_SUMMARY = (
+    "Get-PnpDevice | Where-Object { ($_.InstanceId -like '*VID_0971*' -or $_.InstanceId -like '*VID_0765*') } "
+    "| ForEach-Object { $_.FriendlyName + ' :: ' + $_.InstanceId + ' :: ' + $_.Present }")
+PS_PROGRAMS = (
+    "Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',"
+    "'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' "
+    "-ErrorAction SilentlyContinue | Where-Object { $_.DisplayName } | "
+    "ForEach-Object { $_.DisplayName + ' :: ' + $_.DisplayVersion }")
+PS_PREFIX = "$ProgressPreference = 'SilentlyContinue'; "
+
 
 # --------------------------------------------------------------------------
 # helpers
@@ -1234,27 +1261,12 @@ def collect_windows() -> None:
 
     def psrun(script: str) -> str:
         return run([ps, "-NoProfile", "-NonInteractive", "-NoLogo", "-Command",
-                "$ProgressPreference = 'SilentlyContinue'; " + script], timeout=60)
+                PS_PREFIX + script], timeout=60)
 
-    section("Windows: X-Rite USB devices", psrun(
-        "Get-PnpDevice | Where-Object { ($_.InstanceId -like '*VID_0971*' -or $_.InstanceId -like '*VID_0765*') } | "
-        "Format-List FriendlyName,InstanceId,Status,Class,Present"
-    ))
-    section("Windows: device properties (hardware + driver)", psrun(
-        "Get-PnpDevice | Where-Object { ($_.InstanceId -like '*VID_0971*' -or $_.InstanceId -like '*VID_0765*') } | "
-        "ForEach-Object { '=== ' + $_.InstanceId + ' ==='; "
-        "Get-PnpDeviceProperty -InstanceId $_.InstanceId | "
-        "Select-Object KeyName,Data | Format-List }"
-    ))
-    section("Windows: all USB controllers/hubs (topology context)", psrun(
-        "Get-PnpDevice -Class USB | Format-List FriendlyName,InstanceId,Status"
-    ))
-    section("Windows: X-Rite driver files", psrun(
-        "Get-ChildItem -Path 'C:\\Program Files*\\X-Rite','C:\\Program Files*\\i1Profiler' "
-        "-Recurse -Include *.dll,*.exe -ErrorAction SilentlyContinue | "
-        "Select-Object FullName,Length,@{n='Version';e={$_.VersionInfo.FileVersion}} | "
-        "Format-List"
-    ))
+    section("Windows: X-Rite USB devices", psrun(PS_XRITE_DEVICES))
+    section("Windows: device properties (hardware + driver)", psrun(PS_DEVICE_PROPERTIES))
+    section("Windows: all USB controllers/hubs (topology context)", psrun(PS_USB_HUBS))
+    section("Windows: X-Rite driver files", psrun(PS_DRIVER_FILES))
     if windows_is_arm():
         section("Windows: processor", WINDOWS_ARM_NOTE)
     section("Windows: note",
@@ -1468,8 +1480,7 @@ def quick_summary() -> str:
             ps = shutil.which("powershell") or shutil.which("pwsh")
             if ps:
                 out = run([ps, "-NoProfile", "-NonInteractive", "-NoLogo", "-Command",
-                           "Get-PnpDevice | Where-Object { ($_.InstanceId -like '*VID_0971*' -or $_.InstanceId -like '*VID_0765*') } "
-                           "| ForEach-Object { $_.FriendlyName + ' :: ' + $_.InstanceId + ' :: ' + $_.Present }"])
+                           PS_SUMMARY])
                 found, present = windows_summary_lines(out)
                 _DETECTION.clear()
                 _DETECTION["present_ids"] = present
@@ -5842,15 +5853,11 @@ def _powershell(script: str) -> str:
     if not ps:
         return "[PowerShell not found]"
     return run([ps, "-NoProfile", "-NonInteractive", "-NoLogo", "-Command",
-                "$ProgressPreference = 'SilentlyContinue'; " + script], timeout=60)
+                PS_PREFIX + script], timeout=60)
 
 
 def windows_program_versions() -> dict:
-    return parse_program_versions(_powershell(
-        "Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',"
-        "'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' "
-        "-ErrorAction SilentlyContinue | Where-Object { $_.DisplayName } | "
-        "ForEach-Object { $_.DisplayName + ' :: ' + $_.DisplayVersion }"))
+    return parse_program_versions(_powershell(PS_PROGRAMS))
 
 
 def i1profiler_check(version, profile: str, build=None) -> dict:
@@ -5952,6 +5959,10 @@ _DRIVER_PS = (
     "-ErrorAction SilentlyContinue).Data; "
     "'DRV :: ' + $_.FriendlyName + ' :: ' + $_.InstanceId + ' :: ' + $_.Class + ' :: ' + $s + ' :: ' + $p "
     "+ ' :: ' + $_.Status }")
+
+# Every PowerShell command the tool runs (see PS_XRITE_DEVICES above).
+POWERSHELL_SCRIPTS = (PS_XRITE_DEVICES, PS_DEVICE_PROPERTIES, PS_USB_HUBS, PS_DRIVER_FILES,
+                      PS_SUMMARY, PS_PROGRAMS, _DRIVER_PS)
 
 _INSTANCE_IDS_RE = re.compile(r"VID_([0-9A-Fa-f]{4})&PID_([0-9A-Fa-f]{4})")
 

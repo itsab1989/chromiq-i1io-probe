@@ -35,15 +35,17 @@ The i1iSis chart readers (i1iSis, i1iSis XL, i1iSis 2, i1iSis 2 XL).
   whole simulated i1iSis session while it watches, and blocks, the ways a
   Python program usually opens files and starts programs: `open`, `io.open`,
   `os.open` (and so `pathlib`), `subprocess`, `os.system`, `os.popen`,
-  `os.posix_spawn`, `os.spawn*`, `os.exec*`, and loading a library through
-  `ctypes`. It fails if the tool opens a device, writes outside its own
-  folders, or starts a program other than the ones it names, each with the
-  arguments the tool really uses. Fourteen deliberately broken copies of
-  the tool are run through it, and every one is caught. A check of the
-  source bans those process functions and allows `ctypes` only for the
-  Windows calls the tool names. A test cannot prove that nothing could ever
-  slip through another way; the tool's code is short and plain to read for
-  that reason.
+  `os.posix_spawn`, `os.spawn*`, `os.exec*`, `os.fork`, `os.forkpty`,
+  `os.openpty`, the `pty` module, and loading a library or calling Python's
+  own C functions through `ctypes`. It fails if the tool opens a device,
+  writes outside its own folders, or starts a program other than the ones
+  it names, each command line with the arguments the tool really builds
+  (each PowerShell command is compared with the exact scripts the tool
+  holds). Sixteen deliberately broken copies of the tool are run through
+  it, and every one is caught. A check of the source bans those functions
+  and allows `ctypes` only for the Windows calls the tool names. A test
+  cannot prove that nothing could ever slip through another way; the
+  tool's code is plain to read for that reason.
 - **Not yet tried with a real i1iSis.** Everything above was tested with
   invented recordings only.
 
@@ -103,6 +105,20 @@ A second review found, and this release fixes:
   (not the `--isis` flag) and the parsed step numbers.
 - The read-only test watches more ways (see above), and the texts say
   exactly what it watches.
+
+A third review found, and this release fixes:
+
+- **The build's i1iSis smoke test would have failed:** a plain recording
+  with an i1Display beside the i1iSis was named an i1iSis recording but
+  listed and counted the i1Display too. One decision now sets both the
+  family and the devices kept (see `--analyze` above), and the build's
+  smoke steps are run locally as written before a release
+  (`tools/ci_smoke_local.py`).
+- The read-only test also blocks `ctypes.pythonapi`, `os.fork`,
+  `os.forkpty`, `os.openpty` and the `pty` module, compares each command
+  line argument by argument (a folder with a space included; `find` only on
+  X-Rite's folder), and each PowerShell command with the exact scripts the
+  tool holds.
 
 ## v1.5.5
 
