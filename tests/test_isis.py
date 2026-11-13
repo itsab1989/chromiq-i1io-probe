@@ -535,6 +535,74 @@ class Texts(unittest.TestCase):
                 self.assertLessEqual(len(line), 76, line)
 
 
+class ReviewTexts(unittest.TestCase):
+    """The review's minor findings 4 to 8 and the step-box nit."""
+
+    def setUp(self):
+        saved = dict(probe._RUN)
+        self.addCleanup(lambda: (probe._RUN.clear(), probe._RUN.update(saved)))
+        probe._RUN.clear()
+
+    def test_old_chart_page_and_paper(self):
+        chart = flat(probe.ISIS_CHART_TEXT)
+        self.assertIn("as long as i1Profiler still has that chart (open the same chart file "
+                      "in i1Profiler before step 2)", chart)
+        self.assertIn("normal 80 g/m2 printer paper", chart)
+        self.assertIn("please do not use thinner paper", chart)
+        blank = flat(probe.steps_for("isis")[5]["before"])
+        self.assertIn("normal 80 g/m2 printer paper, the same size as your chart", blank)
+
+    def test_as_far_as_we_know(self):
+        self.assertIn("as far as we know, nobody outside X-Rite",
+                      flat(probe.PROFILE_PURPOSE["isis"]))
+
+    def test_relaunch_keeps_isis_and_steps(self):
+        probe._RUN.update(profile="isis", steps="4,6")
+        _prog, params, _cwd = probe.relaunch_command()
+        self.assertIn(" --isis", params)
+        self.assertNotIn("--i1pro", params)
+        self.assertIn('--steps "4,6"', params)
+        probe._RUN.clear()
+        probe._RUN.update(isis=True)
+        self.assertIn(" --isis", probe.relaunch_command()[1])
+        probe._RUN.clear()
+        params = probe.relaunch_command()[1]
+        self.assertIn(" --i1pro", params)
+        self.assertNotIn("--steps", params)
+
+    def test_mac_box_speaks_to_the_isis_owner(self):
+        r = {"reasons": ["SIP is switched on."], "cpu": {"apple_silicon": True}}
+        isis = flat(probe.recording_not_possible_text(r, "instrument", "isis"))
+        self.assertIn("i1Profiler 3.8.8 fixed the i1iSis drivers", isis)
+        self.assertIn("Connect the i1iSis to that PC", isis)
+        self.assertNotIn("i1Pro 2", isis)
+        other = flat(probe.recording_not_possible_text(r, "instrument"))
+        self.assertIn("the X-Rite driver for the i1Pro 2 and the i1iO 2", other)
+        self.assertIn("IMPORTANT FOR OWNERS OF AN i1Pro 2", other)
+
+    def test_windows_on_arm(self):
+        text = probe.windows_release_check(26100, "24H2", True, "isis")["text"]
+        self.assertIn("i1iSis works here is not known", text)
+        self.assertNotIn("i1Pro 2", text)
+
+    def test_what_to_do_now(self):
+        probe._RUN["profile"] = "isis"
+        text = flat("\n".join(probe.what_to_do_lines(["no_instrument"], None)))
+        self.assertIn("Switch the i1iSis on FIRST, then plug its USB cable", text)
+        self.assertNotIn("switch the table on", text)
+        probe._RUN.clear()
+        self.assertIn("switch the table on",
+                      flat("\n".join(probe.what_to_do_lines(["no_instrument"], None))))
+
+    def test_step_box_for_the_isis(self):
+        first = probe.steps_for("isis")[0]
+        box = flat(probe.step_box(first["during"], first["box"]))
+        self.assertIn("2. Then: start i1Profiler and wait", box)
+        self.assertNotIn("in the measuring program", box)
+        handheld = flat(probe.step_box(probe.steps_for("i1pro2")[0]["during"]))
+        self.assertIn("Then do this in the measuring program:", handheld)
+
+
 # ---- the read-only promise -------------------------------------------------
 #
 # WHAT THIS TEST WATCHES (second review: said exactly, not "everything"):
