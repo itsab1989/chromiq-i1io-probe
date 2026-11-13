@@ -150,6 +150,23 @@ jobs:
           grep -q "every line checks out" smoke/io.txt
           grep -q "<serial>" smoke/io.txt
 
+      # 1.6: and a (synthetic, invented) i1iSis recording with an i1Display
+      # next to it: the binary must analyse only the i1iSis.
+      - name: Smoke-test the i1iSis analysis in the binary
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then PY=python; else PY=python3; fi
+          mkdir -p smoke/isis
+          $PY -c "import os,sys; sys.path.insert(0,'tests'); import synth; synth.isis_session_files('smoke/isis', os)"
+          "./out/${{ matrix.asset }}" --analyze smoke/isis/idle.pcap smoke/isis/page-single.pcap > smoke/isis.txt
+          tail -20 smoke/isis.txt
+          grep -q "instrument family: i1iSis chart reader" smoke/isis.txt
+          grep -q "So it LIKELY talks through a USB-to-serial chip" smoke/isis.txt
+          grep -q "INVENTED-SCAN-PAGE" smoke/isis.txt
+          if grep -q "DISPLAYSERIAL99\|0765:5020\|SERIAL-INVENTED" smoke/isis.txt; then
+            echo "FAIL: another device or the device's answer is in the analysis"; exit 1
+          fi
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
@@ -185,8 +202,10 @@ jobs:
           files: artifacts/*
           body: |
             Ready-to-run builds of the ChromIQ X-Rite instrument information
-            collector: for the i1iO table and, since 1.5, for handheld
-            instruments (i1Pro, i1Pro 2, i1Pro 3 / 3 Plus, ColorMunki, i1Studio).
+            collector: for the i1iO table, since 1.5 for handheld instruments
+            (i1Pro, i1Pro 2, i1Pro 3 / 3 Plus, ColorMunki, i1Studio), and since
+            1.6 for the i1iSis chart readers (i1iSis, i1iSis XL, i1iSis 2,
+            i1iSis 2 XL).
 
             **Just want to run it?** Download the file for your system:
 
@@ -201,6 +220,47 @@ jobs:
             cannot move the i1iO's arm, and changes no settings. The optional
             recording only listens (on Windows through the free USBPcap, which
             you install yourself if you want to record).
+
+            ### What's new in 1.6.0
+
+            **The i1iSis chart readers.** If you own an i1iSis, i1iSis XL,
+            i1iSis 2 or i1iSis 2 XL, the tool now offers a guided recording
+            session for it (or start it with `--isis`). **It has not been
+            tried with a real i1iSis yet**: everything was tested with
+            invented recordings only, so your first session is the real
+            test. Nothing is promised: ChromIQ cannot use an i1iSis, and
+            whether it ever can is a separate question.
+
+            - **Six short steps in i1Profiler:** start it and leave it idle;
+              get the i1iSis ready for a page without feeding it; feed one
+              page in single scan; the same page in dual scan; the same page
+              a little crooked; a plain sheet that fails on purpose. After
+              each step one extra question: how did the page move?
+            - **Switch the i1iSis on before plugging in its USB cable**
+              (X-Rite's own note). On Windows 11 25H2 use i1Profiler 3.8.8
+              or newer, which X-Rite says fixed the i1iSis drivers there.
+            - **Any printed i1iSis chart page works** (its colours do not
+              matter for the recording); the tool says how to make one in
+              i1Profiler and ships no chart.
+            - **Only the i1iSis is kept.** When a recording shows the
+              i1iSis, the copy to send holds the i1iSis and nothing else
+              (no keyboard, no monitor calibrator). Without an i1iSis in it,
+              only an X-Rite device the tool does not know is kept, and the
+              tool says so. Without a USB description nothing is kept.
+            - **The analysis** puts the steps side by side, says whether the
+              i1iSis seems to talk through a USB-to-serial chip like the
+              i1iO, and shows the first lines the program sent. The
+              i1iSis's answers are never shown, only their sizes.
+            - **Tested promise:** a test runs a whole simulated session and
+              fails if the tool opens any device, starts a program it does
+              not name, or writes outside its own folders.
+            - An independent review before the release found, and this
+              release fixes: a device guessed from i1Pro commands could end
+              up in the i1iSis copy when the recording had no USB
+              description; the analysis of a raw recording could list a
+              monitor calibrator as the instrument; a restart as
+              administrator on Windows forgot `--isis` and `--steps`; some
+              texts still spoke to i1Pro owners in an i1iSis session.
 
             ### What's new in 1.5.5
 
