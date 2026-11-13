@@ -17,8 +17,15 @@ wrong:
   step shorter than 2 seconds asks whether that was on purpose.
 - **No more drawing over what you type.** 1.5.4 rewrote a status line every
   second on the line where you type, so typed keys seemed to vanish. The
-  running count is now in the window's title, with a short new line every
-  20 seconds.
+  running count is now in the window's title only.
+- **Windows "QuickEdit":** in the classic Windows console a click into the
+  window starts a text selection, and the next Enter only ends it. The tool
+  switches that off during the session and back on afterwards.
+- An independent review before the release found, and this release fixes:
+  an empty step's "please repeat" pointed at the wrong question; a repeated
+  step was still listed as empty; an all-zero step could be called good;
+  late keys could answer the last questions or close the window; a wrong
+  step list silently recorded every step.
 - **Empty steps are called empty.** A step that holds only the USB
   description is "EMPTY: nothing was recorded in this step, please repeat
   it", never "OK: real data recorded", in the check after each step, the

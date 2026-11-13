@@ -216,7 +216,9 @@ jobs:
               stops only with `e` and Enter, and a step shorter than 2
               seconds asks whether that was on purpose.
             - **Nothing is drawn over what you type any more;** the running
-              count is in the window's title.
+              count is in the window's title. In the classic Windows console
+              the tool switches "QuickEdit" off during the session, so a click
+              into the window cannot swallow the next Enter.
             - **Empty steps are called EMPTY** (please repeat), never "OK",
               and every handheld step gets a short check right after it.
             - **Repeat only some steps:** `--steps 7,9`, or the question at
