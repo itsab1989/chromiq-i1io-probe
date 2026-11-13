@@ -339,6 +339,114 @@ class Analysis(test_instrument.TempDirCase):
         self.assertIn("DOES THIS RECORDING HOLD WHAT WE NEED?", report)
 
 
+class PlainFilesTogether(test_instrument.TempDirCase):
+    """1.6.1: several plain files given to --analyze together. A device is
+    told apart by file, bus and address, and recordings of different
+    instruments are never read as one (the known limit of 1.6.0)."""
+
+    I1PRO2_EPS = [(0x82, 2), (0x84, 3), (0x03, 2), (0x85, 2), (0x81, 2)]
+
+    def usbpcap(self, name, vid, pid, mark, eps, i1pro_cmds=False, addr=3):
+        w = synth.UsbPcapWriter()
+        w.describe(addr, vid, pid, eps)
+        w.bulk_in(addr, [e for e, _k in eps if e & 0x80][0], mark)
+        w.bulk_out(addr, [e for e, _k in eps if not e & 0x80][0], mark + b"-OUT\r")
+        if i1pro_cmds:
+            for req in sorted(probe.FAMILIES["i1pro2"]["requests"])[:3]:
+                w.vendor_in(addr, req, mark + b"-EEPROM")
+        return w.save(os.path.join(self.dir, name))
+
+    def mac(self, name, pid, mark, addr=3):
+        d = synth_io.DarwinWriter()
+        d._rec(1, 1, addr, 0x81, 2, 0x0971, pid, mark, len(mark))
+        d._rec(1, 2, addr, 0x02, 2, 0x0971, pid, mark + b"-OUT\r", len(mark) + 5)
+        return d.save(os.path.join(self.dir, name))
+
+    def pair(self, fmt):
+        """An i1Pro 2 in one file and an i1iSis in the other, both at bus 1
+        (macOS: bus 0), address 3."""
+        if fmt == "usbpcap":
+            return (self.usbpcap("a-i1pro2.pcap", 0x0971, 0x2000, b"I1PRO2-SERIAL",
+                                 self.I1PRO2_EPS, i1pro_cmds=True),
+                    self.usbpcap("b-isis.pcap", 0x0971, 0x2006, b"ISIS-MARK",
+                                 [(0x81, 2), (0x02, 2)]))
+        return (self.mac("a-i1pro2.pcap", 0x2000, b"I1PRO2-SERIAL"),
+                self.mac("b-isis.pcap", 0x2006, b"ISIS-MARK"))
+
+    def test_different_instruments_at_one_address_are_not_mixed(self):
+        for fmt in ("usbpcap", "mac"):
+            i1pro2, isis = self.pair(fmt)
+            for files in ([i1pro2, isis], [isis, i1pro2]):
+                with self.subTest(fmt=fmt, first=os.path.basename(files[0])):
+                    report = probe.analyze_paths(files)
+                    self.assertIn("These recordings come from different instruments:", report)
+                    self.assertIn("a-i1pro2.pcap: i1Pro 2", report)
+                    self.assertIn("b-isis.pcap: i1iSis chart reader", report)
+                    self.assertIn("--analyze a-i1pro2.pcap", report)
+                    self.assertIn("--analyze b-isis.pcap", report)
+                    # nothing is analysed as one instrument, nothing sent is shown
+                    self.assertNotIn("instrument family:", report)
+                    self.assertNotIn("I1PRO2-SERIAL", report)
+                    self.assertNotIn("ISIS-MARK", report)
+                    self.assertNotIn("\u2014", report)
+                    # the 1.4 check still lists both files
+                    self.assertIn("USB recording check", report)
+
+    def test_each_file_alone_is_read_as_before(self):
+        for fmt in ("usbpcap", "mac"):
+            i1pro2, isis = self.pair(fmt)
+            with self.subTest(fmt=fmt):
+                rep = probe.analyze_paths([i1pro2])
+                self.assertIn("instrument family: i1Pro 2", rep)
+                self.assertNotIn("i1iSis", rep.split("Instrument recording analysis")[1])
+                rep = probe.analyze_paths([isis])
+                self.assertIn("instrument family: i1iSis chart reader", rep)
+                self.assertIn("ISIS-MARK-OUT", rep)
+
+    def test_the_family_comes_from_the_selection_not_from_the_kept_devices(self):
+        _a, isis = self.pair("usbpcap")
+        unknown = self.usbpcap("c-unknown.pcap", 0x0971, 0x2099, b"UNKNOWN-XR",
+                               [(0x81, 2), (0x02, 2)])
+        for files in ([isis, unknown], [unknown, isis]):
+            with self.subTest(first=os.path.basename(files[0])):
+                steps, devinfo, _checks, plain = probe.session_steps(files)
+                self.assertEqual(plain["plain"], "isis")
+                self.assertEqual(probe.session_family(devinfo, steps, plain), "isis")
+                report = probe.analyze_paths(files)
+                self.assertIn("instrument family: i1iSis chart reader", report)
+                # both devices at bus 1, address 3 are listed: neither hides the other
+                self.assertIn("instrument at bus 1, address 3: 0971:2006", report)
+                self.assertIn("instrument at bus 1, address 3: 0971:2099", report)
+
+    def test_one_instrument_in_several_files_is_listed_once(self):
+        a = self.usbpcap("scan-fast.pcap", 0x0971, 0x2000, b"I1PRO2-SERIAL",
+                         self.I1PRO2_EPS, i1pro_cmds=True)
+        b = self.usbpcap("noruler.pcap", 0x0971, 0x2000, b"I1PRO2-SERIAL",
+                         self.I1PRO2_EPS, i1pro_cmds=True)
+        report = probe.analyze_paths([a, b])
+        self.assertIn("instrument family: i1Pro 2", report)
+        self.assertEqual(report.count("instrument at bus 1, address 3: 0971:2000"), 1)
+        self.assertNotIn("different instruments", report)
+
+    def test_a_file_without_an_instrument_is_not_a_different_instrument(self):
+        _a, isis = self.pair("usbpcap")
+        w = synth.UsbPcapWriter()
+        synth.keyboard_noise(w)
+        other = w.save(os.path.join(self.dir, "keyboard-only.pcap"))
+        report = probe.analyze_paths([isis, other])
+        self.assertNotIn("different instruments", report)
+        self.assertIn("instrument family: i1iSis chart reader", report)
+
+    def test_the_i1pro_and_the_i1pro2_count_as_one(self):
+        self.assertEqual(probe.mixed_families(
+            {"plain": None, "families": [("a", "i1pro"), ("b", "i1pro2"), ("c", "generic")]}),
+            [])
+        self.assertTrue(probe.mixed_families(
+            {"plain": None, "families": [("a", "munki"), ("b", "i1pro2")]}))
+        self.assertEqual(probe.mixed_families(None), [])
+        self.assertEqual(probe.mixed_families({"family": "isis"}), [])
+
+
 class _IsisSessionBase(test_instrument.TempDirCase):
     """The handheld tests' fake USBPcapCMD, fed with invented i1iSis steps.
     Only the helpers are borrowed, so the handheld tests do not run twice."""
