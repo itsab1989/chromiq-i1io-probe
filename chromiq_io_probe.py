@@ -1584,23 +1584,26 @@ IO_STEPS = [
     {"key": "row",
      "title": "One row of a chart that scans in one pass",
      "prepare": """\
-  Use a chart that i1Profiler should read in one pass per row: one of
-  the test charts for the i1iO that come with i1Profiler (for example
-  "default-i1iO"), freshly printed, or a chart you know scans normally.
-  (i1Profiler's help says that when it cannot scan a row, it reads the
-  row again more slowly and then patch by patch; that is most likely
-  what happened with your earlier chart.) Set up the measurement up to
-  the point just before you press Measure.""",
+  1. Use a chart that i1Profiler reads in one pass per row: one of the
+     i1iO test charts that come with i1Profiler (for example
+     "default-i1iO"), freshly printed, or a chart you know scans normally
+     (i1Profiler's help says that when it cannot scan a row, it reads the
+     row again more slowly and then patch by patch).
+  2. Place the chart on the table.
+  3. Set up the measurement in i1Profiler up to the point just before you
+     click Measure.""",
      "do": """\
-  Press Measure and let it calibrate as usual, then align the three
-  corners. Watch the FIRST row closely and type a letter and Enter here
-  the moment you see it:
-     a = the arm starts moving along the row
-     l = the instrument's lamp lights up (if you can see it)
-     d = the head goes down,  u = the head lifts
-  When the arm starts along the SECOND row, press Cancel in i1Profiler
-  and wait until the arm stands still. If the arm goes along the first
-  row more than once, that is fine: carry on and say so afterwards.""",
+  1. Click Measure in i1Profiler.
+  2. Let it calibrate as usual.
+  3. Align the three corners as i1Profiler asks.
+  4. Watch the FIRST row closely, and type a letter and Enter here the
+     moment you see it:
+        a = the arm starts moving along the row,
+        l = the instrument's lamp lights up (if you can see it),
+        d = the head goes down,  u = the head lifts.
+  5. When the arm starts along the SECOND row, click Cancel in i1Profiler.
+  6. Wait until the arm stands still (if the arm went along the first row
+     more than once, that is fine: say so afterwards).""",
      "arm": "When the arm started along the row, was the lamp already on? What "
             "did the head do? Was the row read once? What happened after Cancel?",
      "marks": True},
@@ -1608,45 +1611,54 @@ IO_STEPS = [
      "title": "A few patches in spot mode, watching the head",
      "optional": True,
      "prepare": """\
-  If i1Profiler offers to measure patch by patch (often called spot
-  mode) for the table, choose it and set up the measurement with the
-  chart from step 1, up to just before Measure. If it does not, type  s
-  to skip this step.""",
+  1. If i1Profiler offers to measure patch by patch for the table (often
+     called spot mode), choose it.
+  2. Set up the measurement with the chart from step 1, up to just before
+     Measure.
+  3. If i1Profiler has no such mode, type  s  and press Enter to skip this
+     step.""",
      "do": """\
-  Press Measure, align the three corners, and let it measure about 5
-  patches. Type  d  and Enter each time the head goes DOWN onto the
-  paper, and  u  and Enter each time it LIFTS. Then press Cancel and
-  wait until the arm stands still.""",
+  1. Click Measure in i1Profiler.
+  2. Align the three corners.
+  3. Let it measure about 5 patches.
+  4. Each time the head goes DOWN onto the paper, type  d  and press
+     Enter.
+  5. Each time the head LIFTS, type  u  and press Enter.
+  6. Click Cancel in i1Profiler.
+  7. Wait until the arm stands still.""",
      "arm": "What did the head do on each patch? Which setting did you use?",
      "marks": True},
     {"key": "fast",
      "title": "A small chart to the end, fastest setting",
      "prepare": """\
-  Place the SMALL chart (two rows, 10 to 20 patches) somewhere
-  other than last time, for example near the right or the bottom edge of
-  the area the arm can reach. In i1Profiler choose the FASTEST way it
-  offers for the table (for example a single scan, with no extra checking
-  or averaging).""",
+  1. Place the SMALL chart (two rows, 10 to 20 patches) somewhere other
+     than last time, for example near the right or the bottom edge of the
+     area the arm can reach.
+  2. In i1Profiler choose the FASTEST way it offers for the table (for
+     example a single scan, with no extra checking or averaging).""",
      "do": """\
-  Press Measure, align the three corners, and let it measure the whole
-  chart. Please do not cancel: let the arm park by itself at the end,
-  and wait until it stands still.""",
+  1. Click Measure in i1Profiler.
+  2. Align the three corners.
+  3. Let it measure the whole chart (please do not cancel).
+  4. Wait until the arm has parked by itself and stands still.""",
      "arm": "What did the arm do at the end, and where did it stop? Which "
             "setting did you choose?"},
     {"key": "dual",
      "title": "One row with dual scan (M1 or M2)",
      "optional": True,
      "prepare": """\
-  If i1Profiler offers dual scan, or the measurement condition M1 or M2,
-  for the table, choose it, with the chart from step 1. If it does not, type
-  s  to skip this step. (Good to know: the recording shows only what
-  travels over the cable. i1Profiler most likely does the M1 or M2
-  arithmetic itself, so we will see how the instrument is asked to
-  measure, not the result. It is still worth this one step.)""",
+  1. If i1Profiler offers dual scan, or the measurement condition M1 or
+     M2, for the table, choose it, with the chart from step 1.
+  2. If it does not, type  s  and press Enter to skip this step (good to
+     know: the recording shows only what travels over the cable, so we
+     will see how the instrument is asked to measure, not the M1 or M2
+     result).""",
      "do": """\
-  Press Measure (it may calibrate again), align the three corners, and
-  let it measure the FIRST row. When the arm starts along the second
-  row, press Cancel and wait until the arm stands still.""",
+  1. Click Measure in i1Profiler (it may calibrate again).
+  2. Align the three corners.
+  3. Let it measure the FIRST row.
+  4. When the arm starts along the second row, click Cancel in i1Profiler.
+  5. Wait until the arm stands still.""",
      "arm": "What did the arm do this time? Was anything different from the "
             "first step? Which setting did you choose?",
      "marks": True},
@@ -1654,13 +1666,16 @@ IO_STEPS = [
      "title": "One row of your earlier chart",
      "optional": True,
      "prepare": """\
-  Only if you still have the chart from your first recordings printed:
-  place it, with your usual settings. Otherwise type  s  to skip this
-  step. It shows us once more what i1Profiler did with this chart.""",
+  1. Only if you still have the chart from your first recordings printed:
+     place it, with your usual settings.
+  2. Otherwise type  s  and press Enter to skip this step (it shows us
+     once more what i1Profiler did with this chart).""",
      "do": """\
-  Press Measure, align the three corners, and let it work on the FIRST
-  row until it moves on to the second row. Then press Cancel and wait
-  until the arm stands still.""",
+  1. Click Measure in i1Profiler.
+  2. Align the three corners.
+  3. Let it work on the FIRST row until it moves on to the second row.
+  4. Click Cancel in i1Profiler.
+  5. Wait until the arm stands still.""",
      "arm": "Was the first row again read three times and then patch by patch?"},
 ]
 
@@ -6215,147 +6230,161 @@ SESSION_STEPS = [
     {"key": "idle", "title": "start the program, then leave it idle",
      "families": ("i1pro2", "i1pro", "i1pro3", "munki", "generic"),
      "before": """\
-  Before you press Enter: if the measuring program is open, quit it now.
-  Leave the instrument plugged in and resting where it normally rests
-  (on its base or on its white tile).""",
+  Before you press Enter:
+    1. If the measuring program is open, quit it.
+    2. Leave the instrument plugged in, resting where it normally rests.""",
      "during": """\
-  When the recording runs: start the measuring program. Wait until it
-  shows that it has found the instrument (it shows the instrument's
-  name). Then leave everything alone for about 10 seconds and watch the
-  instrument's lights. Do NOT measure or scan anything in this step:
-  measuring comes in the later steps.""",
+  When the recording runs:
+    1. Start the measuring program.
+    2. Wait until it shows that it has found the instrument.
+    3. Leave everything alone for about 10 seconds.
+    4. Watch the instrument's lights meanwhile.
+    5. Do NOT measure or scan anything in this step (measuring comes
+       later).""",
      "lights": "What did the lights do while the program started and while it sat idle?"},
     {"key": "calibrate", "title": "calibrate",
      "families": ("i1pro2", "i1pro", "i1pro3", "munki", "generic"), "setting": SETTING_QUESTION,
      "before": """\
-  Before you press Enter: in the measuring program, go to the page where
-  you measure a printed test chart, the way you normally would. Stop
-  where the program asks you to calibrate. Any test chart you have
-  printed will do. (In i1Profiler this is under Printer, in the
-  profiling workflow, on its measurement page. In the ColorMunki and
-  i1Studio programs it is the step where you measure the printed chart.)
-  If the program shows a measurement condition (M0, M1, M2) or dual scan
-  on that page, leave it as it is and remember it: you will be asked
-  which one it was.""",
+  Before you press Enter:
+    1. In the measuring program, go to the page where you measure a
+       printed test chart (in i1Profiler: Printer, the profiling workflow,
+       its measurement page; in the ColorMunki and i1Studio programs: the
+       step where you measure the printed chart).
+    2. Stop where the program asks you to calibrate.
+    3. Look which measurement condition the program shows there (M0, M1,
+       M2 or dual scan): you will be asked.""",
      "during": """\
-  When the recording runs: start the calibration in the program and
-  calibrate exactly as it asks. i1Pro family: the instrument sits on its
-  white calibration tile. ColorMunki / i1Studio: turn the dial to the
-  calibration position when asked, and back to the measuring position
-  afterwards. Wait until the program says the calibration is done.""",
+  When the recording runs:
+    1. Start the calibration in the program.
+    2. Calibrate exactly as the program asks (i1Pro family: on the white
+       calibration tile; ColorMunki / i1Studio: turn the dial to the
+       calibration position, and back afterwards).
+    3. Wait until the program says the calibration is done.""",
      "lights": "What did the lights do during and after the calibration?"},
     {"key": "scan-single", "title": "scan one strip (single scan, normal speed)",
      "families": ("i1pro2", "i1pro", "i1pro3", "munki", "generic"), "setting": SETTING_QUESTION,
      "before": """\
-  Before you press Enter: choose ONE strip (row) of your chart. You will
-  use this same strip in all the scan steps, so the first one is a good
-  choice. If the program offers a choice of measurement mode, choose one
-  that needs only one pass per strip (for example M0, or M2 on its own,
-  not dual scan). Set the chart up as usual, with the ruler and backing
-  board if your instrument has them. Put the instrument at the start of
-  that strip.""",
+  Before you press Enter:
+    1. Choose ONE strip (row) of your chart, for example the first one
+       (you will use it in every scan step).
+    2. If the program offers a measurement mode, choose one with one pass
+       per strip (for example M0, not dual scan).
+    3. Set the chart up as usual, with the ruler and backing board if your
+       instrument has them.
+    4. Put the instrument at the start of that strip.""",
      "during": """\
-  When the recording runs: press the button on the instrument and keep
-  it pressed. Wait for the ready signal the program gives: a short
-  sound, a message on the screen or a change of the instrument's light,
-  depending on the program. It takes about one second; if you notice
-  nothing, wait one second. Then move the instrument along the strip at
-  your normal speed. Let go of the button at the end of the strip. Wait
-  until the program accepts or refuses the strip. You do not need to
-  finish the chart.""",
+  When the recording runs:
+    1. Press the button on the instrument and keep it pressed.
+    2. Wait until the instrument or the program signals that it is ready
+       (a sound, a light or a message; about one second).
+    3. Move the instrument along the strip at your normal speed.
+    4. Let go of the button at the end of the strip.
+    5. Wait until the program accepts or refuses the strip (you do not
+       need to finish the chart).""",
      "lights": "What did the lights do before, during and after the scan?"},
     {"key": "scan-dual", "title": "the same strip, dual scan",
      "families": ("i1pro2", "i1pro3"),
      "before": """\
-  Before you press Enter: switch the program to its dual scan option, if
-  it has one. In i1Profiler it is offered together with the measurement
-  conditions M0, M1 and M2. If you cannot find such an option, type  s
-  and press Enter to skip this step. Put the instrument at the start of
-  the same strip.""",
+  Before you press Enter:
+    1. Switch the program to its dual scan option (in i1Profiler it sits
+       with the measurement conditions M0, M1 and M2).
+    2. If you cannot find one, type  s  and press Enter to skip this step.
+    3. Put the instrument at the start of the same strip.""",
      "during": """\
-  When the recording runs: scan the same strip the way the program asks
-  for it. Usually that is two passes: first forward, as in the step
-  before (press, keep pressed, wait for the ready signal, move, let go),
-  then back again the same way. On an i1Pro 2 the left light blinks blue
-  when the program wants the pass back. Wait until the program accepts
-  or refuses the strip.""",
+  When the recording runs:
+    1. Scan the strip forward as before: press, wait for the ready signal,
+       move, let go.
+    2. If the program asks for a second pass, scan the strip back the same
+       way (on an i1Pro 2 the left light blinks blue for that).
+    3. Wait until the program accepts or refuses the strip.""",
      "lights": "What did the lights do during the scan, and between the two passes if there were two?",
      "setting": "Which setting was on in i1Profiler for this scan: single or dual scan,\n"
                 "  and M0, M1 or M2? (For example: \"dual, M1\"; Enter if you are not sure)"},
     {"key": "scan-fast", "title": "the same strip again, clearly faster",
      "families": ("i1pro2", "i1pro", "i1pro3", "munki", "generic"), "setting": SETTING_QUESTION,
      "before": """\
-  Before you press Enter: switch back to the single-pass mode, if you
-  changed it for the dual scan. Put the instrument at the start of the
-  same strip again.""",
+  Before you press Enter:
+    1. Switch back to the single-pass mode, if you changed it.
+    2. Put the instrument at the start of the same strip.""",
      "during": """\
-  When the recording runs: press the button on the instrument and keep
-  it pressed. Wait for the ready signal the program gives: a short
-  sound, a message on the screen or a change of the instrument's light,
-  depending on the program. It takes about one second; if you notice
-  nothing, wait one second. Only then move: this time clearly faster
-  than usual, in about half the time you normally take. Let go of the
-  button at the end of the strip. If the program refuses the strip as
-  too fast, that is a useful result too. Please do not start moving
-  before the ready signal: the program then refuses the strip for
-  another reason, and the step shows no fast scan.""",
+  When the recording runs:
+    1. Press the button on the instrument and keep it pressed.
+    2. Wait until the instrument or the program signals that it is ready
+       (about one second): do not move yet.
+    3. Only then move along the strip, clearly faster than usual (in about
+       half the time).
+    4. Let go of the button at the end of the strip.
+    5. Wait until the program accepts or refuses the strip (a refusal as
+       too fast is a useful result too).""",
      "lights": "What did the lights do? Was it different from the normal scan?"},
     {"key": "scan-slow", "title": "the same strip again, slowly",
      "families": ("i1pro2", "i1pro", "i1pro3", "munki", "generic"), "setting": SETTING_QUESTION,
      "before": """\
-  Before you press Enter: put the instrument at the start of the same
-  strip once more.""",
+  Before you press Enter:
+    1. Put the instrument at the start of the same strip.
+    2. Think of how long your normal scan in step 3 took (most people take
+       about 2 seconds).""",
      "during": """\
-  When the recording runs: press the button on the instrument and keep
-  it pressed. Wait for the ready signal the program gives: a short
-  sound, a message on the screen or a change of the instrument's light,
-  depending on the program. It takes about one second; if you notice
-  nothing, wait one second. Then move slowly and steadily: take about 5
-  seconds for the whole strip, which is about twice as long as a normal
-  swipe. Count the seconds while you move: one thousand, two thousand,
-  three thousand, four thousand, five thousand. Let go of the button at
-  the end of the strip. Wait until the program accepts or refuses it.""",
+  When the recording runs:
+    1. Press the button on the instrument and keep it pressed.
+    2. Wait until the instrument or the program signals that it is ready
+       (a sound, a light or a message; about one second).
+    3. Move along the strip slowly and steadily, taking about twice as
+       long as in the normal scan of step 3 (about 5 seconds).
+    4. Count the seconds while you move: one thousand, two thousand, three
+       thousand, four thousand, five thousand.
+    5. Let go of the button at the end of the strip.
+    6. Wait until the program accepts or refuses the strip.""",
      "lights": "What did the lights do this time?"},
     {"key": "scan-fail", "title": "let one scan fail on purpose",
      "families": ("i1pro2", "i1pro", "i1pro3", "munki", "generic"), "setting": SETTING_QUESTION,
      "before": """\
-  Before you press Enter: put the instrument at the start of the same
-  strip. In this step the scan should fail on purpose: for example, lift
-  the instrument off the paper halfway along the strip, or stop moving
-  in the middle. Do nothing that could harm the instrument. If you would
-  rather not, type  s  and press Enter to skip this step.""",
+  Before you press Enter:
+    1. Put the instrument at the start of the same strip.
+    2. Decide how to make this scan fail: lift the instrument off the
+       paper halfway, or stop moving in the middle.
+    3. Do nothing that could harm the instrument.
+    4. If you would rather not, type  s  and press Enter to skip this
+       step.""",
      "during": """\
-  When the recording runs: start the scan as usual (press, keep pressed,
-  wait for the ready signal, move). Make it fail as described. Wait
-  until the program reports the failure. Then do what the program asks
-  (it may ask you to scan the strip again; you may do that too).""",
+  When the recording runs:
+    1. Start the scan as usual: press, keep pressed, wait for the ready
+       signal, move.
+    2. Make it fail as you decided.
+    3. Wait until the program reports the failure.
+    4. Do what the program asks (scanning the strip again is fine too).""",
      "lights": "What did the lights do when the scan failed, and afterwards?"},
     {"key": "spot", "title": "read one single patch",
      "families": ("i1pro2", "i1pro", "i1pro3", "munki", "generic"), "setting": SETTING_QUESTION,
      "before": """\
-  Before you press Enter: find the program's way of reading a single
-  patch (often called spot measurement or single patch measurement). If
-  the program offers none, or you cannot find it, type  s  and press
-  Enter to skip this step. If the program wants a calibration first, do
-  it before you press Enter.""",
+  Before you press Enter:
+    1. Find the program's way of reading a single patch (often called spot
+       measurement).
+    2. If the program has none, or you cannot find it, type  s  and press
+       Enter to skip this step.
+    3. If the program wants a calibration first, do it now.""",
      "during": """\
-  When the recording runs: put the instrument on one patch. Read it the
-  way the program asks (usually one press of the instrument's button).
-  Wait until the program shows the result.""",
+  When the recording runs:
+    1. Put the instrument on one patch.
+    2. Read it the way the program asks (usually one press of the
+       instrument's button).
+    3. Wait until the program shows the result.""",
      "lights": "What did the lights do?"},
     {"key": "noruler", "title": "the same strip without the ruler (control)",
      "families": ("i1pro2", "i1pro3"), "setting": SETTING_QUESTION, "control": True,
      "before": """\
-  Before you press Enter: switch back to the single-pass mode, if you
-  changed it. Take the ruler away. This step only makes sense if the
-  program lets you scan without the ruler. If it does not, or you are
-  not sure, type  s  and press Enter to skip it.""",
+  Before you press Enter:
+    1. Switch back to the single-pass mode, if you changed it.
+    2. Take the ruler away.
+    3. If the program does not let you scan without the ruler, or you are
+       not sure, type  s  and press Enter to skip this step.""",
      "during": """\
-  When the recording runs: scan the same strip without the ruler, for
-  example by sliding the instrument along a straight edge, or freehand
-  (press, keep pressed, wait for the ready signal, move, let go). The
-  program will most likely refuse this strip: that refusal is the useful
-  result. Note what it said. Do not force anything.""",
+  When the recording runs:
+    1. Scan the same strip without the ruler, along a straight edge or
+       freehand (press, wait for the ready signal, move, let go).
+    2. Wait for the program's answer: most likely it refuses the strip,
+       and that refusal is the useful result.
+    3. Do not force anything.""",
      "lights": "What did the lights do?"},
     # ---- 1.6: the i1iSis chart readers ---------------------------------
     # Facts behind the wording (see the work notes FACTS.md of 1.6): the
@@ -6368,45 +6397,54 @@ SESSION_STEPS = [
     {"key": "idle", "title": "start i1Profiler, then leave it idle",
      "families": ("isis",), "box": "Then: ",
      "before": """\
-  Before you press Enter: quit i1Profiler if it is open. The i1iSis
-  should be switched on and connected, with no page in it. (Please
-  switch it on BEFORE you plug in its USB cable: X-Rite says that if the
-  cable goes in first and the power comes on afterwards, i1Profiler does
-  not see the i1iSis.)""",
+  Before you press Enter:
+    1. If i1Profiler is open, quit it.
+    2. Make sure the i1iSis is switched on and connected, with no page in
+       it (please switch it on BEFORE you plug in its USB cable: X-Rite
+       says that otherwise i1Profiler does not see the i1iSis).""",
      "during": """\
-  When the recording runs: start i1Profiler and wait until it shows that
-  it has found the i1iSis. Then leave everything alone for about 10
-  seconds and watch the i1iSis. Do NOT measure anything yet.""",
+  When the recording runs:
+    1. Start i1Profiler.
+    2. Wait until it shows that it has found the i1iSis.
+    3. Leave everything alone for about 10 seconds.
+    4. Watch the i1iSis meanwhile.
+    5. Do NOT measure anything yet.""",
      "lights": "What did the light on the i1iSis do (colour, blinking, when)?",
      "page": "Did the i1iSis move or make a sound? (Enter if nothing happened)"},
     {"key": "ready", "title": "get the i1iSis ready for a page (do not feed it yet)",
      "families": ("isis",), "box": "Then: ",
      "before": """\
-  Before you press Enter: in i1Profiler, go to the page where you measure
-  your printed chart, with your chart loaded, as you normally would. If
-  it offers a choice between Single scan and Dual scan, choose Single
-  scan. Have your printed chart page ready, but keep it in your hand.""",
+  Before you press Enter:
+    1. In i1Profiler, go to the page where you measure your printed chart,
+       with your chart loaded.
+    2. If it offers Single scan or Dual scan, choose Single scan.
+    3. Have your printed chart page ready, but keep it in your hand.""",
      "during": """\
-  When the recording runs: click Measure (or Start Measurement) in
-  i1Profiler, and wait until the i1iSis is ready for the page (its light
-  blinks green when it waits for a chart). Then wait about 10 seconds
-  more. Do NOT feed the page in this step. If i1Profiler does not wait,
-  or asks for the page at once, that is fine: stop the step and say so.""",
+  When the recording runs:
+    1. Click Measure (or Start Measurement) in i1Profiler.
+    2. Wait until the i1iSis is ready for the page (its light blinks green
+       when it waits for a chart).
+    3. Wait about 10 seconds more.
+    4. Do NOT feed the page in this step.
+    5. If i1Profiler does not wait, or asks for the page at once, stop the
+       step anyway and say so in the notes.""",
      "lights": "What did the light on the i1iSis do?",
      "page": "Did the i1iSis move, whirr or click (for example a calibration)? "
              "(Enter if nothing happened)"},
     {"key": "page-single", "title": "feed one page, single scan",
      "families": ("isis",), "box": "Then: ",
      "before": """\
-  Before you press Enter: i1Profiler should now be waiting for the page
-  (if you stopped it, get it there again, with Single scan). Hold page 1
-  of your chart the way you always feed it.""",
+  Before you press Enter:
+    1. Make sure i1Profiler waits for the page, with Single scan (if you
+       stopped it, get it there again).
+    2. Hold page 1 of your chart the way you always feed it.""",
      "during": """\
-  When the recording runs: feed the page as usual (push it in quickly,
-  about 5 cm, along the left-hand guide; the i1iSis then pulls it in by
-  itself). Wait until the page has come out again AND i1Profiler shows
-  it as measured. That can take a minute or two. If i1Profiler then asks
-  for the next page, do NOT feed it: just stop the step.""",
+  When the recording runs:
+    1. Feed the page as usual: push it in quickly, about 5 cm, along the
+       left-hand guide (the i1iSis then pulls it in by itself).
+    2. Wait until the page has come out again AND i1Profiler shows it as
+       measured (that can take a minute or two).
+    3. If i1Profiler then asks for the next page, do NOT feed it.""",
      "lights": "What did the light do before, during and after the page?",
      "setting": "Which setting was on in i1Profiler for this page: single or dual scan,\n"
                 "  and M0, M1 or M2? (Enter if you are not sure)",
@@ -6415,15 +6453,18 @@ SESSION_STEPS = [
     {"key": "page-dual", "title": "the same page again, dual scan",
      "families": ("isis",), "box": "Then: ",
      "before": """\
-  Before you press Enter: switch i1Profiler to Dual scan, if it offers
-  it (for the i1iSis it reads M0 and M2, for the i1iSis 2 also M1). If
-  i1Profiler has to start the measurement again for that, that is fine:
-  get it to the point where it waits for the page. If you cannot find a
-  Dual scan setting, type  s  to skip this step.""",
+  Before you press Enter:
+    1. Switch i1Profiler to Dual scan, if it offers it (for the i1iSis it
+       reads M0 and M2, for the i1iSis 2 also M1).
+    2. Get i1Profiler to the point where it waits for the page (starting
+       the measurement again for that is fine).
+    3. If you cannot find a Dual scan setting, type  s  and press Enter to
+       skip this step.""",
      "during": """\
-  When the recording runs: feed the same page again, exactly as before.
-  Wait until the page has come out again AND i1Profiler shows it as
-  measured (a dual scan takes longer).""",
+  When the recording runs:
+    1. Feed the same page again, exactly as before.
+    2. Wait until the page has come out again AND i1Profiler shows it as
+       measured (a dual scan takes longer).""",
      "lights": "What did the light do this time?",
      "setting": "Which setting was on in i1Profiler for this page? (for example "
                 "\"dual scan, M0 M1 M2\")",
@@ -6432,29 +6473,38 @@ SESSION_STEPS = [
     {"key": "page-skewed", "title": "the same page, fed a little crooked",
      "families": ("isis",), "box": "Then: ",
      "before": """\
-  Before you press Enter: go back to Single scan and get i1Profiler to
-  wait for the page again. The i1iSis is made to correct a page that
-  goes in slightly crooked; this step shows how. If you would rather not,
-  type  s  to skip it.""",
+  Before you press Enter:
+    1. Go back to Single scan.
+    2. Get i1Profiler to wait for the page again.
+    3. If you would rather not do this step, type  s  and press Enter to
+       skip it (the i1iSis is made to correct a slightly crooked page, and
+       this step shows how).""",
      "during": """\
-  When the recording runs: feed the same page at a slight angle (a few
-  millimetres crooked, not more). Never force it. Wait until the page
-  has come out and i1Profiler has accepted or refused it, and do what
-  i1Profiler asks.""",
+  When the recording runs:
+    1. Feed the same page at a slight angle (a few millimetres crooked,
+       not more).
+    2. Never force it.
+    3. Wait until the page has come out and i1Profiler has accepted or
+       refused it.
+    4. Do what i1Profiler asks.""",
      "lights": "What did the light do?",
      "page": "How did the page move this time? Did i1Profiler accept it?"},
     {"key": "blank-page", "title": "a sheet without a chart (fails on purpose)",
      "families": ("isis",), "box": "Then: ",
      "before": """\
-  Before you press Enter: take one plain sheet of normal 80 g/m2
-  printer paper, the same size as your chart, with nothing printed on
-  it, and get i1Profiler to wait for a page again. The i1iSis will not
-  find a chart on it, which is what we want to see. If you would rather
-  not, type  s  to skip this step.""",
+  Before you press Enter:
+    1. Take one plain sheet of normal 80 g/m2 printer paper, the same size
+       as your chart, with nothing printed on it.
+    2. Get i1Profiler to wait for a page again.
+    3. If you would rather not do this step, type  s  and press Enter to
+       skip it (the i1iSis will not find a chart on the sheet, which is
+       what we want to see).""",
      "during": """\
-  When the recording runs: feed the plain sheet like a chart page. Wait
-  until it has come out and i1Profiler shows a message, then do what
-  i1Profiler asks (for example cancel, or feed the right page).""",
+  When the recording runs:
+    1. Feed the plain sheet like a chart page.
+    2. Wait until it has come out and i1Profiler shows a message.
+    3. Do what i1Profiler asks (for example cancel, or feed the right
+       page).""",
      "lights": "What did the light do when the sheet could not be read?",
      "page": "How did the sheet move, and what did i1Profiler say?"},
 ]
@@ -7917,16 +7967,31 @@ def handheld_step_verdict(entry: dict, activity: int, empty: bool, zero: bool = 
 
 
 def step_box(during: str, prefix: str = "Then do this in the measuring program: ") -> str:
-    """1.5.4: the three things to do in one step, framed, so the order is
+    """1.5.4: the things to do in one step, framed, so the order is
     impossible to miss (a real tester measured in the program without ever
-    starting a step here)."""
-    text = " ".join(during.split())
-    for lead in ("When the recording runs:", "When the recording runs"):
-        if text.startswith(lead):
-            text = text[len(lead):].strip()
-    rows = ["1. Press Enter HERE to start recording."]
-    rows += _wrap("2. " + prefix + text, 60, "   ").split("\n")
-    rows += ["3. Come back to THIS window, type  e  and press Enter to stop."]
+    starting a step here). 1.6.2: one action per numbered line, as a tester
+    asked ("keep it simple with simple steps on each new line")."""
+    lines = during.strip("\n").splitlines()
+    acts: list = []
+    for line in lines:
+        m = re.match(r"\s*\d+\.\s+(.*)", line)
+        if m:
+            acts.append(m.group(1).strip())
+        elif acts and line.strip():
+            acts[-1] += " " + line.strip()
+    if not acts:                         # a text that is not a numbered list
+        text = " ".join(during.split())
+        for lead in ("When the recording runs:", "When the recording runs"):
+            if text.startswith(lead):
+                text = text[len(lead):].strip()
+        acts = [text]
+    rows = ["1. Press Enter HERE to start recording.", prefix.strip()]
+    n = 2
+    for act in acts:
+        head = f"{n}. "
+        rows += _wrap(head + act, 64, " " * len(head)).split("\n")
+        n += 1
+    rows += [f"{n}. Come back to THIS window.", f"{n + 1}. Type  e  and press Enter to stop."]
     width = max(len(r) for r in rows) + 4
     line = "  +" + "-" * (width - 2) + "+"
     return "\n".join([line] + ["  | " + r.ljust(width - 4) + " |" for r in rows] + [line])

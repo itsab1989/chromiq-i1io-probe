@@ -223,10 +223,15 @@ class WhatTheTesterSees(Base):
     without ever starting a step, then pressed q; he sent only the report."""
 
     def test_the_step_box_says_the_order(self):
-        box = probe.step_box("  When the recording runs: scan the strip.")
+        # 1.6.2: one action per numbered line
+        box = probe.step_box("  When the recording runs:\n    1. Scan the strip.\n"
+                             "    2. Wait for the answer.")
         self.assertIn("1. Press Enter HERE to start recording.", box)
-        self.assertIn("2. Then do this in the measuring program: scan the strip.", box)
-        self.assertIn("3. Come back to THIS window, type  e  and press Enter to stop.", box)
+        self.assertIn("Then do this in the measuring program:", box)
+        self.assertIn("2. Scan the strip.", box)
+        self.assertIn("3. Wait for the answer.", box)
+        self.assertIn("4. Come back to THIS window.", box)
+        self.assertIn("5. Type  e  and press Enter to stop.", box)
         self.assertEqual(len({len(l) for l in box.splitlines()}), 1)
 
     def test_the_live_line(self):

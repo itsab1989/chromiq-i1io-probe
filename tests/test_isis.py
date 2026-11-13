@@ -742,7 +742,7 @@ class ReviewTexts(unittest.TestCase):
     def test_step_box_for_the_isis(self):
         first = probe.steps_for("isis")[0]
         box = flat(probe.step_box(first["during"], first["box"]))
-        self.assertIn("2. Then: start i1Profiler and wait", box)
+        self.assertIn("Then: | | 2. Start i1Profiler.", box)
         self.assertNotIn("in the measuring program", box)
         handheld = flat(probe.step_box(probe.steps_for("i1pro2")[0]["during"]))
         self.assertIn("Then do this in the measuring program:", handheld)
