@@ -238,3 +238,92 @@ def munki_scan(w, readings=50, describe=True):
     w.vendor_out(I1PRO, 0x80, bytes([1, 1, 0, 0]) + le32(200) + le32(readings))
     w.bulk_in(I1PRO, 0x83, le32(1) + le32(12345), xfer=XFER_INT)
     w.bulk_in(I1PRO, 0x81, bytes(274 * readings))
+
+
+# ---- 1.6: the i1iSis chart reader (0971:2006) ---------------------------------
+#
+# PURE INVENTION. Nobody outside X-Rite has described how i1Profiler talks to
+# an i1iSis, and no recording of one exists yet. The traffic below only has to
+# exercise the tool: a device that looks like a USB-to-serial chip of the FTDI
+# kind (the way the i1iO table talks), text lines from the computer, answers
+# with two status bytes per 64-byte packet, and a long binary transfer while
+# a page is measured. The command words are made up and the "serial number"
+# is a placeholder that the tests check never appears in the analysis text.
+
+ISIS = 3                     # device address of the i1iSis in these recordings
+DISPLAY = 4                  # an i1Display Pro (0765:5020) on the same hub
+ISIS_ENDPOINTS = [(0x81, 2), (0x02, 2)]
+ISIS_FAKE_SERIAL = b"SERIAL-INVENTED-4711"
+
+
+def ftdi_in(data, status=b"\x01\x60"):
+    """Data as an FTDI chip returns it: 2 status bytes per 64-byte packet."""
+    if not data:
+        return status
+    return b"".join(status + data[i:i + 62] for i in range(0, len(data), 62))
+
+
+def isis_open(w, describe=True):
+    if describe:
+        w.describe(ISIS, 0x0971, 0x2006, ISIS_ENDPOINTS)
+    for value in (0, 1, 2):
+        w.vendor_out(ISIS, 0x00, value=value)          # "reset"
+    w.vendor_out(ISIS, 0x03, value=0x001A)             # "set baud rate"
+    w.vendor_out(ISIS, 0x04, value=0x0008)             # "set data format"
+    w.bulk_out(ISIS, 0x02, b"INVENTED-HELLO\r")
+    w.bulk_in(ISIS, 0x81, ftdi_in(b"OK " + ISIS_FAKE_SERIAL + b"\r"))
+
+
+def isis_ready(w):
+    w.bulk_out(ISIS, 0x02, b"INVENTED-CALIBRATE\r")
+    w.tick(1.0)
+    w.bulk_in(ISIS, 0x81, ftdi_in(b"OK\r"))
+    w.bulk_out(ISIS, 0x02, b"INVENTED-WAIT-FOR-PAGE\r")
+    w.bulk_in(ISIS, 0x81, ftdi_in(b""))
+
+
+def isis_page(w, passes=1):
+    w.bulk_out(ISIS, 0x02, b"INVENTED-SCAN-PAGE\r")
+    for _ in range(passes):
+        for _row in range(10):
+            w.tick(0.5)
+            w.bulk_in(ISIS, 0x81, ftdi_in(bytes(range(256)) * 2))
+    w.bulk_out(ISIS, 0x02, b"INVENTED-EJECT\r")
+    w.bulk_in(ISIS, 0x81, ftdi_in(b"DONE\r"))
+
+
+def isis_blank(w):
+    w.bulk_out(ISIS, 0x02, b"INVENTED-SCAN-PAGE\r")
+    w.tick(2.0)
+    w.bulk_in(ISIS, 0x81, ftdi_in(b"ERR MARKS\r"))
+
+
+def display_noise(w, describe=True):
+    """An i1Display Pro on the same hub, as an i1iSis owner may have it."""
+    if describe:
+        w.describe(DISPLAY, 0x0765, 0x5020, [(0x81, 3), (0x01, 3)])
+    w.bulk_in(DISPLAY, 0x81, b"\x00" * 8 + b"DISPLAYSERIAL99", xfer=XFER_INT)
+
+
+def isis_session_files(tmpdir, os_mod, with_display=True):
+    """One file per i1iSis step key, the way the guided session saves them,
+    each with a keyboard (and an i1Display) on the same hub."""
+    files = {}
+
+    def make(key, fn):
+        w = UsbPcapWriter()
+        w.describe(ISIS, 0x0971, 0x2006, ISIS_ENDPOINTS)
+        if with_display:
+            display_noise(w)
+        keyboard_noise(w)
+        fn(w)
+        keyboard_noise(w)
+        files[key] = w.save(os_mod.path.join(tmpdir, f"{key}.pcap"))
+
+    make("idle", lambda w: isis_open(w, describe=False))
+    make("ready", isis_ready)
+    make("page-single", isis_page)
+    make("page-dual", lambda w: isis_page(w, passes=2))
+    make("page-skewed", isis_page)
+    make("blank-page", isis_blank)
+    return files

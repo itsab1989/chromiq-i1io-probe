@@ -4187,7 +4187,7 @@ def summarize_session(paths: list) -> str:
                 endpoints_seen.add(int(m.group(1), 16))
     if xr and not any(v.get("config") for v in xr.values()):
         out.append("      (the recording holds no USB description with the endpoint list)")
-    if endpoints_seen and family != "generic":
+    if endpoints_seen and family not in NO_OPEN_DRIVER:
         if 0x85 in endpoints_seen and family == "i1pro2":
             out.append("  Endpoint 0x85 is listed: this is an i1Pro 2 (Rev E), the way the "
                        "open driver tells them apart.")
