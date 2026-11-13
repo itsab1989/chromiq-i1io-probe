@@ -508,7 +508,9 @@ class SessionTests(TempDirCase):
         log = self.fake_log()
         self.assertIn("-d \\\\.\\USBPcap1 -o ", log)
         self.assertIn("-A --inject-descriptors", log)
-        self.assertEqual(log.count("usbpcapcmd stopped"), 3)
+        # On Windows USBPcapCMD is ended hard (1.5.4), so the fake logs nothing.
+        if os.name != "nt":
+            self.assertEqual(log.count("usbpcapcmd stopped"), 3)
         self.assertIn("STEP 4 of 9: the same strip, dual scan", screen)
         # The instrument-only copy has no keyboard in it.
         lt, recs = probe._read_pcap(os.path.join(self.folder,
@@ -525,14 +527,16 @@ class SessionTests(TempDirCase):
         self.assertTrue(steps[1]["interrupted"])
         self.assertEqual(steps[1]["files_xrite"],
                          ["step2-calibrate-take1-USBPcap1-instrument.pcap"])
-        self.assertEqual(self.fake_log().count("usbpcapcmd stopped"), 2)
+        if os.name != "nt":
+            self.assertEqual(self.fake_log().count("usbpcapcmd stopped"), 2)
 
     def test_ctrl_c_between_steps(self):
         answers = ["", "", "ok", "white", "", KeyboardInterrupt()]
         session, _screen = self.run_session(answers)
         self.assertIn("Ctrl-C", session["ended"])
         self.assertEqual(len(self.saved()["steps"]), 1)
-        self.assertEqual(self.fake_log().count("usbpcapcmd stopped"), 1)
+        if os.name != "nt":
+            self.assertEqual(self.fake_log().count("usbpcapcmd stopped"), 1)
 
     def test_recorder_that_cannot_start(self):
         os.environ["FAKE_FAIL"] = "5"
@@ -541,7 +545,7 @@ class SessionTests(TempDirCase):
         finally:
             del os.environ["FAKE_FAIL"]
         self.assertEqual(session["ended"], "the recording program stopped at once")
-        self.assertIn("Another recording of this USB root hub is already running", screen)
+        self.assertIn("Most likely another", screen)
         self.assertIn("device - 5", screen)
         self.assertEqual(self.saved()["steps"], [])
 

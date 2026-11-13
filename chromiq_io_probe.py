@@ -236,6 +236,10 @@ def scrub(text: str) -> str:
     home = os.path.expanduser("~")
     if home and home not in ("/", ""):
         text = text.replace(home, "~")
+    # 1.5.4 review: run as another administrator, the folder can belong to a
+    # different user than the one this process runs as.
+    text = re.sub(r"(?i)\b([A-Z]:\\+Users\\+)(?!Public\b)[^\\/\s\"']+", r"\1USER", text)
+    text = re.sub(r"(/Users/|/home/)(?!Shared\b)[^/\s\"']+", r"\1USER", text)
     for pattern, _name in _SERIAL_RULES:
         text = pattern.sub(_hash_secret, text)
     return text
@@ -5653,6 +5657,11 @@ def _kill_with_us(proc) -> None:
         import ctypes                                     # noqa: PLC0415
         from ctypes import wintypes                       # noqa: PLC0415
         k32 = ctypes.windll.kernel32                      # type: ignore[attr-defined]
+        k32.CreateJobObjectW.restype = wintypes.HANDLE
+        k32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+        k32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int,
+                                                ctypes.c_void_p, wintypes.DWORD]
+        k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
         if not _JOB:
             job = k32.CreateJobObjectW(None, None)
             if not job:
@@ -5710,6 +5719,7 @@ class _ProcRecorder:
         self.files: dict = {}
         self.notes: list = []
         self.diag: list = []
+        self.logs: list = []
 
     def command(self, iface, path) -> list:
         raise NotImplementedError
@@ -5723,19 +5733,37 @@ class _ProcRecorder:
     def session_end(self) -> None:
         pass
 
-    def _popen(self, cmd):
-        """stdout and stderr into one pipe, read only when the program has
-        ended (it prints only on errors while it writes to a file). A pipe,
-        not a file: USBPcapCMD attaches to our console only when its output
-        is not redirected to a file (cmd.c attach_parent_console), and only
-        then does Ctrl-Break reach it (review of 1.5.4)."""
-        kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE,
-                  "stderr": subprocess.STDOUT}
+    # USBPcapCMD: stop it directly. With its output in a file it does not
+    # attach to our console, so Ctrl-Break cannot reach it; ending it is safe
+    # because it flushes the file after every write (thread.c write_data).
+    stop_hard = False
+
+    def _popen(self, cmd, log_path=None):
+        """stdout and stderr go into a small log file next to the recording,
+        read when the program has ended. A disk file: USBPcapCMD then surely
+        keeps its messages there (with a console it would write them to that
+        console instead, cmd.c attach_parent_console), so the report gets
+        them. A job object ends the program with this one (_kill_with_us)."""
+        log = open(log_path, "wb") if log_path else subprocess.DEVNULL
+        kwargs = {"stdin": subprocess.DEVNULL, "stdout": log,
+                  "stderr": subprocess.STDOUT if log_path else subprocess.DEVNULL}
         if os.name == "nt":
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        proc = subprocess.Popen(cmd, **kwargs)
+        try:
+            proc = subprocess.Popen(cmd, **kwargs)
+        finally:
+            if log_path:
+                log.close()
         _kill_with_us(proc)
         return proc
+
+    @staticmethod
+    def _read_log(path) -> str:
+        try:
+            with open(path, "rb") as fh:
+                return fh.read(4000).decode("utf-8", "replace").strip()
+        except OSError:
+            return ""
 
     def _prepare(self, path) -> None:
         if os.path.exists(path):
@@ -5748,15 +5776,20 @@ class _ProcRecorder:
                  "file": os.path.basename(path)}
         self.diag.append(entry)
         if os.name == "nt":
+            note = ("the folder's path has characters that USBPcapCMD (an ANSI "
+                    "program) may not be able to use")
             try:
                 if path.encode("mbcs").decode("mbcs") != path:
-                    entry["path_note"] = ("the folder's path has characters that "
-                                          "USBPcapCMD (an ANSI program) cannot pass on")
-            except (LookupError, UnicodeError):
+                    entry["path_note"] = note
+            except UnicodeError:
+                entry["path_note"] = note
+            except LookupError:
                 pass
+        log_path = path + "." + attempt.split()[0] + ".log"
         try:
             self._prepare(path)
-            self.procs[iface] = self._popen(cmd)
+            self.procs[iface] = self._popen(cmd, log_path)
+            self.logs.append(log_path)
         except OSError as exc:
             entry["result"] = f"could not be started: {exc}"
             self.notes.append(f"{iface}: could not start ({exc})")
@@ -5771,11 +5804,7 @@ class _ProcRecorder:
                 entry["warning"] = "running, but it has not created its file yet"
                 self.notes.append(f"{iface}: running, but no recording file yet")
             return entry
-        try:
-            out = (proc.stdout.read(4000) if proc.stdout else b"").decode(
-                "utf-8", "replace").strip()
-        except (OSError, ValueError):
-            out = ""
+        out = self._read_log(log_path)
         entry["result"] = f"stopped at once, exit code {proc.returncode}" + (
             " (USBPcapCMD ends with 0 even when it fails)" if proc.returncode == 0 else "")
         entry["output"] = out or "(nothing)"
@@ -5829,7 +5858,10 @@ class _ProcRecorder:
             if proc.poll() is not None:
                 continue
             try:
-                if os.name == "nt":
+                if os.name == "nt" and self.stop_hard:
+                    proc.terminate()
+                    proc.wait(timeout=6)
+                elif os.name == "nt":
                     try:
                         proc.send_signal(signal.CTRL_BREAK_EVENT)   # type: ignore[attr-defined]
                         proc.wait(timeout=4)
@@ -5847,12 +5879,12 @@ class _ProcRecorder:
                     pass
             except OSError:
                 pass
-        for proc in self.procs.values():
-            if proc.stdout:
-                try:
-                    proc.stdout.close()
-                except OSError:
-                    pass
+        for path in self.logs:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        self.logs = []
         files = []
         for path in self.files.values():
             if not os.path.exists(path):
@@ -5881,6 +5913,7 @@ class UsbPcapRecorder(_ProcRecorder):
 
     label = "USBPcap (USBPcapCMD)"
     precreate = False
+    stop_hard = True
 
     def __init__(self, exe: str, interfaces: list, outdir: str):
         super().__init__(interfaces, outdir)
@@ -6070,6 +6103,7 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
     records the whole session himself, for example with Wireshark).
     """
     os.makedirs(folder, exist_ok=True)
+    _END["session_folder"] = folder
     full_dir = folder + "-FULL-do-not-send"
     if recorder is not None:
         os.makedirs(full_dir, exist_ok=True)
@@ -6122,8 +6156,8 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                            for s in session["steps"]):
                     # 1.5.4: a real tester measured in the program, never
                     # started a step here, and stopped with nothing recorded.
-                    print("\n  Nothing was recorded yet. A step is recorded only between your")
-                    print("  first Enter here and your second Enter here.")
+                    print("\n  Nothing was recorded yet. The tool records only between the")
+                    print("  Enter that starts a step and the Enter that stops it.")
                     if not said_yes(_session_ask("  Stop anyway? (yes / no): ")):
                         continue
                 session["ended"] = "stopped by the operator"
@@ -6291,15 +6325,19 @@ class LiveLine:
         if size is None:
             what = "your own recording runs"
         elif size == 0 and secs >= 5:
-            what = "nothing captured yet: is the instrument plugged into this PC?"
+            what = "no data yet: is the instrument plugged in?"
         else:
-            what = f"{size:,} bytes captured"
-        return f"  RECORDING {secs:4d} s | {what} | Enter = stop "
+            what = f"{size:,} bytes on this USB bus"
+        return f"  RECORDING {secs:4d} s | {what} | Enter = stop"
 
     def _run(self):
+        width = 0
         while not self._stop.wait(self.interval):
             try:
-                self.stream.write("\r" + self.text())
+                text = self.text()
+                pad = max(0, width - len(text))
+                width = len(text)
+                self.stream.write("\r" + text + " " * pad)
                 self.stream.flush()
             except (OSError, ValueError):
                 return
@@ -6331,7 +6369,7 @@ def recorder_failure_words(diag: str) -> str:
                 "USBPcap, its path may hold characters USBPcap cannot handle, or "
                 "security software (for example Windows' \"Controlled folder "
                 "access\") may block it. Moving this tool into a plain folder such "
-                "as C:\\ChromIQ-probe usually helps.")
+                "as C:\\ChromIQ-probe may help.")
     m = re.search(r"couldn't open device - (\d+)", low)
     if m:
         code = int(m.group(1))
@@ -6339,9 +6377,10 @@ def recorder_failure_words(diag: str) -> str:
             return ("USBPcap's recording device does not exist yet. Restart Windows "
                     "once after installing USBPcap, then try again.")
         if code in (5, 32):
-            return ("Another recording of this USB root hub is already running, for "
-                    "example Wireshark, or a USBPcapCMD left over from an earlier try "
-                    "(see Task Manager). Close it and try again.")
+            return ("Windows refused access to this USB root hub. Most likely another "
+                    "recording of it is already running, for example Wireshark, or a "
+                    "USBPcapCMD left over from an earlier try (see Task Manager). "
+                    "Close it and try again.")
         return f"USBPcap could not open its recording device (Windows error {code})."
     if "access" in low and "denied" in low:
         return ("Windows refused USBPcap access. Please start this tool as "
@@ -6438,6 +6477,15 @@ def session_send_text(folder: str) -> str:
   Do NOT send the folder ending in -FULL-do-not-send."""
 
 
+def is_sendable(name: str) -> bool:
+    """1.5.4 review: an allow-list. Only the tool's own files and its
+    instrument-only copies; never a full recording (which can hold what was
+    typed on a USB keyboard), whatever its name."""
+    low = name.lower()
+    return (low in ("session.json", "analysis.txt", "whole-session-instrument.pcap")
+            or low.endswith("-instrument.pcap") or low.endswith("-xrite.pcap"))
+
+
 def make_send_zip(report_path: str, send: dict) -> str | None:
     """1.5.4: ONE file to send, next to the report: the report, and the
     session folder's own files (instrument-only recordings, session.json,
@@ -6451,9 +6499,10 @@ def make_send_zip(report_path: str, send: dict) -> str | None:
     if folder and os.path.isdir(folder):
         for name in sorted(os.listdir(folder)):
             full = os.path.join(folder, name)
-            if os.path.isfile(full) and "-full." not in name and not name.endswith(".tmp"):
+            if os.path.isfile(full) and is_sendable(name):
                 items.append(full)
-    items += [f for f in send.get("files") or [] if os.path.isfile(f)]
+    items += [f for f in send.get("files") or [] if os.path.isfile(f)
+              and is_sendable(os.path.basename(f))]
     try:
         with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zf:
             for item in items:
@@ -6691,8 +6740,8 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
         elif ended == "stopped by the operator" and not any(
                 s.get("start_epoch") for s in session["steps"]):
             outcome["reason"] = ("You stopped the session before the first step was "
-                                 "recorded. A step is recorded only between your first "
-                                 "and your second Enter in this tool's window.")
+                                 "recorded. The tool records only between the Enter "
+                                 "that starts a step and the Enter that stops it.")
     if outcome["recorded"]:
         print()
         print(session_send_text(folder))
@@ -7135,12 +7184,18 @@ def closing_words(outcome: dict | None) -> list:
     the install steps scrolled away above them)."""
     outcome = outcome or {}
     if outcome.get("recorded"):
-        return ["  Please send the one SEND-THIS zip file named above. It holds the",
-                "  report and the recordings. In the report the serial numbers are",
-                "  scrambled; in the recordings they cannot be, as said above.", "",
-                HANDHELD_SEND_WAYS]
+        if _END.get("zip"):
+            first = ["  Please send the one SEND-THIS zip file named above. It holds the",
+                     "  report and the recordings."]
+        else:
+            first = ["  The tool could not make the one file to send. Please make a zip of",
+                     "  the session folder yourself and add the report."]
+        return first + ["  In the report the serial numbers are scrambled; in the",
+                        "  recordings they cannot be, as said above.", "",
+                        HANDHELD_SEND_WAYS]
     lines = ["  NOTHING WAS RECORDED THIS TIME",
-             "  " + (outcome.get("reason") or "No step of the session was recorded."),
+             "  " + _wrap(outcome.get("reason") or "No step of the session was recorded.",
+                          66, "  "),
              "  There is no session folder to send. You do not need to send this",
              "  report either; if you like, send it anyway (it shows what the tool",
              "  found on this computer). A recording is what really helps."]
@@ -7170,8 +7225,14 @@ def report_text(instrument: bool = False) -> str:
     if not _END.get("send"):
         # 1.5.4: said at the top, so nobody reads a report as if it held a
         # recording (a real tester sent only this file).
-        body[3:3] = ["THIS REPORT CONTAINS NO RECORDING. "
-                     + (_END.get("no_recording") or "No recording was made in this run."), ""]
+        if _END.get("sip_box") or _END.get("session_folder"):
+            line = ("This report was saved before the end of the run (after an "
+                    "interruption or an error). Recordings may be next to it, in the "
+                    "folder named in the report.")
+        else:
+            line = "THIS REPORT CONTAINS NO RECORDING. " + (
+                _END.get("no_recording") or "No recording was made in this run.")
+        body[3:3] = [line, ""]
     for title, content in _SECTIONS:
         body.append("=" * 72)
         body.append(title)
@@ -7203,6 +7264,7 @@ def finish_report(args, system: str, instrument: bool = False,
 
     size_kb = os.path.getsize(out_path) / 1024
     zip_path = make_send_zip(out_path, _END["send"]) if _END.get("send") else None
+    _END["zip"] = zip_path
     recorded = (not instrument) or bool((outcome or {}).get("recorded"))
     print("\n" + "=" * 68)
     print("  ALL DONE. Thank you!" if recorded else "  FINISHED, BUT NOTHING WAS RECORDED YET")

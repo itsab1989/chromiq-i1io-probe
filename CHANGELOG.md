@@ -27,7 +27,9 @@ drive the table. There is still no recording from a handheld instrument.
   record with Wireshark while the tool walks the same steps.
 - **One file to send:** at the end the tool makes `SEND-THIS-<date>.zip` next
   to itself, with the report, the instrument-only recordings, session.json
-  and analysis.txt (never a full recording), and says "send this one file".
+  and analysis.txt (only the tool's own files and its instrument-only
+  copies, never a full recording, whatever its name), and says "send this
+  one file".
   A report without a recording says so in its first lines, and why (you
   chose only the report, the recording program stopped at once, you stopped
   before the first step, ...).
@@ -35,7 +37,7 @@ drive the table. There is still no recording from a handheld instrument.
   frame: press Enter HERE to start recording, then do the step in the
   measuring program, then come back to THIS window and press Enter. While a
   step records, a line shows the seconds and the bytes recorded so far (or
-  "nothing captured yet"). Stopping with nothing recorded asks once more.
+  "no data yet"). Stopping with nothing recorded asks once more.
   (A real tester measured in the program without starting a step here.)
 - **An i1Pro 3 on WinUSB from a libwdi-based tool** is no longer called
   X-Rite's driver because of its name: the tool says who provided it and

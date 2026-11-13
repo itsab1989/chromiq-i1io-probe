@@ -213,11 +213,12 @@ class WhatTheTesterSees(Base):
     def test_the_live_line(self):
         rec = mock.Mock(files={"a": os.path.join(self.dir, "nothing-yet")})
         line = probe.LiveLine(rec, 100.0)
-        self.assertIn("nothing captured yet", line.text(now=107.0))
+        self.assertIn("no data yet", line.text(now=107.0))
+        self.assertLess(len(line.text(now=107.0)), 80)
         with open(os.path.join(self.dir, "grows"), "wb") as fh:
             fh.write(b"x" * 1234)
         rec.files = {"a": os.path.join(self.dir, "grows")}
-        self.assertIn("1,234 bytes captured", line.text(now=103.0))
+        self.assertIn("1,234 bytes on this USB bus", line.text(now=103.0))
         self.assertIn("your own recording runs", probe.LiveLine(None, 0.0).text(now=3.0))
         # no terminal: no thread, nothing written
         out = io.StringIO()
@@ -296,3 +297,36 @@ class OneFileToSend(Base):
             probe.finish_report(ns, "Windows", instrument=True, outcome={"recorded": True})
         self.assertIn("SEND THIS ONE FILE", out.getvalue())
         self.assertTrue(any(f.startswith("SEND-THIS-") for f in os.listdir(self.dir)))
+
+
+class AllowListAndPaths(Base):
+
+    def test_a_full_wireshark_file_never_goes_into_the_zip(self):
+        import zipfile
+        folder = os.path.join(self.dir, "instrument-session-3-by-hand")
+        os.makedirs(folder)
+        for name in ("whole-session.pcapng", "Wireshark capture.pcapng", "session.json",
+                     "whole-session-instrument.pcap", "notes.txt"):
+            with open(os.path.join(folder, name), "w") as fh:
+                fh.write("x")
+        report = os.path.join(self.dir, "chromiq-io-probe-3.txt")
+        with open(report, "w") as fh:
+            fh.write("r")
+        with zipfile.ZipFile(probe.make_send_zip(report, {"folder": folder})) as zf:
+            names = sorted(zf.namelist())
+        self.assertEqual(names, ["chromiq-io-probe-3.txt",
+                                 "instrument-session-3-by-hand/session.json",
+                                 "instrument-session-3-by-hand/whole-session-instrument.pcap"])
+
+    def test_scrub_hides_any_user_folder(self):
+        text = probe.scrub("C:\\Users\\someone\\Desktop\\x and /Users/other/y and "
+                           "C:\\Users\\Public\\z")
+        self.assertNotIn("someone", text)
+        self.assertNotIn("other", text)
+        self.assertIn("Public", text)
+
+    def test_interrupted_report_does_not_say_no_recording(self):
+        probe._END.clear()
+        self.addCleanup(probe._END.clear)
+        probe._END["session_folder"] = self.dir
+        self.assertIn("saved before the end of the run", probe.report_text(instrument=True))

@@ -261,7 +261,7 @@ class TheFirstReportReplayed(unittest.TestCase):
 
     def test_a_recorded_session_ends_as_before(self):
         lines = probe.closing_words({"recorded": True})
-        self.assertIn("  Please send the one SEND-THIS zip file named above. It holds the", lines)
+        self.assertIn("  The tool could not make the one file to send. Please make a zip of", lines)
         self.assertIn(probe.HANDHELD_SEND_WAYS, lines)
 
 
