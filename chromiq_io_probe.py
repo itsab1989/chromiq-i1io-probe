@@ -4201,6 +4201,18 @@ def summarize_session(paths: list) -> str:
         diff = sorted(set(ff) ^ set(sf))
         out.append("    what differs apart from the length: " +
                    ("; ".join(diff[:12]) if diff else "nothing in the commands"))
+
+        # 1.5.5: in the first real session the "slow" swipes were as quick as
+        # the fast ones. Readings per swipe grow with the time a swipe takes.
+        def per_swipe(r):
+            counts = [m["readings"] for m in r[1]["measurements"] if m["readings"] > 50]
+            return sum(counts) / len(counts) if counts else 0
+        fpm, spm = per_swipe(fast[-1]), per_swipe(slow[-1])
+        if fpm and spm < 1.5 * fpm:
+            out.append(f"    NOTE: a slow swipe took about as many readings as a fast one "
+                       f"({spm:.0f} against {fpm:.0f} per swipe), so it was most likely not "
+                       "slower. Please repeat the slow step, taking 3 to 5 seconds for the "
+                       "strip.")
         out.append("")
 
     out.append("  THE LIGHTS' LANGUAGE (light commands per step, in order):")

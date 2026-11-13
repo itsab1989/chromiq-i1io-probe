@@ -259,3 +259,28 @@ class Texts(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SlowSwipe(unittest.TestCase):
+
+    def test_a_slow_swipe_that_was_not_slow_is_named(self):
+        with tempfile.TemporaryDirectory() as d:
+            files = {}
+            for key, n in (("scan-fast", 300), ("scan-slow", 320)):
+                w = synth.UsbPcapWriter()
+                w.describe(synth.I1PRO, 0x0971, 0x2000, synth.I1PRO2_ENDPOINTS)
+                synth.i1pro2_scan(w, readings=n)
+                files[key] = w.save(os.path.join(d, key + ".pcap"))
+            text = probe.summarize_session([files["scan-fast"], files["scan-slow"]])
+        self.assertIn("it was most likely not slower", text)
+
+    def test_a_real_slow_swipe_is_not_named(self):
+        with tempfile.TemporaryDirectory() as d:
+            files = {}
+            for key, n in (("scan-fast", 200), ("scan-slow", 900)):
+                w = synth.UsbPcapWriter()
+                w.describe(synth.I1PRO, 0x0971, 0x2000, synth.I1PRO2_ENDPOINTS)
+                synth.i1pro2_scan(w, readings=n)
+                files[key] = w.save(os.path.join(d, key + ".pcap"))
+            text = probe.summarize_session([files["scan-fast"], files["scan-slow"]])
+        self.assertNotIn("most likely not slower", text)
