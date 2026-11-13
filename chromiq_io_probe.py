@@ -4203,7 +4203,10 @@ def session_steps(paths: list) -> tuple:
     (title, events, notes, is_control, key). A session file (session.json,
     written by the guided session) names its steps and files; a plain
     recording is one step named after the file, and a file whose name says
-    "noruler" or "control" is the control.
+    "noruler" or "control" is the control. For plain files (1.6.1) the last
+    item is not None but {"plain": the selection made over all files,
+    "families": [(file name, its own instrument family), ...]}, and the
+    devices are keyed (bus, address, file number).
     """
     steps = []
     devinfo: dict = {}
@@ -4260,44 +4263,124 @@ def session_steps(paths: list) -> tuple:
                           bool(step.get("control")), step.get("key", "")))
         return steps, devinfo, checks, session
     # 1.6: one decision for all the plain files together (plain_file_profile).
+    # 1.6.1: a device is told apart by file, bus and address (two files can
+    # hold different devices at the same address), and each file's own
+    # instrument family is noted, so that recordings of different
+    # instruments are never read as one (mixed_families()).
     union: dict = {}
+    families = []
     for i, f in enumerate(whole):
         try:
             lt, recs = _read_pcap(f)
         except (OSError, ValueError):
+            families.append((os.path.basename(f), "generic"))
             continue
-        for key, info in device_map(capture_events(lt, recs)).items():
+        evs_all = capture_events(lt, recs)
+        devs_all = device_map(evs_all)
+        for key, info in devs_all.items():
             union[(i,) + tuple(key)] = info
+        families.append((os.path.basename(f), _family_of(
+            devs_all, evs_all, plain_file_profile(devs_all))))
     plain = plain_file_profile(union)
-    for f in whole:
+    for i, f in enumerate(whole):
         evs, devs, check = _xrite_events(f, plain)
-        devinfo.update(devs)
+        for key, info in devs.items():
+            devinfo[tuple(key) + (i,)] = info
         checks.append((os.path.basename(f), check))
         low = os.path.basename(f).lower()
         control = "noruler" in low or "no-ruler" in low or "control" in low
         steps.append((os.path.basename(f), evs, {}, control, low))
-    return steps, devinfo, checks, None
+    return steps, devinfo, checks, {"plain": plain, "families": families}
 
 
-def session_family(devinfo: dict, steps: list, session: dict | None = None) -> str:
-    if session and session.get("family") in FAMILIES:
-        return session["family"]
-    # 1.6: plain files: the same decision as the selection in session_steps.
-    if plain_file_profile(devinfo) == "isis":
+def distinct_devices(devinfo: dict) -> dict:
+    """1.6.1: the devices to list, keyed (bus, address, ...). A session keys
+    its devices by bus and address, and this returns them unchanged. Plain
+    files key them by bus, address and file: the same device seen in
+    several files is listed once (its entry from the last file, as before
+    1.6.1), and different devices that sat at the same address in
+    different files are listed each."""
+    merged: dict = {}
+    for key, info in devinfo.items():
+        merged[(key[0], key[1], info.get("vid"), info.get("pid"))] = (key, info)
+    return {key: info for key, info in merged.values()}
+
+
+def _family_of(devinfo: dict, events: list, plain) -> str:
+    """The instrument family of plain recordings (or of a session that does
+    not name one), from their devices: "isis" when plain says so, else the
+    rule of 1.5.5."""
+    if plain == "isis":
         return "isis"
-    all_events = [e for _n, evs, *_ in steps for e in evs]
-    for info in devinfo.values():
+    devs = list(distinct_devices(devinfo).values())
+    for info in devs:
         if info.get("vid") in XRITE_VIDS:
-            fam = family_for(info["vid"], info["pid"], info.get("config"), all_events)
+            fam = family_for(info["vid"], info["pid"], info.get("config"), events)
             if fam not in ("generic", "isis"):        # 1.5.5 knew no i1iSis
                 return fam
-    for info in devinfo.values():
+    for info in devs:
         if info.get("guess_family"):
             fam = info["guess_family"]
             if fam in ("i1pro2", "i1pro"):
-                return family_for(0x0971, 0x2000, (), all_events)
+                return family_for(0x0971, 0x2000, (), events)
             return fam
     return "generic"
+
+
+def session_family(devinfo: dict, steps: list, session: dict | None = None) -> str:
+    """The instrument family to analyse with. A session names its own; for
+    plain files (session = {"plain": ..., "families": ...} from
+    session_steps, 1.6.1) the decision session_steps made for the selection
+    is used, never made again from the devices that were kept."""
+    if session and session.get("family") in FAMILIES:
+        return session["family"]
+    plain = session.get("plain") if session and "families" in session \
+        else plain_file_profile(devinfo)
+    all_events = [e for _n, evs, *_ in steps for e in evs]
+    return _family_of(devinfo, all_events, plain)
+
+
+# 1.6.1: the i1Pro and the i1Pro 2 share one USB ID and are told apart from
+# details a recording may lack, so they count as one instrument here.
+_SAME_INSTRUMENT = {"i1pro": "i1pro2"}
+
+
+def mixed_families(session) -> list:
+    """1.6.1: for plain files that come from different instruments, each
+    file with its instrument family; else []. A file without any instrument
+    the tool knows ("generic") does not count as a different instrument."""
+    if not session or "families" not in session:
+        return []
+    kinds = {_SAME_INSTRUMENT.get(fam, fam) for _n, fam in session["families"]
+             if fam != "generic"}
+    return list(session["families"]) if len(kinds) > 1 else []
+
+
+def mixed_families_text(mixed: list) -> str:
+    """1.6.1: the friendly answer when plain files come from different
+    instruments: each is analysed on its own, never mixed into another."""
+    out = ["=" * 68, "  Instrument recording analysis", "=" * 68, "",
+           "  These recordings come from different instruments:"]
+    for name, fam in mixed:
+        label = FAMILIES[fam]["name"] if fam != "generic" else "no instrument this tool knows"
+        out.append(f"    {name}: {label}")
+    out.append("")
+    out.append("  " + _wrap(
+        "The analysis reads one instrument at a time, so that nothing of one "
+        "instrument ends up in the analysis of the other. Please analyse the "
+        "recordings of each instrument on their own, for example:", 64, "  "))
+    groups: dict = {}
+    for name, fam in mixed:
+        if fam != "generic":
+            groups.setdefault(_SAME_INSTRUMENT.get(fam, fam), []).append(name)
+    for names in groups.values():
+        out.append("      --analyze " + " ".join(f'"{n}"' if " " in n else n for n in names))
+    out.append("")
+    out.append("  " + _wrap(
+        "The check above still covers every file. Nothing is wrong with the "
+        "recordings themselves.", 64, "  "))
+    out.append("=" * 68)
+    return "\n".join(out)
 
 
 def is_instrument_traffic(devinfo: dict, steps: list) -> bool:
@@ -4328,7 +4411,12 @@ def step_has_data(res: dict) -> bool:
 
 def summarize_session(paths: list) -> str:
     steps, devinfo, checks, session = session_steps(paths)
+    mixed = mixed_families(session)
+    if mixed:
+        return mixed_families_text(mixed)
     family = session_family(devinfo, steps, session)
+    if session and "families" in session:
+        session = None                        # plain files: no session file
     fam = FAMILIES[family]
     out = ["=" * 68, "  Instrument recording analysis", "=" * 68, "",
            "  Reads recordings you already made. It sends NOTHING to any device.", "",
@@ -4343,7 +4431,7 @@ def summarize_session(paths: list) -> str:
     for name, check in checks:
         out.append(f"    {name}: {check['verdict']}")
     out.append("")
-    xr = {k: v for k, v in devinfo.items()
+    xr = {k: v for k, v in distinct_devices(devinfo).items()
           if v.get("vid") in XRITE_VIDS or v.get("guess_family")}
     endpoints_seen = set()
     for key, info in xr.items():
@@ -7740,10 +7828,12 @@ def analyze_paths(paths: list) -> str:
         # which asks about rulers and dual scans that do not apply here.
         return text + "\n\n" + table
     try:
-        steps, devinfo, _checks, _s = session_steps(paths)
+        steps, devinfo, _checks, plain = session_steps(paths)
     except Exception:                                     # noqa: BLE001
         return text
-    if is_instrument_traffic(devinfo, steps):
+    if mixed_families(plain):
+        return text + "\n\n" + mixed_families_text(mixed_families(plain))
+    if session_family(devinfo, steps, plain) != "generic":
         return text + "\n\n" + summarize_session(paths)
     return text
 
