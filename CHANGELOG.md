@@ -1,5 +1,71 @@
 # Changelog
 
+## v1.5.4
+
+Aimed at the next recording of an i1iO table. The first real recording of an
+i1iO 2 (with an i1Pro 2, made on a Mac with SIP switched off, issue #129)
+now exists. It showed that i1Profiler talks to the table in short lines of
+text through a common USB-to-serial chip, and every one of its 2,475 lines
+passed the check number we worked out, so we very likely read the format
+correctly. Much is still unknown, and nothing is promised: ChromIQ cannot
+drive the table. There is still no recording from a handheld instrument.
+
+- **Fixed: `--analyze` never showed what the program sent on a Mac.** In
+  macOS recordings the data going to a device sits in the completion record,
+  not in the request; 1.5.3 read it only from the request, so every command
+  i1Profiler sent to the table (and the i1Pro's trigger parameters and light
+  sequences) was missing. Found in the first real recording. The Windows
+  (USBPcap) and Linux (usbmon) readers were checked for the same mistake and
+  do not have it; tests now feed the same conversation through all three.
+- **`--analyze` understands the i1iO table:** it recognises 0971:2004 as a
+  USB-to-serial link, removes the chip's 2 status bytes from every USB packet,
+  puts the lines back together, checks every line's check number, and prints
+  one timeline of the table's lines (both directions), the chip's own
+  settings and the i1Pro's requests. Every meaning carries a word for how
+  sure we are (certain, likely or guess); a command not seen before is
+  flagged as new. With the probe report (named after `--analyze`, or lying
+  next to the recording) it marks the steps and says per step whether table
+  commands were recorded. The table's serial number is hidden unless
+  `--no-redact` is given, and so is the USB serial number in the general
+  timeline. On the two real recordings it finds exactly the same 1,125 and
+  1,350 lines as our separate decoder, all with a correct check number.
+- **New i1iO steps**, exactly what the first recordings lack, the most useful
+  first: (1) a few patches, watching the head, marking `d` (down) and `u`
+  (up) as it happens, in spot mode if i1Profiler offers it; (2) a small
+  chart measured to the end, letting the arm park by itself; (3) cancel in
+  the middle of a row. Then a few questions with no recording running: the
+  chart file, the paper size, a ruler measurement, the i1Profiler settings,
+  and whether i1Profiler can lower or lift the head on its own. Each step:
+  what to get ready, Enter to start and stop, one line on what the arm did,
+  skip or do it again; finished steps are kept, also after Ctrl-C. Left out
+  on purpose: provoking an error by holding the arm back or removing the
+  instrument (we cannot know that it is harmless), and switching the table
+  off with the arm out (the first recordings already show that start-up).
+- **On a Mac, each step is checked while SIP is still off:** right after a
+  step the tool reads the recording so far and says "this step recorded 14
+  commands to the table: good" or "no table command was recorded in this
+  step: please repeat it". At the end a table shows every step, whether it
+  was recorded and how many table commands it holds, and says plainly what
+  is still missing.
+- **"Have you got everything ready?"** A short list (charts, ruler, settings,
+  time) before the recording starts, so everything fits into one round with
+  SIP switched off.
+- **`--rehearse`** walks through the i1iO steps without recording or saving
+  anything, so a tester can see them first, while SIP is still on.
+- **Switch SIP back on:** a mac session now ends with a box holding the
+  exact steps for this Mac (Apple Silicon or Intel) and how to check it
+  (`csrutil status`). The earlier reminders stay.
+- **Windows on ARM, worded as far as the evidence goes:** for the i1Pro 3 the
+  tool no longer says the vendor program cannot talk to it (its firmware
+  asks Windows for Microsoft's own USB driver, and nobody knows yet whether
+  i1Profiler works with it on ARM). For the others it says we know of no
+  X-Rite driver on ARM. The advice is the same: no recorder (USBPcap) exists
+  for ARM, so please use a PC with an Intel or AMD processor.
+- **Driver help:** no longer names X-Rite's Device Manager entry for the
+  i1Pro 3 as "X-Rite i1Pro3", which was never verified; it says how to
+  recognise X-Rite's entry and what to do if unsure.
+- An independent review before the release; see the release notes.
+
 ## v1.5.3
 
 Help with the step where both users so far got stuck, and one plain

@@ -17,6 +17,17 @@ the handheld-instrument session is described [below](#the-handheld-instrument-se
 
 It takes about **two minutes**, and you do **not** need to be technical.
 
+> **Version 1.5.4 is aimed at the next i1iO recording.** The first real
+> recording of an i1iO 2 (with an i1Pro 2, on a Mac) now exists. It showed
+> that i1Profiler talks to the table in short lines of text through a common
+> USB-to-serial chip, and every one of its 2,475 lines passed the check
+> number we worked out, so we very likely read the format correctly. Much is
+> still unknown (what lowers and lifts the head, how a job is stopped, how
+> the table reports a problem), and nothing is promised: ChromIQ cannot drive
+> the table. 1.5.4 asks for exactly what is missing, in
+> [three short steps](#the-i1io-steps-in-154). There is still no recording
+> from a handheld instrument.
+
 > **Important for owners of an i1Pro 2 or an i1iO 2:** i1Profiler **3.8.7**
 > (July 2026) removed support for the i1Pro 2 and the i1iO 2. Please stay on
 > **i1Profiler 3.8.6 or older**, and do not let it update itself.
@@ -188,9 +199,12 @@ ways to make one (below).
 2. It switches on the `XHC` interfaces that were off (`sudo ifconfig XHC2 up`
    and so on) and starts the system's own `tcpdump` on every one of them,
    because which bus the table is on is only a guess.
-3. You do a few short steps in i1Profiler: replug the table, start i1Profiler,
-   press Measure once, cancel. About 3 minutes. A longer part (aligning the
-   arm, scanning two rows) is offered afterwards, if you have the time.
+3. You do three short steps in i1Profiler, about 15 minutes (see
+   [the i1iO steps](#the-i1io-steps-in-154) below). The recording runs the
+   whole time; after each step the tool checks the recording so far and says
+   whether the table's commands are in it ("this step recorded 14 commands to
+   the table: good", or "please repeat it"), so nothing has to be done again
+   later.
 4. It stops recording, **switches the interfaces off again** (also after
    Ctrl-C), and checks each recording. If every data byte in it is zero, it
    says so plainly: that has been seen on an Apple Silicon Mac before.
@@ -198,7 +212,39 @@ ways to make one (below).
    one to send. The full recordings can hold everything else on those USB
    buses, possibly including what you typed on a USB keyboard, so the tool
    offers to delete them.
-6. It reminds you to switch SIP back on.
+6. It asks a few questions about the chart, shows a table of the steps
+   (recorded, table commands seen, anything missing) while SIP is still off,
+   and ends with a box with the exact steps to switch SIP back on and how to
+   check it (`csrutil status`).
+
+### The i1iO steps in 1.5.4
+
+The first recordings already hold the connection, the calibration, the hand
+alignment of the corners and the row scans. These steps ask for what is
+missing, the most useful first, so stopping after one or two still helps:
+
+1. **A few patches, watching the head.** In spot mode if i1Profiler offers it.
+   While it measures you type `d` when the head goes down onto the paper and
+   `u` when it lifts. This is how we can learn which command lowers the head.
+2. **A small chart, measured to the end** (one or two rows, 10 to 20 patches,
+   placed somewhere else on the table), letting the arm park by itself.
+3. **Cancel in the middle of a row**, to see how a running job is stopped.
+
+Then a few questions with no recording running: the chart file, the paper
+size, a ruler measurement of the first row (this proves the unit of length),
+the i1Profiler settings, and whether i1Profiler can lower or lift the head on
+its own. Each step can be skipped or done again.
+
+Left out on purpose: provoking an error by holding the arm back or removing
+the instrument (we cannot know that it is harmless for the table), and
+switching the table off with the arm out (the first recordings already show
+that start-up).
+
+**See every step first, without recording:** run the tool with `--rehearse`
+(on a Mac: `./chromiq-io-probe-macos --rehearse` in the Terminal, in the
+folder where the file is). It records nothing and saves nothing, so you can
+do it while SIP is still on. Before the recording starts, the tool also shows
+a short list of what to have ready.
 
 How well this works on Apple Silicon is only partly known: one public report
 from 2026 says it works (with `sudo ifconfig XHC2 up` and recording on `XHC2`),
@@ -216,8 +262,10 @@ Which Windows works: the X-Rite driver for the i1Pro 2 and the i1iO 2 needs
 with i1Profiler 3.8.6**. X-Rite says the driver is blocked on Windows 11
 version 25H2 and newer ([X-Rite's note](https://www.xrite.com/service-support/i1pro-2-eol-notes-compatibility-issues-with-windows-11-macos));
 the same note says the i1Pro 3 / iO3 works with the latest Windows 11 releases.
-**A Windows virtual machine on an Apple Silicon Mac does not work**: there is
-no i1Pro or i1iO driver for Windows on ARM.
+**A Windows virtual machine on an Apple Silicon Mac does not work** for a
+recording: it runs Windows on ARM, where the recorder (USBPcap) does not
+exist, and we know of no X-Rite driver there for the i1Pro 2, the i1iO or the
+ColorMunki.
 
 **2. Switch SIP off on the Mac, only for the recording.** The honest risk:
 while SIP is off, macOS no longer protects its own system files, so harmful
@@ -360,15 +408,19 @@ showed, and (for instruments with lights) one line about what the lights did.
   for you and for any antivirus analyst: an unsigned program that downloads
   and starts an installer can look suspicious, so the code doing it is plain
   and short (`offer_usbpcap_install` and `offer_relaunch_as_admin` in
-  `chromiq_io_probe.py`). It is not offered on Windows on ARM, where there
-  is no instrument driver anyway.
+  `chromiq_io_probe.py`). It is not offered on Windows on ARM, where USBPcap
+  does not exist.
 - **Version facts, checked and shown up front:** i1Profiler 3.8.7 removed
   support for the i1Pro 2, so 3.8.6 or older is needed for it. X-Rite says the
   i1Pro 2 / iO2 driver is blocked on Windows 11 version 25H2 and newer; the
   tool shows that to i1Pro 2 (and first i1Pro) users only, and lets them carry
   on if their program still finds the instrument. It does not concern the
-  i1Pro 3. There is no driver for Windows on ARM (including a Windows
-  virtual machine on an Apple Silicon Mac).
+  i1Pro 3. On Windows on ARM (including a Windows virtual machine on an
+  Apple Silicon Mac) no recording is possible, because USBPcap does not
+  exist there. We know of no X-Rite driver there for the i1Pro 2, the i1iO
+  or the ColorMunki. The i1Pro 3 asks Windows for Microsoft's own USB driver,
+  so it may be recognised there; whether i1Profiler can measure with it on
+  ARM is not known.
 - **Mac:** only with System Integrity Protection switched off, exactly as for
   the i1iO (see above). The measuring programs run on Windows and on the Mac,
   so the Windows route works with the same instrument.
@@ -467,6 +519,8 @@ Useful options:
 - `--capture-setup` (macOS): say whether this Mac can record USB traffic, and
   how, then exit. Changes nothing.
 - `--i1pro` (or `--instrument`): go straight to the handheld-instrument session.
+- `--rehearse`: walk through the i1iO recording steps without recording or
+  saving anything (1.5.4).
 - `--pause` / `--no-pause`: always, or never, end with "Press Enter to close
   this window." Without either, the tool waits only when it has a console
   window of its own (a double-click on Windows); a run whose input or output
@@ -479,6 +533,15 @@ Useful options:
   with its arguments, lists unknown commands in full, counts every endpoint
   that carries data, compares the steps (sizes, counts, readings per second,
   fast against slow, the no-ruler control) and decodes the light commands.
+  For the **i1iO table** (1.5.4) it removes the USB-to-serial chip's status
+  bytes, puts the table's lines back together, checks every line's check
+  number, and prints one timeline of the table's lines (both directions) and
+  the i1Pro's requests, each with what it most likely means and how sure we
+  are (certain, likely or guess). Give it the probe report too
+  (`--analyze io-capture-....pcap chromiq-io-probe-....txt`, or leave the
+  report next to the recording) and it marks your steps and says per step
+  whether the table's commands were recorded. The table's serial number is
+  hidden unless you add `--no-redact`.
   With no path it finds the newest session or recording next to the tool.
   Reads only; sends nothing to the device.
 
