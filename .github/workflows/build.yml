@@ -231,10 +231,13 @@ jobs:
               SIP back on (and `csrutil status` to check) comes last.
             - **`--rehearse`** shows every step without recording anything.
               On a Mac: `./chromiq-io-probe-macos --rehearse` in the Terminal.
-            - **Fixed on Windows: the recording stopped at once** whenever
-              USBPcap was installed (found in a real report): the tool made
-              the recording file before USBPcap could, and USBPcap refuses to
-              write into a file that already exists. If the start fails
+            - **Fixed on Windows: 1.5.3 could not record on Windows at all,
+              because of our bug.** The tool made the recording file before
+              USBPcap could, and USBPcap refuses to write into a file that
+              already exists, so the recording stopped at once every time
+              (found thanks to a real report). 1.5.4 fixes this according to
+              the recorder's own source code and our tests, but a real
+              Windows recording has not confirmed it yet. If the start fails
               anyway, the report now holds everything needed to see why, and
               the tool offers to record by hand with Wireshark instead.
             - **One file to send:** at the end the tool makes

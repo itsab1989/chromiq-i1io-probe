@@ -17,6 +17,8 @@ drive the table. There is still no recording from a handheld instrument.
   before starting it, so every recording on a Windows PC with USBPcap
   ended this way, and the simpler second try too. The file is now left for
   USBPcap to create. A fake USBPcapCMD in the tests now behaves the same way.
+  This fix follows from the recorder's source code and our tests; a real
+  Windows recording has not confirmed it yet.
 - **When the recorder does not start, the report says why:** the exact
   command, the exit code, everything the program printed, whether the
   retry ran, whether a file was created and how big, which USBPcap root
