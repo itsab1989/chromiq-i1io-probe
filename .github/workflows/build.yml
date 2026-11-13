@@ -163,7 +163,7 @@ jobs:
           grep -q "instrument family: i1iSis chart reader" smoke/isis.txt
           grep -q "So it LIKELY talks through a USB-to-serial chip" smoke/isis.txt
           grep -q "INVENTED-SCAN-PAGE" smoke/isis.txt
-          if grep -q "DISPLAYSERIAL99\|0765:5020\|SERIAL-INVENTED" smoke/isis.txt; then
+          if grep -qE "DISPLAYSERIAL99|0765:5020|SERIAL-INVENTED" smoke/isis.txt; then
             echo "FAIL: another device or the device's answer is in the analysis"; exit 1
           fi
 
@@ -268,6 +268,10 @@ jobs:
               monitor calibrator as the instrument; a restart as
               administrator on Windows forgot `--isis` and `--steps`; some
               texts still spoke to i1Pro owners in an i1iSis session.
+              A second review found that the first fixes made an i1iO table
+              recording keep only an i1iSis on the same bus: now every
+              session except the i1iSis keeps exactly what 1.5.5 kept,
+              checked against the tagged 1.5.5 itself.
 
             ### What's new in 1.5.5
 

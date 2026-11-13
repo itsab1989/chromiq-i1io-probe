@@ -7365,6 +7365,19 @@ def parse_step_numbers(text: str, total: int) -> list:
     return sorted(out)
 
 
+# 1.6, second review: usbmon records only the traffic, so the USB description
+# that tells the i1iSis from other devices is in a recording only when the
+# device is plugged in while it records. Without it an i1iSis step keeps
+# nothing (instrument_selection). Said BEFORE the steps.
+LINUX_ISIS_REPLUG_TEXT = """\
+  IMPORTANT ON LINUX: a Linux recording shows which device is the i1iSis
+  only when the i1iSis is plugged in while a step records. So in EVERY
+  step: press Enter here to start the step, then unplug the i1iSis's USB
+  cable and plug it back in (leave the i1iSis switched on), wait until the
+  virtual machine and i1Profiler have found it again, and then do the
+  step. Without that, the tool keeps nothing from the step and says so."""
+
+
 def instrument_session_step(pids: list, direct: bool, only: list | None = None,
                             prefer: str | None = None) -> dict:
     """The i1Pro / ColorMunki recording, from start to end, any platform.
@@ -7413,6 +7426,8 @@ def instrument_session_step(pids: list, direct: bool, only: list | None = None,
                 return outcome
             only = parse_step_numbers(answer, len(steps))
     only = parse_step_numbers(",".join(str(n) for n in only or []), len(steps))
+    # 1.6 review: the relaunch as administrator repeats the parsed numbers.
+    _RUN["steps"] = ",".join(str(n) for n in only) if only else None
     shown = [(i, st) for i, st in enumerate(steps, 1) if not only or i in only]
     if only:
         print(f"\n  WHAT YOU WILL DO (only step{'s' if len(only) > 1 else ''} "
@@ -7534,6 +7549,8 @@ def instrument_session_step(pids: list, direct: bool, only: list | None = None,
             print(f"  usbmon interfaces: {', '.join(ifaces)}. The tool records on all of them.")
             print("  (The vendor programs do not run on Linux itself; this works when they")
             print("  run in a virtual machine that the instrument is passed through to.)")
+            if profile == "isis":
+                print(LINUX_ISIS_REPLUG_TEXT)
             recorder = TcpdumpRecorder(ifaces, "", mac=False)
         else:
             print("  No usbmon interfaces. Load them first with   sudo modprobe usbmon")
@@ -7747,6 +7764,9 @@ def main(argv: list | None = None) -> int:
     parser.add_argument("--pause", action="store_true",
                         help='always end with "Press Enter to close this window."')
     parser.add_argument("--selftest", default="", help=argparse.SUPPRESS)
+    # 1.6: the instrument chosen before a restart as administrator.
+    parser.add_argument("--profile", default=None, choices=sorted(PROFILE_NAMES),
+                        help=argparse.SUPPRESS)
     parser.add_argument("--relaunched", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-pause", action="store_true",
                         help="never wait for Enter at the end (the launchers use this; "
@@ -7758,7 +7778,7 @@ def main(argv: list | None = None) -> int:
     _INPUT_ENDED.clear()
     _RUN.clear()
     _RUN.update(output=args.output, no_redact=args.no_redact, relaunched=args.relaunched,
-                no_pause=args.no_pause, isis=args.isis, steps=args.steps)
+                no_pause=args.no_pause, isis=args.isis, steps=None)
     SELFTEST.clear()
     SELFTEST.update(x.strip() for x in args.selftest.split(",") if x.strip())
     if SELFTEST:
@@ -7894,7 +7914,7 @@ def main(argv: list | None = None) -> int:
                       "--steps 7,9")
                 return 2
         outcome = instrument_session_step(ids, direct=True, only=only,
-                                          prefer="isis" if args.isis else None)
+                                          prefer=args.profile or ("isis" if args.isis else None))
         return finish_report(args, system, instrument=True, outcome=outcome)
 
     print("-" * 68)
@@ -8031,6 +8051,7 @@ def what_to_do_question(sug: dict, known: bool, here: list, drivers: dict) -> li
 def choose_what_to_do(args, summary: str) -> tuple:
     """(choice, summary). The command line options decide without asking."""
     if args.instrument or getattr(args, "isis", False) is True \
+            or isinstance(getattr(args, "profile", None), str) \
             or isinstance(getattr(args, "steps", None), str):
         return 2, summary
     if args.io or args.annotate or args.skip_annotate:
@@ -8561,16 +8582,24 @@ def relaunch_command() -> tuple:
     the handheld session."""
     extra = " --relaunched"
     # 1.6 review: the copy started as administrator keeps the session's
-    # instrument and its step list.
-    if _RUN.get("steps"):
-        extra += f' --steps "{_RUN["steps"]}"'
+    # instrument (the one CHOSEN at the question; --isis only counts before
+    # it) and its step numbers (parsed: digits and commas only).
+    steps = ",".join(str(n) for n in parse_step_numbers(str(_RUN.get("steps") or ""), 99))
+    if steps:
+        extra += f" --steps {steps}"
     if _RUN.get("output"):
         extra += f' -o "{_RUN["output"]}"'
     if _RUN.get("no_redact"):
         extra += " --no-redact"
     if SELFTEST:
         extra += f" --selftest {','.join(sorted(SELFTEST))}"
-    session = "--isis" if _RUN.get("profile") == "isis" or _RUN.get("isis") else "--i1pro"
+    chosen = _RUN.get("profile")
+    if chosen == "isis" or (chosen is None and _RUN.get("isis")):
+        session = "--isis"
+    elif chosen in PROFILE_NAMES:
+        session = f"--i1pro --profile {chosen}"
+    else:
+        session = "--i1pro"
     if getattr(sys, "frozen", False):
         return sys.executable, session + extra, os.getcwd()
     script = os.path.abspath(__file__)

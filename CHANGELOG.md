@@ -78,6 +78,27 @@ An independent review before the release found, and this release fixes:
 - A test of the Enter-key fix could fail at random (it wrote into a
   terminal that had already closed); it no longer does (30 of 30 runs).
 
+A second review found, and this release fixes:
+
+- **The i1iO table and the handheld sessions keep exactly what 1.5.5
+  kept**, also with an i1iSis on the same bus (the first fixes had made a
+  table recording keep only the i1iSis). Every session now names its type,
+  and only the i1iSis session uses the i1iSis rule. A test compares twelve
+  invented recordings, for every session type and for `--analyze`, with
+  what the tagged 1.5.5 itself keeps.
+- `--analyze` reads a plain recording as an i1iSis recording only when the
+  only X-Rite device it knows in it is an i1iSis.
+- An i1iSis step where the i1iSis has no USB description says NOTHING KEPT
+  with the unplug-and-plug-back hint, also when another X-Rite device is
+  described.
+- Linux: works only by recording a virtual machine that runs i1Profiler;
+  the hint to plug the i1iSis in again in every step now comes before the
+  steps.
+- A restart as administrator passes the instrument chosen at the question
+  (not the `--isis` flag) and the parsed step numbers.
+- The read-only test watches more ways (see above), and the texts say
+  exactly what it watches.
+
 ## v1.5.5
 
 Fixes from the first real Windows recording session. Version 1.5.4 made a

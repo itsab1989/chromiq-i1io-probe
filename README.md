@@ -446,7 +446,10 @@ showed, and (for instruments with lights) one line about what the lights did.
   the i1iO (see above). The measuring programs run on Windows and on the Mac,
   so the Windows route works with the same instrument.
 - **Linux:** `usbmon` and `tcpdump`; the vendor programs themselves do not run
-  on Linux.
+  on Linux, so a recording works only when they run in a virtual machine that
+  the instrument is passed through to. A Linux recording does not carry the
+  instrument's USB description unless it is plugged in while recording; the
+  analysis then recognises an i1Pro or ColorMunki by its own commands.
 
 ### What is collected, and what happens to it
 
@@ -497,10 +500,19 @@ question, and the answer may be no.
 The tool offers the session when it sees an i1iSis plugged in (choice 2 at the
 question "What would you like to do?"). You can also start it directly with
 `--isis`. It works exactly like the handheld session above: the same recorders
-and checks (Windows with USBPcap as the main route, a Mac only with System
-Integrity Protection switched off, Linux with usbmon), one small file per step,
-skip, repeat or stop at any time, `--steps` to repeat only some steps, and ONE
-`SEND-THIS-<date>.zip` at the end.
+and checks, one small file per step, skip, repeat or stop at any time,
+`--steps` to repeat only some steps, and ONE `SEND-THIS-<date>.zip` at the
+end. Windows with USBPcap is the main route; a Mac works only with System
+Integrity Protection switched off.
+
+**Linux** works only by recording the USB traffic of a virtual machine that
+runs i1Profiler and has the i1iSis passed through to it (i1Profiler does not
+run on Linux itself). And a Linux recording shows which device is the i1iSis
+only when the i1iSis is plugged in while a step records, so the tool asks,
+before the steps: in every step, start the step, then unplug the i1iSis's USB
+cable and plug it back in (leave it switched on), wait until the virtual
+machine and i1Profiler have found it again, and then do the step. Without
+that, the tool keeps nothing from the step and says so.
 
 **Before you start:** switch the i1iSis on FIRST, and then plug in its USB
 cable. X-Rite's own notes for i1Profiler 3.8.8 say that if the cable goes in
@@ -575,11 +587,12 @@ has a barcode, what the barcode holds, which may include the chart's name.
 **Only the i1iSis is kept.** When a step's recording shows the i1iSis
 (0971:2006), the copy that goes into the zip holds the i1iSis's traffic and
 nothing else: not the keyboard, not a monitor calibrator, no other device at
-all. Only when a step's recording shows **no** i1iSis does the copy keep an
-X-Rite device the tool does not know (in case an i1iSis model reports an ID
-nobody has seen yet), and the tool then says so right after the step. It never
-keeps an X-Rite instrument it knows to be another one. When the recording does
-not show which device is which (no USB description in it), the tool keeps
+all. (If two i1iSis are plugged in, both are kept: they share one ID.) Only
+when a step's recording shows **no** i1iSis does the copy keep an X-Rite device
+the tool does not know, in case an i1iSis model reports an ID nobody has seen
+yet, and the tool then says so right after the step. It never keeps an X-Rite
+instrument it knows to be another one. When the recording does not show which
+device is which (a device in it has no USB description), the tool keeps
 nothing and asks you to repeat the step.
 
 ### What the analysis shows

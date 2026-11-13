@@ -561,14 +561,49 @@ class ReviewTexts(unittest.TestCase):
         _prog, params, _cwd = probe.relaunch_command()
         self.assertIn(" --isis", params)
         self.assertNotIn("--i1pro", params)
-        self.assertIn('--steps "4,6"', params)
+        self.assertIn("--steps 4,6", params)
         probe._RUN.clear()
-        probe._RUN.update(isis=True)
+        probe._RUN.update(isis=True)                 # flag given, nothing chosen yet
         self.assertIn(" --isis", probe.relaunch_command()[1])
         probe._RUN.clear()
         params = probe.relaunch_command()[1]
         self.assertIn(" --i1pro", params)
         self.assertNotIn("--steps", params)
+
+    def test_relaunch_passes_the_chosen_profile_not_the_flag(self):
+        # Second review, minor 3: started with --isis, then chose the i1Pro 3.
+        probe._RUN.update(isis=True, profile="i1pro3")
+        params = probe.relaunch_command()[1]
+        self.assertIn("--i1pro --profile i1pro3", params)
+        self.assertNotIn("--isis", params)
+
+    def test_relaunch_steps_are_parsed_numbers(self):
+        # Second review nit: a quote in the raw text broke the command line.
+        probe._RUN.update(profile="i1pro2", steps='4" --no-redact "')
+        params = probe.relaunch_command()[1]
+        self.assertNotIn("--no-redact", params)
+        self.assertEqual(params.count('"'), 2)          # only the script path
+        probe._RUN.update(steps=" 6; 4, 4 ")
+        self.assertIn("--steps 4,6", probe.relaunch_command()[1])
+
+    def test_the_profile_option_is_hidden_and_checked(self):
+        args = probe.argparse.Namespace
+        with mock.patch.object(probe, "instrument_session_step") as step, \
+                mock.patch.object(probe, "quick_summary", lambda: "NO X-RITE DEVICES SEEN."), \
+                mock.patch.object(probe, "collect_macos", lambda: None), \
+                mock.patch.object(probe, "collect_windows", lambda: None), \
+                mock.patch.object(probe, "collect_linux", lambda: None), \
+                mock.patch.object(probe, "collect_i1profiler_charts", lambda: None), \
+                mock.patch.object(probe, "finish_report", lambda *a, **k: 0), \
+                redirect_stdout(io.StringIO()):
+            step.return_value = {}
+            probe.main(["--profile", "munki", "--no-pause"])
+        self.assertEqual(step.call_args.kwargs["prefer"], "munki")
+        self.assertTrue(args)
+
+    def test_linux_replug_hint_before_the_steps(self):
+        text = flat(probe.LINUX_ISIS_REPLUG_TEXT)
+        self.assertIn("in EVERY step: press Enter here to start the step, then unplug", text)
 
     def test_mac_box_speaks_to_the_isis_owner(self):
         r = {"reasons": ["SIP is switched on."], "cpu": {"apple_silicon": True}}
