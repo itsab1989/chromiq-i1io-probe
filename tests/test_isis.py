@@ -517,39 +517,194 @@ class Texts(unittest.TestCase):
                 self.assertLessEqual(len(line), 76, line)
 
 
-class ReadOnlyPromise(_IsisSessionBase):
-    """The tool never opens a device, and writes only into its own folders."""
+# ---- the read-only promise -------------------------------------------------
+#
+# Every program the tool may start, taken from its source (run([...]) and the
+# recorders). test_the_allowlist_matches_the_source keeps this list honest.
+ALLOWED_PROGRAMS = {"usbpcapcmd", "tcpdump", "sudo", "ifconfig", "sysctl", "csrutil",
+                    "system_profiler", "ioreg", "find", "plutil", "lsusb", "bash",
+                    "powershell", "pwsh", "sc"}
+SUDO_MAY_RUN = {"true", "tcpdump", "ifconfig", "pkill"}
+BASH_ONLY = "dmesg 2>/dev/null | grep -iE 'usb|ftdi' | tail -60"
 
-    def test_a_whole_isis_session_opens_no_device(self):
-        opened = []
-        real_open, real_os_open = builtins.open, os.open
 
-        def watch_open(file, mode="r", *a, **k):
-            opened.append((str(file), mode))
+def _program(arg0):
+    name = os.path.basename(str(arg0)).lower()
+    return name[:-4] if name.endswith(".exe") else name
+
+
+def _called_from(filename):
+    frame = sys._getframe(1)
+    while frame is not None:
+        if os.path.basename(frame.f_code.co_filename) == filename:
+            return True
+        frame = frame.f_back
+    return False
+
+
+class DeviceWatch:
+    """Watches, and blocks, everything that could reach a device: open() in
+    all its forms (builtins.open, io.open, os.open, so pathlib too) and every
+    program started through subprocess. A violation is recorded and refused
+    with an OSError, so a broken tool cannot touch anything during the test."""
+
+    def __init__(self, base, fake_recorder):
+        self.base = os.path.realpath(base)
+        self.fake = os.path.realpath(fake_recorder)
+        self.violations = []
+        self.opened = 0
+        self.started = []
+
+    def _check_path(self, path, writing, from_subprocess=False):
+        if isinstance(path, int):
+            return
+        text = os.fspath(path)
+        if isinstance(text, bytes):
+            text = text.decode("utf-8", "replace")
+        real = os.path.realpath(text)
+        self.opened += 1
+        device = (real.startswith("/dev/") or text.startswith("/dev/")
+                  or text.startswith("\\\\.\\") or text.startswith("//./"))
+        if device:
+            # subprocess itself opens /dev/null for a helper's unused input.
+            if from_subprocess and text == os.devnull:
+                return
+            self.violations.append(f"opened a device: {text}")
+            raise PermissionError(f"blocked by the test: {text}")
+        if writing and not real.startswith(self.base):
+            self.violations.append(f"wrote outside its folders: {text}")
+            raise PermissionError(f"blocked by the test: {text}")
+
+    def _check_program(self, args):
+        argv = [args] if isinstance(args, (str, bytes)) else list(args)
+        self.started.append(argv)
+        prog = _program(argv[0])
+        ok = prog in ALLOWED_PROGRAMS
+        if prog.startswith("python") and len(argv) > 1 and \
+                os.path.realpath(str(argv[1])) == self.fake:
+            ok = True                                    # the tests' fake USBPcapCMD
+        if prog in ("uname", "file") and _called_from("platform.py"):
+            ok = True          # Python's own platform module asks (Python 3.9 does)
+        if prog == "bash":
+            ok = argv[1:] == ["-c", BASH_ONLY]
+        if prog == "sudo":
+            rest = [a for a in argv[1:] if not str(a).startswith("-")]
+            ok = argv[1:] == ["-v"] or (bool(rest) and _program(rest[0]) in SUDO_MAY_RUN)
+        if not ok:
+            self.violations.append(f"started a program not on the list: {argv}")
+            raise PermissionError(f"blocked by the test: {argv}")
+
+    def __enter__(self):
+        import io as io_mod
+        import subprocess
+        watch = self
+        real_open, real_io_open, real_os_open = builtins.open, io_mod.open, os.open
+        real_popen = subprocess.Popen
+
+        def w_open(file, mode="r", *a, **k):
+            watch._check_path(file, any(c in mode for c in "wax+"))
             return real_open(file, mode, *a, **k)
 
-        def watch_os_open(path, flags, *a, **k):
-            opened.append((str(path), "w" if flags & (os.O_WRONLY | os.O_RDWR) else "r"))
+        def w_io_open(file, mode="r", *a, **k):
+            watch._check_path(file, any(c in mode for c in "wax+"))
+            return real_io_open(file, mode, *a, **k)
+
+        def w_os_open(path, flags, *a, **k):
+            caller = sys._getframe(1).f_code.co_filename
+            watch._check_path(path, bool(flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT)),
+                              from_subprocess=caller.endswith("subprocess.py"))
             return real_os_open(path, flags, *a, **k)
 
+        class WatchedPopen(real_popen):
+            def __init__(self, args, *a, **k):
+                watch._check_program(args)
+                super().__init__(args, *a, **k)
+
+        self._patches = [mock.patch.object(builtins, "open", w_open),
+                         mock.patch.object(io_mod, "open", w_io_open),
+                         mock.patch.object(os, "open", w_os_open),
+                         mock.patch.object(subprocess, "Popen", WatchedPopen)]
+        for p in self._patches:
+            p.start()
+        return self
+
+    def __exit__(self, *exc):
+        for p in reversed(self._patches):
+            p.stop()
+        return False
+
+
+# The review's mutations (review/mut/mutate.py), each a way a broken tool
+# could reach a device. Every one must be caught.
+MUTATIONS = {
+    "builtin_open": 'open("/dev/zero", "wb").close()',
+    "pathlib": '__import__("pathlib").Path("/dev/zero").write_bytes(b"x")',
+    "io_open": '__import__("io").open("/dev/zero", "wb").close()',
+    "io_open_joined": '__import__("io").open(os.path.join("/dev", "zero"), "wb").close()',
+    "windows_device": 'open(r"\\\\.\\COM3" if False else os.path.join("/dev", "zero"), "wb").close()',
+    "subprocess": '__import__("subprocess").run(["sh", "-c", ": > /dev/zero"])',
+    "devnull_write": 'open(os.devnull, "wb").write(b"x")',
+    "os_open": 'os.close(os.open("/dev/zero", os.O_WRONLY))',
+    "pathlib_text_outside": '__import__("pathlib").Path(os.path.expanduser("~")).joinpath('
+                            '"chromiq-probe-test-must-not-exist.txt").write_text("x")',
+}
+MUTATION_ANCHOR = '    os.makedirs(folder, exist_ok=True)\n    _END["session_folder"] = folder\n'
+
+
+class ReadOnlyPromise(_IsisSessionBase):
+    """The tool never opens a device, starts only the programs it names, and
+    writes only into its own folders."""
+
+    def watched_session(self, mod, only=None):
         answers = []
         for key in ISIS_KEYS:
             answers += ["", "e", "ok"] + (["dual"] if key == "page-dual" else []) + ["", "", ""]
-        with mock.patch.object(builtins, "open", watch_open), \
-                mock.patch.object(os, "open", watch_os_open):
-            session, _screen = self.run_session(answers, profile="isis")
+        replies = iter(answers)
+        recorder = mod.UsbPcapRecorder(self.exe, ["\\\\.\\USBPcap1"], "")
+        with DeviceWatch(self.dir, self.exe) as watch, \
+                mock.patch.object(mod, "ask", lambda *_a, **_k: next(replies)), \
+                mock.patch.object(mod, "RECORDER_STARTUP_WAIT", 0.3), \
+                mock.patch.object(mod, "SHORT_STEP_SECONDS", 0.0), \
+                redirect_stdout(io.StringIO()):
+            try:
+                session = mod.run_instrument_session(recorder, self.folder, "isis",
+                                                     "i1Profiler", "3.8.8", only=only)
+            except Exception as exc:                      # noqa: BLE001
+                session = {"ended": f"raised {exc!r}"}
+        return session, watch
+
+    def test_a_whole_isis_session_opens_no_device(self):
+        session, watch = self.watched_session(probe)
+        self.assertEqual(watch.violations, [])
         self.assertEqual(session["ended"], "all steps done")
-        self.assertTrue(opened)
-        base = os.path.realpath(self.dir)
-        for path, mode in opened:
-            # /dev/null is where a helper program's unused input comes from.
-            if path == os.devnull:
-                continue
-            self.assertFalse(path.startswith("/dev/") or path.startswith("\\\\.\\"),
-                             f"opened a device: {path}")
-            if any(c in mode for c in "wax+"):
-                real = os.path.realpath(path)
-                self.assertTrue(real.startswith(base), f"wrote outside its folders: {path}")
+        self.assertGreater(watch.opened, 0)
+        # The (fake) recorder was really started, through the watched path.
+        self.assertTrue(any(str(self.exe) in [str(x) for x in argv] for argv in watch.started))
+
+    def test_every_mutation_is_caught(self):
+        import importlib.util
+        with open(os.path.join(ROOT, "chromiq_io_probe.py"), encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertEqual(src.count(MUTATION_ANCHOR), 1)
+        for name, line in MUTATIONS.items():
+            with self.subTest(mutation=name):
+                path = os.path.join(self.dir, f"mutant_{name}.py")
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(src.replace(MUTATION_ANCHOR, MUTATION_ANCHOR + "    " + line + "\n"))
+                spec = importlib.util.spec_from_file_location(f"mutant_{name}", path)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                _session, watch = self.watched_session(mod, only=[1])
+                self.assertTrue(watch.violations, f"mutation {name} was not caught")
+        self.assertFalse(os.path.exists(os.path.join(os.path.expanduser("~"),
+                                                     "chromiq-probe-test-must-not-exist.txt")))
+
+    def test_the_allowlist_matches_the_source(self):
+        with open(os.path.join(ROOT, "chromiq_io_probe.py"), encoding="utf-8") as fh:
+            src = fh.read()
+        literal = set(re.findall(r"(?:run|run_cached|_run|call|Popen)\(\[\s*\"([\w.-]+)\"", src))
+        self.assertTrue(literal)
+        self.assertEqual(literal - ALLOWED_PROGRAMS, set())
 
     def test_the_source_has_no_way_to_talk_to_a_device(self):
         with open(os.path.join(ROOT, "chromiq_io_probe.py"), encoding="utf-8") as fh:
