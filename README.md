@@ -9,11 +9,13 @@
 A small, **read-only** tool that collects information about **X-Rite
 instruments** and the computer they are connected to, and can record what the
 vendor's own program says to them: the **i1iO** scanning table, the **i1Pro
-family** (original i1Pro, i1Pro 2, i1Pro 3 and 3 Plus) and the **ColorMunki
-Photo / Design** and **i1Studio**. It exists to help
+family** (original i1Pro, i1Pro 2, i1Pro 3 and 3 Plus), the **ColorMunki
+Photo / Design** and **i1Studio**, and since 1.6 the **i1iSis** chart readers
+(i1iSis, i1iSis XL, i1iSis 2, i1iSis 2 XL). It exists to help
 [ChromIQ](https://github.com/itsab1989/ChromIQ) understand these instruments
 better. For the i1iO see [ChromIQ issue #129](https://github.com/itsab1989/ChromIQ/issues/129);
-the handheld-instrument session is described [below](#the-handheld-instrument-session-new-in-15).
+the handheld-instrument session is described [below](#the-handheld-instrument-session-new-in-15),
+the i1iSis session [after it](#the-i1isis-session-new-in-16).
 
 It takes about **two minutes**, and you do **not** need to be technical.
 
@@ -479,6 +481,116 @@ commanded, the measurement timing and sizes. The analyser decodes the commands
 that ArgyllCMS documents for each instrument family (its source is GPL; this
 tool is MIT, so no Argyll code is copied, only facts, with references to
 where Argyll documents them) and lists everything else raw.
+
+---
+
+## The i1iSis session (new in 1.6)
+
+The i1iSis reads a whole printed chart page by itself: you push the page in,
+it pulls it through and measures every patch. The free ArgyllCMS driver, which
+ChromIQ uses, cannot talk to the i1iSis at all, and nobody outside X-Rite has
+described how i1Profiler does it. If you own an i1iSis, i1iSis XL, i1iSis 2 or
+i1iSis 2 XL, a recording of a few pages helps us learn the basics. As always,
+**nothing is promised**: whether ChromIQ can ever use an i1iSis is a separate
+question, and the answer may be no.
+
+The tool offers the session when it sees an i1iSis plugged in (choice 2 at the
+question "What would you like to do?"). You can also start it directly with
+`--isis`. It works exactly like the handheld session above: the same recorders
+and checks (Windows with USBPcap as the main route, a Mac only with System
+Integrity Protection switched off, Linux with usbmon), one small file per step,
+skip, repeat or stop at any time, `--steps` to repeat only some steps, and ONE
+`SEND-THIS-<date>.zip` at the end.
+
+**Before you start:** switch the i1iSis on FIRST, and then plug in its USB
+cable. X-Rite's own notes for i1Profiler 3.8.8 say that if the cable goes in
+first and the power comes on afterwards, i1Profiler does not see the i1iSis.
+On Windows 11 version 25H2, use i1Profiler 3.8.8 or newer: X-Rite says that
+version fixed the i1iSis drivers there.
+
+### The chart page you need
+
+One printed chart page made for the i1iSis. **Its colours do not matter for
+this recording at all**, so an old chart page you still have is perfect, and
+so is a quick print on normal paper. This tool ships no chart. If you have
+none, make one in i1Profiler:
+
+- in the printer profiling part, go to the test chart page. With the i1iSis
+  plugged in, i1Profiler lays the chart out for it by itself (in Advanced mode
+  you can also choose the i1iSis by hand, in the device setup);
+- i1Profiler also comes with ready-made charts for the i1iSis; their names end
+  in "i1iSis" (for an i1iSis XL: "i1iSis XL");
+- if the chart has a barcode, i1Profiler asks you to save the chart before
+  printing it. That is normal: save it, then print;
+- a chart with only one page is easiest. Print page 1; that is all you need.
+
+For step 6 you also need one plain sheet of normal printer paper.
+
+### The steps
+
+About 15 minutes. In every step you first press Enter in the tool's window,
+then do the step in i1Profiler, then come back and type `e` and Enter.
+
+1. **Start i1Profiler, then leave it idle.** i1Profiler closed, the i1iSis on
+   and connected with no page in it. Start i1Profiler, wait until it has found
+   the i1iSis, then leave everything alone for about 10 seconds.
+2. **Get the i1iSis ready for a page, without feeding it.** On i1Profiler's
+   measuring page, with Single scan, click Measure (or Start Measurement) and
+   wait until the i1iSis is ready for the page (its light blinks green when it
+   waits for a chart), then about 10 seconds more.
+3. **Feed one page, single scan.** Feed page 1 as usual (quickly, about 5 cm,
+   along the left-hand guide; the i1iSis pulls it in by itself) and wait until
+   it has come out again and i1Profiler shows it as measured.
+4. **The same page again, dual scan** (M0 and M2, on the i1iSis 2 also M1), if
+   i1Profiler offers it; otherwise skip it.
+5. **The same page, fed a little crooked** (a few millimetres, never forced).
+   The i1iSis is made to correct small skew; this shows how. Skip it if you
+   would rather not.
+6. **A sheet without a chart**, fed like a chart page, so that it fails on
+   purpose; then do what i1Profiler asks. Skip it if you would rather not.
+
+After each step you type one line about what you did and what i1Profiler
+showed, one about the i1iSis's light, and one about **how the page moved**
+(in, out, back and forth, how many times, any sounds). These notes matter as
+much as the recording: nobody has seen this traffic before.
+
+What is deliberately not a step: paper jams (risk to the device), switching
+the i1iSis off and on during a recording, and the OBC workflow.
+
+### What is collected
+
+The same as for the handheld session (see above): the USB conversation, which
+includes the i1iSis's **serial number and calibration data**, your notes, and
+the tool's analysis. In addition, for the i1iSis: the **colour values it
+measured from your chart page** (your printer's and paper's colours; they say
+nothing about you) and, if the chart has a barcode, what the barcode holds,
+which may include the chart's name.
+
+**Only the i1iSis is kept.** The copy that goes into the zip holds the
+i1iSis's traffic and nothing else: not the keyboard, and since 1.6 also no
+other X-Rite instrument the tool knows, such as a monitor calibrator plugged
+in at the same time. (An X-Rite device the tool does not know at all is kept,
+in case an i1iSis model reports an ID nobody has seen yet.)
+
+### What the analysis shows
+
+There is no decoder for the i1iSis: its protocol is not known. `--analyze`
+(and `analysis.txt` in the zip) lists each step's traffic, puts the steps side
+by side (how long, how many bytes each way), says whether the i1iSis seems to
+talk through a USB-to-serial chip like the i1iO table does, and, if the
+program sends readable text, shows the first lines the **program** sent. The
+i1iSis's answers are never shown as text, because they can hold its serial
+number. It ends with a checklist: real traffic, a page measured in single
+scan, a dual-scan page, a page that failed on purpose, and your notes on how
+the page moved.
+
+**Where the facts come from:** the USB ID 0971:2006 from X-Rite's own i1iSis
+driver file (installed with i1Profiler 3.8.8) and ArgyllCMS's device list; the
+status light and how a page is fed from X-Rite's i1iSis quick start guide; the
+single and dual scan modes and the chart rules from i1Profiler's own help. The
+driver file lists one ID for the whole family, so the i1iSis 2 and the XL
+models most likely report the same ID; that is not yet confirmed by a real
+device.
 
 ---
 

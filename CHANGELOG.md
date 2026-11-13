@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.6.0
+
+The i1iSis chart readers (i1iSis, i1iSis XL, i1iSis 2, i1iSis 2 XL).
+
+- **Detection:** the USB ID 0971:2006 now has a name. It comes from X-Rite's
+  own i1iSis driver file (installed with i1Profiler 3.8.8) and from
+  ArgyllCMS's device list. The driver file lists one ID for the whole
+  family, so the newer and the XL models most likely share it.
+- **A guided i1iSis session** (offered when an i1iSis is plugged in, or with
+  `--isis`), in six steps: start i1Profiler and leave it idle; get the i1iSis
+  ready for a page without feeding it; feed one page in single scan; the same
+  page in dual scan; the same page a little crooked; a plain sheet that fails
+  on purpose. After each step one extra question: how did the page move? It
+  uses the same session as the handheld instruments, so every lesson of
+  1.5.5 holds (a step stops only with `e` and Enter, keys pressed while the
+  tool is busy are thrown away, an empty step is called EMPTY, `--steps`
+  repeats single steps).
+- **How to get a chart page**, from i1Profiler's own help: any printed
+  i1iSis chart page works, because the colours do not matter for the
+  recording. The tool ships no chart.
+- **Only the i1iSis is kept:** in an i1iSis session the copy to send also
+  drops any other X-Rite instrument the tool knows (for example a monitor
+  calibrator plugged in at the same time). The other sessions are unchanged.
+- **Analysis for the i1iSis:** the steps side by side, whether it talks
+  through a USB-to-serial chip like the i1iO table, the first readable lines
+  the program sent (never the device's answers, which can hold its serial
+  number), and a checklist.
+- **Windows facts:** switch the i1iSis on before plugging in its USB cable
+  (X-Rite's notes for i1Profiler 3.8.8); on Windows 11 25H2 i1Profiler
+  3.8.8 or newer is needed for the i1iSis (X-Rite says that version fixed
+  its drivers there). The i1Pro 2 warning is not shown to i1iSis owners.
+- **Tested promise:** a new test runs a whole simulated i1iSis session and
+  fails if the tool opens any device or writes anywhere outside its own
+  folders, and a source check fails if the tool ever gains a way to talk to
+  a USB device.
+
 ## v1.5.5
 
 Fixes from the first real Windows recording session. Version 1.5.4 made a

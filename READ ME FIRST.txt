@@ -3,6 +3,8 @@ ChromIQ X-Rite instrument probe
 
 For the i1iO table, and since version 1.5 also for handheld
 instruments: i1Pro, i1Pro 2, i1Pro 3, ColorMunki and i1Studio.
+Since version 1.6 also for the i1iSis chart readers (i1iSis,
+i1iSis XL, i1iSis 2, i1iSis 2 XL).
 
 Thank you for helping!  This takes about two minutes.
 
@@ -10,8 +12,9 @@ Thank you for helping!  This takes about two minutes.
 THE SHORT VERSION
 -----------------
 
-1. Plug in your instrument (the i1iO table, or a handheld i1Pro,
-   ColorMunki or i1Studio) and switch it on.
+1. Plug in your instrument (the i1iO table, a handheld i1Pro,
+   ColorMunki or i1Studio, or an i1iSis) and switch it on.
+   An i1iSis: switch it on FIRST, then plug in its USB cable.
 
 2. Double-click the file for your system:
 
@@ -21,7 +24,8 @@ THE SHORT VERSION
 
 3. Follow what it says on screen.  After a minute it shows what is
    plugged in and asks what you would like to do: record the i1iO
-   table, record a handheld instrument, or just make the report.
+   table, record a handheld instrument or an i1iSis, or just make
+   the report.
    Press Enter to take its suggestion.
 
 4. It saves a text file called  chromiq-io-probe-<date>.txt
