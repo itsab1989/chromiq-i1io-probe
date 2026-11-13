@@ -2982,6 +2982,10 @@ def summarize_captures(paths):
         name = _LINKTYPE_NAMES.get(linktype, f"linktype {linktype}")
         total = sum(len(d) for _, d in recs)
         out.append(f"     format: {name}   packets: {len(recs)}   bytes: {total:,}")
+        # 1.6.2: the timeline below shows only the instrument's own records
+        # (attribute_records); before, it showed the first answers of any
+        # device on the bus.
+        recs = kept_records(linktype, recs)[0]
         out.append("     data check: " + check["verdict"])
         any_zero = any_zero or check["code"] == "all-zero"
         if linktype != LINKTYPE_USB_DARWIN:
@@ -3545,14 +3549,18 @@ def _bot_drops(events, keys) -> tuple:
     return drop, seen
 
 
-def attribute_records(linktype: int, recs, profile: str | None = None) -> dict:
+def attribute_records(linktype: int, recs, profile: str | None = None,
+                      table_lines: bool = False) -> dict:
     """1.6.2: THE decision which records of a recording are the instrument's.
 
     Returns {"keep": [bool per record], "devices": {(bus, address) or
     (vid, pid): info} of the instrument, "how": as instrument_selection(),
     "left_out": {kind: transfers}, "undescribed": bool}. "left_out" counts
     only what was dropped at the instrument's own address (or with its IDs),
-    never the other devices' own traffic."""
+    never the other devices' own traffic. table_lines (the i1iO analysis
+    only): a device without a description that sends the table's command
+    lines (with correct checksums) counts as the table, as io_table_keys()
+    has done since 1.5.4."""
     n = len(recs)
     keep = [False] * n
     result = {"keep": keep, "devices": {}, "how": "", "left_out": {},
@@ -3583,7 +3591,13 @@ def attribute_records(linktype: int, recs, profile: str | None = None) -> dict:
         wanted_keys, how = instrument_selection(devices, profile)
         result["undescribed"] = False
     else:
-        dmap = device_map([{k: v for k, v in ev.items() if k != "_ri"} for ev in events])
+        plain_events = [{k: v for k, v in ev.items() if k != "_ri"} for ev in events]
+        dmap = device_map(plain_events)
+        if table_lines:
+            for key in io_table_keys(plain_events, dmap):
+                if not (dmap.get(key) or {}).get("vid"):
+                    dmap[key] = {"vid": None, "pid": None, "config": [], "guess_family": "io",
+                                 "how": "guessed: it receives the i1iO table's command lines"}
         windows = _owner_windows(events)
         rkeys = [f[0] if f else None for f in fields]
         result["undescribed"] = undescribed_present(rkeys, dmap)
@@ -3781,9 +3795,10 @@ def left_out_text(left: dict) -> str:
             + "; ".join(kinds) + ". Nothing of it is in any file the tool writes.")
 
 
-def kept_records(linktype: int, recs, profile: str | None = None) -> tuple:
+def kept_records(linktype: int, recs, profile: str | None = None,
+                 table_lines: bool = False) -> tuple:
     """(the instrument's records, attribute_records() result)."""
-    att = attribute_records(linktype, recs, profile)
+    att = attribute_records(linktype, recs, profile, table_lines)
     return [r for r, k in zip(recs, att["keep"]) if k], att
 
 
@@ -5638,6 +5653,13 @@ def io_capture(path: str) -> dict | None:
         return None
     if not recs:
         return None
+    # 1.6.2: only the records attribute_records() gives the table and the
+    # i1Pro on it (an i1iO session's own rule), never another device's that
+    # carried the same address.
+    t0 = recs[0][0]
+    recs = kept_records(linktype, recs, SESSION_TABLE, table_lines=True)[0]
+    if not recs:
+        return None
     events = capture_events(linktype, recs)
     devices = device_map(events)
     table = io_table_keys(events, devices)
@@ -5647,7 +5669,7 @@ def io_capture(path: str) -> dict | None:
     by_id = any((info.get("vid"), info.get("pid")) == (XRITE_VID, IO_TABLE_PID)
                 for key, info in devices.items() if key in table) or any(
         (ev.get("vid"), ev.get("pid")) == (XRITE_VID, IO_TABLE_PID) for ev in events)
-    return {"path": path, "t0": recs[0][0], "events": events, "table": table, "pro": pro,
+    return {"path": path, "t0": t0, "events": events, "table": table, "pro": pro,
             "lines": io_table_lines(events, table), "linktype": linktype, "by_id": by_id}
 
 
