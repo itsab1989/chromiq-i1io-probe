@@ -153,7 +153,10 @@ class DetectionTests(unittest.TestCase):
         self.assertIn("i1Pro 2", probe.pid_label(0x2000))
         # 1.3 called 0x2001 "i1Pro 2 / i1Pro 3 family" without evidence.
         self.assertIn("unknown", probe.pid_label(0x2001))
-        self.assertIn("unknown", probe.pid_label(0x2006))
+        # 1.6: 0x2006 is named now, from X-Rite's own i1iSis driver file.
+        self.assertIn("i1iSis", probe.pid_label(0x2006))
+        self.assertIn("X-Rite's driver file", probe.pid_label(0x2006))
+        self.assertIn("unknown", probe.pid_label(0x2099))
 
     def test_bus_guess_from_location_id(self):
         self.assertEqual(probe.bus_guess(0x02210000), "XHC2")
@@ -522,7 +525,7 @@ class TextRules(unittest.TestCase):
             self.assertEqual(count, 0, f"{name} has {count} em dash(es)")
 
     def test_version(self):
-        self.assertEqual(probe.PROBE_VERSION, "1.5.5")
+        self.assertEqual(probe.PROBE_VERSION, "1.6.0")
 
 
 @unittest.skipUnless(platform.system() == "Darwin", "macOS only")

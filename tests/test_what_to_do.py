@@ -94,8 +94,9 @@ class TheTexts(unittest.TestCase):
         text = flat(self.lines([I1PRO2], drivers={I1PRO2: "X-Rite's driver"}))
         self.assertIn("Plugged in now: i1Pro 2", text)
         self.assertIn("(X-Rite's driver)", text)
-        self.assertIn("2. record a handheld instrument <- suggested "
-                      "(the i1Pro family, the ColorMunki, the i1Studio)", text)
+        self.assertIn("2. record a handheld instrument or an i1iSis <- suggested "
+                      "(the i1Pro family, the ColorMunki, the i1Studio, the i1iSis "
+                      "chart readers)", text)
 
     def test_table_and_its_instrument(self):
         text = flat(self.lines([IO, I1PRO2]))
@@ -246,7 +247,7 @@ class TheWholeRun(unittest.TestCase):
     def test_choice_2_with_nothing_plugged_in_explains(self):
         _code, screen, _asked, session = self.run_main(["2"], [])
         session.assert_called_once()
-        self.assertIn("No handheld instrument is plugged in right now", screen)
+        self.assertIn("No handheld instrument and no i1iSis is plugged in right now", screen)
 
     def test_choice_1_asks_the_three_table_questions(self):
         _code, screen, asked, session = self.run_main(["1"], [IO])

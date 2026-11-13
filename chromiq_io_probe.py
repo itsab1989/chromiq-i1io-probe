@@ -2,7 +2,7 @@
 """
 chromiq_io_probe.py: the ChromIQ X-Rite instrument probe
 (the i1iO table, issue #129; since 1.5 also the i1Pro family, the ColorMunki
-and the i1Studio).
+and the i1Studio; since 1.6 the i1iSis chart readers).
 
 WHAT THIS DOES
     Collects information about an i1iO scanning table and the machine it is
@@ -41,6 +41,11 @@ USAGE
 
         python3 chromiq_io_probe.py --i1pro
 
+    The same for an i1iSis chart reader (i1iSis, i1iSis XL, i1iSis 2,
+    i1iSis 2 XL):
+
+        python3 chromiq_io_probe.py --isis
+
     Check recordings, or a session folder, before sending them:
 
         python3 chromiq_io_probe.py --analyze instrument-session-<date>
@@ -78,7 +83,7 @@ import tempfile
 import threading
 import time
 
-PROBE_VERSION = "1.5.5"
+PROBE_VERSION = "1.6.0"
 
 ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/129"   # the i1iO only
 NEW_ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/new"
@@ -98,7 +103,42 @@ KNOWN_PIDS = {
     0x2000: 'i1Pro family, reports itself as "eye-one" (seen from an i1Pro 2)',
     0x2004: 'i1iO table, reports itself as "Eye-One iO" (seen from an i1iO 2)',
     0x2007: "ColorMunki",
+    # 1.6: X-Rite's own i1iSis driver plug-in (XRiteDevice 3.0.152, installed
+    # with i1Profiler 3.8.8) names 0971:2006, and so does ArgyllCMS's udev
+    # rule ("i1 iSis (not tested)"). The plug-in lists only this one ID for
+    # the family, so the i1iSis 2 and the XL models most likely share it.
+    0x2006: ("i1iSis chart reader (i1iSis, i1iSis XL, i1iSis 2 or 2 XL; "
+             "per X-Rite's driver file; its protocol is not known yet)"),
 }
+
+# 1.6: the i1iSis family's USB ID, and every X-Rite ID the tool KNOWS to be
+# another instrument. An i1iSis session keeps the i1iSis and any X-Rite
+# device the tool does not know (in case an i1iSis model reports an ID nobody
+# has seen yet), and drops the known others: an i1iSis owner very likely has a
+# monitor calibrator plugged in too, and its traffic and serial number do not
+# belong in the file. Sources: ArgyllCMS 3.5.0 insttypes.c:439-495 and X-Rite's
+# device plug-ins (i1iO 0x2004, i1iO 3 0x30B0, CAPSURE 0x6001).
+ISIS_IDS = ((0x0971, 0x2006),)
+OTHER_INSTRUMENT_IDS = frozenset({
+    (0x0971, 0x2000), (0x0971, 0x2001), (0x0971, 0x2003), (0x0971, 0x2004),
+    (0x0971, 0x2005), (0x0971, 0x2007),
+    (0x0765, 0x5001), (0x0765, 0x5010), (0x0765, 0x5020), (0x0765, 0x6001),
+    (0x0765, 0x6003), (0x0765, 0x6008), (0x0765, 0x6009), (0x0765, 0x30B0),
+    (0x0765, 0xD020), (0x0765, 0xD092), (0x0765, 0xD094),
+})
+
+
+def keeps_device(vid, pid, profile: str | None = None) -> bool:
+    """1.6: does an instrument-only copy keep this device?
+
+    Every session: X-Rite vendor IDs only (never a keyboard). An i1iSis
+    session also drops X-Rite devices known to be another instrument. The
+    other sessions keep every X-Rite device, as before 1.6."""
+    if vid not in XRITE_VIDS:
+        return False
+    if profile == "isis" and pid is not None and (vid, pid) in OTHER_INSTRUMENT_IDS:
+        return False
+    return True
 
 
 # 1.5: devices under X-Rite's newer vendor ID, named from ArgyllCMS's device
@@ -2483,6 +2523,15 @@ def _darwin_vid(data: bytes):
     return struct.unpack("<H", data[0x24:0x26])[0]
 
 
+def _darwin_keeps(data: bytes, profile: str | None = None) -> bool:
+    """1.6: keeps_device() for one macOS record (vendor and product ID are in
+    every record's header)."""
+    if len(data) < _DARWIN_HDR:
+        return False
+    vid, pid = struct.unpack("<HH", data[0x24:0x28])
+    return keeps_device(vid, pid, profile)
+
+
 _EP_TYPES = {0: "control", 1: "isochronous", 2: "bulk", 3: "interrupt"}
 
 
@@ -2587,8 +2636,9 @@ def _analyze_darwin(recs):
     return devices, cmd_counts, timeline, bulk_bytes, descriptors
 
 
-def check_capture(path: str) -> dict:
-    """Plain facts about one recording, including the all-zero payload check."""
+def check_capture(path: str, profile: str | None = None) -> dict:
+    """Plain facts about one recording, including the all-zero payload check.
+    profile (1.6): the session's instrument, for keeps_device()."""
     try:
         linktype, recs = _read_pcap(path)
     except (OSError, ValueError) as exc:
@@ -2596,7 +2646,7 @@ def check_capture(path: str) -> dict:
                 "code": "unreadable", "verdict": f"not a readable recording: {exc}"}
     identified = True
     if linktype == LINKTYPE_USB_DARWIN:
-        mine_recs = [(ts, d) for ts, d in recs if _darwin_vid(d) in XRITE_VIDS]
+        mine_recs = [(ts, d) for ts, d in recs if _darwin_keeps(d, profile)]
         mine = [d for _ts, d in mine_recs]
         xrite = len(mine)
         mine_events = capture_events(linktype, mine_recs)
@@ -2608,7 +2658,7 @@ def check_capture(path: str) -> dict:
         keys = record_device_keys(linktype, recs)
         all_events = capture_events(linktype, recs)
         devices = device_map(all_events)
-        wanted = set(xrite_devices(devices))
+        wanted = set(xrite_devices(devices, profile))
         if wanted:
             mine = [d for (_ts, d), k in zip(recs, keys) if k in wanted]
             mine_events = [e for e in all_events if (e["bus"], e["dev"]) in wanted]
@@ -2696,21 +2746,23 @@ def _write_pcap(dst: str, linktype: int, recs) -> bool:
     return True
 
 
-def filter_xrite_capture(src: str, dst: str) -> int:
+def filter_xrite_capture(src: str, dst: str, profile: str | None = None) -> int:
     """Write a copy holding only the X-Rite device's records. Returns count.
 
     macOS: by the vendor ID in each record (1.4). Windows (USBPcap) and Linux
     (usbmon): by the bus and device address that the recording's own USB
     description shows for the X-Rite device (or, failing that, the device
     that uses the i1Pro's commands). Nothing from any other device address
-    is copied: not the keyboard, not the mouse, not the hub.
+    is copied: not the keyboard, not the mouse, not the hub. In an i1iSis
+    session (profile "isis", 1.6) also not another X-Rite instrument the
+    tool knows, such as a monitor calibrator.
     """
     try:
         linktype, recs = _read_pcap(src)
     except (OSError, ValueError):
         return 0
     if linktype in (LINKTYPE_USBPCAP, LINKTYPE_USB_LINUX, LINKTYPE_USB_LINUX_MMAPPED):
-        wanted = set(xrite_devices(device_map(capture_events(linktype, recs))))
+        wanted = set(xrite_devices(device_map(capture_events(linktype, recs)), profile))
         if not wanted:
             return 0
         keys = record_device_keys(linktype, recs)
@@ -2718,10 +2770,10 @@ def filter_xrite_capture(src: str, dst: str) -> int:
         if not kept or not _write_pcap(dst, linktype, kept):
             return 0
         return len(kept)
-    return _filter_darwin_capture(src, dst)
+    return _filter_darwin_capture(src, dst, profile)
 
 
-def _filter_darwin_capture(src: str, dst: str) -> int:
+def _filter_darwin_capture(src: str, dst: str, profile: str | None = None) -> int:
     """Write a copy of a macOS pcap holding only X-Rite records. Returns count."""
     try:
         with open(src, "rb") as fh:
@@ -2742,7 +2794,7 @@ def _filter_darwin_capture(src: str, dst: str) -> int:
         rec_end = off + 16 + incl
         if rec_end > len(blob):
             break
-        if _darwin_vid(blob[off + 16:rec_end]) in XRITE_VIDS:
+        if _darwin_keeps(blob[off + 16:rec_end], profile):
             out.append(blob[off:rec_end])
             kept += 1
         off = rec_end
@@ -3094,9 +3146,11 @@ def device_map(events) -> dict:
     return devices
 
 
-def xrite_devices(devices: dict) -> list:
+def xrite_devices(devices: dict, profile: str | None = None) -> list:
+    """The X-Rite devices of a device map (see keeps_device for profile)."""
     return [k for k, v in devices.items()
-            if v.get("vid") in XRITE_VIDS or v.get("guess_family")]
+            if (v.get("vid") in XRITE_VIDS and keeps_device(v["vid"], v.get("pid"), profile))
+            or (not v.get("vid") and v.get("guess_family"))]
 
 
 # --------------------------------------------------------------------------
@@ -3627,7 +3681,23 @@ FAMILIES = {
         "led_req": None, "led_ep": None, "led_decode": None, "event_ep": None,
         "event_decode": None, "zebra_ep": None, "scan_flag": None, "argyll_eps": set(),
     },
+    # 1.6: the i1iSis chart readers (0971:2006). ArgyllCMS cannot measure with
+    # them (insttypes.c has no entry), so there is no open driver to compare
+    # with and no decoder: the analysis lists the traffic and asks how the
+    # device talks (summarize_isis).
+    "isis": {
+        "name": "i1iSis chart reader (no decoder: its protocol is not known yet)",
+        "short": "i1iSis",
+        "requests": {}, "trigger_reqs": set(), "parse_trigger": None,
+        "eeprom_req": None, "meas_ep": None, "nsen": None, "nsen_req": None,
+        "led_req": None, "led_ep": None, "led_decode": None, "event_ep": None,
+        "event_decode": None, "zebra_ep": None, "scan_flag": None, "argyll_eps": set(),
+    },
 }
+
+# 1.6: families without an open driver to compare with, so nothing is flagged
+# as "not used by the open driver".
+NO_OPEN_DRIVER = ("generic", "isis")
 
 
 def family_for(vid, pid, config_lines=(), events=()) -> str:
@@ -3648,6 +3718,8 @@ def family_for(vid, pid, config_lines=(), events=()) -> str:
         return "i1pro3"
     if (vid == 0x0971 and pid == 0x2007) or (vid == 0x0765 and pid == 0x6008):
         return "munki"
+    if (vid, pid) in ISIS_IDS:
+        return "isis"
     return "generic"
 
 
@@ -3826,8 +3898,8 @@ def analyze_step(events: list, family: str = "i1pro2") -> dict:
             result["events"].append((rel, text))
             result["timeline"].append((rel, f"event on 0x{ep:02x}: {text}"))
             continue
-        flag = "  <-- endpoint the open driver never uses" if foreign and family != "generic" \
-            else ""
+        flag = "  <-- endpoint the open driver never uses" if foreign and \
+            family not in NO_OPEN_DRIVER else ""
         result["timeline"].append((rel, f"data on {key}: {size} bytes: "
                                         f"{ev['data'][:24].hex()}{flag}"))
     for m in result["measurements"]:
@@ -3881,6 +3953,8 @@ def format_step(name: str, res: dict, notes: dict | None = None) -> list:
         out.append(f"  operator, the lights: {notes['lights']}")
     if notes.get("setting"):
         out.append(f"  operator, the program's setting: {notes['setting']}")
+    if notes.get("page"):
+        out.append(f"  operator, how the page moved: {notes['page']}")
     out.append(f"  length: {res['last_t'] - res['first_t']:.1f} s")
     if res["requests"]:
         out.append("  commands:")
@@ -3891,7 +3965,7 @@ def format_step(name: str, res: dict, notes: dict | None = None) -> list:
         for key, info in sorted(res["endpoints"].items()):
             sizes = ", ".join(f"{s} B x{c}" for s, c in sorted(info["sizes"].items(),
                                                               key=lambda kv: -kv[1])[:5])
-            flag = "" if info["ep"] in fam["argyll_eps"] or res["family"] == "generic" \
+            flag = "" if info["ep"] in fam["argyll_eps"] or res["family"] in NO_OPEN_DRIVER \
                 else "   <-- NOT USED BY THE OPEN DRIVER"
             out.append(f"    {key}: {info['count']} transfers, {info['bytes']:,} bytes "
                        f"(sizes: {sizes}){flag}")
@@ -4024,7 +4098,8 @@ def session_steps(paths: list) -> tuple:
                 title += f" (take {step['take']})"
             steps.append((title, events, {"did": step.get("notes", ""),
                                           "lights": step.get("lights", ""),
-                                          "setting": step.get("setting", "")},
+                                          "setting": step.get("setting", ""),
+                                          "page": step.get("page", "")},
                           bool(step.get("control")), step.get("key", "")))
         return steps, devinfo, checks, session
     for f in whole:
@@ -4070,6 +4145,8 @@ SESSION_PURPOSE_ANALYSIS = {
     "i1pro3": "compare the vendor program with what the open driver sends",
     "munki": "learn how the vendor program scans strips: rates, timing, retries, the dial",
     "generic": "list the traffic raw; no decoder for this device",
+    "isis": ("list the traffic step by step and find out how the program talks to the "
+             "chart reader"),
 }
 
 
@@ -4131,6 +4208,11 @@ def summarize_session(paths: list) -> str:
                                res, notes))
         out.append("")
     full = [r for r in results if not r[1].get("empty")]
+    if family == "isis":
+        # 1.6: the i1Pro parts below (ruler, swipe speed, the light decoder)
+        # do not apply to a chart reader.
+        out.extend(summarize_isis(results, steps, checks, session, xr))
+        return "\n".join(out)
 
     out.append("-" * 68)
     empties = [r[0] for r in results if r[1].get("empty")]
@@ -4293,6 +4375,153 @@ def summarize_session(paths: list) -> str:
         "  The files hold") else "  " + _wrap(line.strip(), 64, "  ") for line in out]
     out.append("=" * 68)
     return "\n".join(out)
+
+
+_PRINTABLE = set(range(32, 127)) | {9, 10, 13}
+
+
+def text_share(data: bytes) -> float:
+    """How much of a byte string is readable text (0.0 to 1.0)."""
+    return sum(1 for b in data if b in _PRINTABLE) / len(data) if data else 0.0
+
+
+def looks_like_ftdi(events: list) -> dict:
+    """1.6: signs of a USB-to-serial chip of the FTDI kind, the way the i1iO
+    table talks (section 1.5.4): FTDI's own vendor requests, and IN packets
+    that start with two status bytes (the second one 0x60 when idle)."""
+    reqs = {}
+    for ev in events:
+        if ev["kind"] == "control" and ev["rt"] in (0x40, 0xC0) and ev["req"] in _FTDI_REQUESTS:
+            name = _FTDI_REQUESTS[ev["req"]]
+            reqs[name] = reqs.get(name, 0) + 1
+    ins = [ev["data"] for ev in events if ev["kind"] == "data" and ev["dir_in"]]
+    status = sum(1 for d in ins if len(d) >= 2 and d[1] & 0xF0 == 0x60)
+    return {"requests": reqs, "in_packets": len(ins), "status_packets": status,
+            "likely": bool(reqs) and bool(ins) and status >= 0.9 * len(ins)}
+
+
+def isis_program_lines(events: list, limit: int = 20) -> list:
+    """Up to `limit` distinct readable lines the PROGRAM sent to the device.
+    Only the computer's side: the device's answers can hold its serial number
+    and are never shown as text."""
+    lines: list = []
+    for ev in events:
+        if ev["kind"] != "data" or ev["dir_in"]:
+            continue
+        for part in re.split(rb"[\r\n]+", ev["data"]):
+            part = part.strip()
+            if len(part) < 2 or text_share(part) < 1.0:
+                continue
+            text = part.decode("ascii", "replace")[:60]
+            if text not in lines:
+                lines.append(text)
+            if len(lines) >= limit:
+                return lines
+    return lines
+
+
+def summarize_isis(results: list, steps: list, checks: list, session, xr: dict) -> list:
+    """1.6: the end of the analysis for an i1iSis chart reader. There is no
+    decoder: the report lists what happened in each step, says how the
+    program seems to talk to the device, and whether the session holds what
+    we need."""
+    out = ["-" * 68]
+    empties = [r[0] for r in results if r[1].get("empty")]
+    if empties:
+        out.append("  EMPTY STEPS (nothing recorded, please repeat them): " + "; ".join(empties))
+        out.append("")
+    out.append("  STEPS SIDE BY SIDE")
+    out.append(f"  {'step':34} {'secs':>6} {'requests':>8} {'to iSis B':>10} "
+               f"{'from iSis B':>11} {'transfers':>9}")
+    for name, res, _notes, _control, _key in results:
+        to_dev = sum(i["bytes"] for k, i in res["endpoints"].items() if k.endswith("OUT"))
+        from_dev = sum(i["bytes"] for k, i in res["endpoints"].items() if k.endswith(" IN"))
+        transfers = sum(i["count"] for i in res["endpoints"].values())
+        requests = sum(res["requests"].values())
+        secs = res["last_t"] - res["first_t"]
+        out.append(f"  {name[:34]:34} {secs:>6.1f} {requests:>8} {to_dev:>10,} "
+                   f"{from_dev:>11,} {transfers:>9}")
+    out.append("")
+
+    events = [e for _n, evs, *_ in steps for e in evs]
+    ftdi = looks_like_ftdi(events)
+    out_bytes = b"".join(e["data"] for e in events if e["kind"] == "data" and not e["dir_in"])
+    in_bytes = b"".join(e["data"] for e in events if e["kind"] == "data" and e["dir_in"])
+    if ftdi["likely"]:
+        in_bytes = b"".join(io_ftdi_payload(e["data"]) for e in events
+                            if e["kind"] == "data" and e["dir_in"])
+    out.append("  HOW DOES THE PROGRAM TALK TO THE iSis?")
+    if ftdi["requests"]:
+        out.append("    requests of the kind a USB-to-serial chip (FTDI) understands: " +
+                   ", ".join(f"{n} x{c}" for n, c in sorted(ftdi["requests"].items())))
+    if ftdi["likely"]:
+        out.append(f"    {ftdi['status_packets']} of {ftdi['in_packets']} answers start with "
+                   "the two status bytes such a chip adds.")
+        out.append("    So it LIKELY talks through a USB-to-serial chip, like the i1iO table.")
+    else:
+        out.append("    no clear sign of a USB-to-serial chip.")
+    if out_bytes:
+        share = text_share(out_bytes)
+        out.append(f"    bytes the program sent: {len(out_bytes):,}, of which {share:.0%} "
+                   "readable text")
+        if share >= 0.9:
+            lines = isis_program_lines(events)
+            out.append("    the first different lines the program sent (computer's side only):")
+            out.extend(f"      {line}" for line in lines)
+    else:
+        out.append("    the program sent no data on the iSis's own endpoints (only requests).")
+    if in_bytes:
+        out.append(f"    bytes the iSis sent back: {len(in_bytes):,}, of which "
+                   f"{text_share(in_bytes):.0%} readable text (not shown: they can hold "
+                   "its serial number)")
+    out.append("")
+
+    out.append("  WHAT THE OPERATOR SAW")
+    any_note = False
+    for name, _res, notes, _c, _k in results:
+        seen = [f"{label}: {notes[k]}" for k, label in
+                (("lights", "light"), ("page", "page"), ("setting", "setting"))
+                if notes.get(k)]
+        if seen:
+            any_note = True
+            out.append(f"    {name}: " + "; ".join(seen))
+    if not any_note:
+        out.append("    no notes about the light or the page.")
+    out.append("")
+
+    zero = any(c["code"] == "all-zero" for _n, c in checks)
+    full = [r for r in results if not r[1].get("empty")]
+    have_traffic = bool(full) and not zero
+    yes = {True: "yes", False: "NO"}
+    keys = {r[4] for r in full}
+    out.append("=" * 68)
+    out.append("  DOES THIS RECORDING HOLD WHAT WE NEED?")
+    if session and session.get("only_steps"):
+        out.append("    (only steps " + ", ".join(str(n) for n in session["only_steps"])
+                   + " were recorded in this session; the others are in the earlier one,")
+        out.append("    so a NO below can be fine)")
+    out.append(f"    real traffic of the iSis, not zeros ... {yes[have_traffic]}")
+    out.append(f"    USB description (endpoint list) ...... "
+               f"{yes[any(v.get('config') for v in xr.values())]}")
+    out.append(f"    one page measured, single scan ....... {yes['page-single' in keys]}")
+    out.append(f"    the same page, dual scan ............. {yes['page-dual' in keys]}")
+    out.append(f"    a page that fails on purpose ......... {yes['blank-page' in keys]}")
+    out.append(f"    notes on how the page moved .......... "
+               f"{yes[any(r[2].get('page') for r in results)]}")
+    out.append("")
+    if not have_traffic:
+        line = ("In plain words: the files hold no usable traffic of the iSis"
+                + (" (every data byte is zero)." if zero else "."))
+    elif "page-single" in keys:
+        line = ("In plain words: the recording shows the program and the iSis at work on a "
+                "page. There is no decoder for the iSis yet, so everything is listed raw "
+                "above; the steps side by side show where the measuring happens.")
+    else:
+        line = ("In plain words: there is traffic, but no measured page yet. The step "
+                "\"feed one page, single scan\" is the most important one.")
+    out.append("  " + _wrap(line, 64, "  "))
+    out.append("=" * 68)
+    return out
 
 
 def summarize_i1pro_session(paths: list) -> str:
@@ -4924,6 +5153,7 @@ PROFILE_IDS = {
     (0x0765, 0x6009): "i1pro3",
     (0x0971, 0x2007): "munki",
     (0x0765, 0x6008): "munki",
+    (0x0971, 0x2006): "isis",                 # 1.6
 }
 
 PROFILE_NAMES = {
@@ -4931,6 +5161,7 @@ PROFILE_NAMES = {
     "i1pro": "original i1Pro (the first generation)",
     "i1pro3": "i1Pro 3 or i1Pro 3 Plus",
     "munki": "ColorMunki Photo / Design or i1Studio",
+    "isis": "i1iSis, i1iSis XL, i1iSis 2 or i1iSis 2 XL (chart reader)",
     "generic": "another X-Rite instrument",
 }
 
@@ -4965,10 +5196,40 @@ PROFILE_PURPOSE = {
   reacts to a fast or a slow swipe, what it does with a failed strip,
   what the light on the instrument does, and how it asks about the
   dial positions (calibration, measuring).""",
+    "isis": """\
+  The i1iSis reads a whole printed chart page by itself: you push the
+  page in, it pulls it through and measures every patch. The free
+  ArgyllCMS driver, which ChromIQ uses, cannot talk to the i1iSis at all,
+  and nobody outside X-Rite has described how i1Profiler does it. So this
+  session is about the basics: what i1Profiler says to the i1iSis when it
+  starts, how it gets it ready for a page, what travels while a page is
+  measured (once in a single scan and once in a dual scan), and what
+  happens when a page cannot be read. Your notes on what the light did
+  and how the page moved are just as important as the recording.""",
     "generic": """\
   The tool has no special knowledge of this instrument. It records the
   conversation and lists it as it is, which can still be useful.""",
 }
+
+# 1.6: how an i1iSis owner gets a chart page, from i1Profiler's own help
+# (devicesetup.htm, testchart.htm, enablebarcode.htm). No chart is shipped
+# with this tool.
+ISIS_CHART_TEXT = """  THE CHART PAGE YOU NEED
+  You need ONE printed chart page made for the i1iSis. Its colours do
+  not matter for this recording at all, so an old chart page you still
+  have is perfect, and so is a quick print on normal paper.
+  If you have none, make one in i1Profiler:
+    - in the printer profiling part, go to the test chart page. With the
+      i1iSis plugged in, i1Profiler lays the chart out for it by itself
+      (in Advanced mode you can also choose the i1iSis by hand, in the
+      device setup).
+    - i1Profiler also comes with ready-made charts for the i1iSis; their
+      names end in "i1iSis" (for an i1iSis XL: "i1iSis XL").
+    - if the chart has a barcode, i1Profiler asks you to save the chart
+      before printing it. That is normal: save it, then print.
+    - a chart with only one page is easiest. Print page 1 on normal
+      paper; that is all you need."""
+
 
 PROMISE_TEXT = """\
   We cannot promise that anything will come of it. A recording helps us
@@ -5095,16 +5356,119 @@ SESSION_STEPS = [
   If the program refuses or shows a message, that is useful too: note
   what it said. Do not force anything.""",
      "lights": "What did the lights do?"},
+    # ---- 1.6: the i1iSis chart readers ---------------------------------
+    # Facts behind the wording (see the work notes FACTS.md of 1.6): the
+    # status light (off, green, blinking green = "insert chart", blue = busy,
+    # red = error) and the way a page is fed (quickly about 5 cm along the
+    # left guide, then it is pulled in by itself) are from X-Rite's i1iSis
+    # quick start guide; "Measure" and the dual scan modes from i1Profiler
+    # 3.8.8's own texts and help; "switch it on BEFORE plugging in the USB
+    # cable" from i1Profiler 3.8.8's release notes.
+    {"key": "idle", "title": "start i1Profiler, then leave it idle",
+     "families": ("isis",),
+     "before": """\
+  Before you press Enter: quit i1Profiler if it is open. The i1iSis
+  should be switched on and connected, with no page in it. (Please
+  switch it on BEFORE you plug in its USB cable: X-Rite says that if the
+  cable goes in first and the power comes on afterwards, i1Profiler does
+  not see the i1iSis.)""",
+     "during": """\
+  When the recording runs: start i1Profiler and wait until it shows that
+  it has found the i1iSis. Then leave everything alone for about 10
+  seconds and watch the i1iSis. Do NOT measure anything yet.""",
+     "lights": "What did the light on the i1iSis do (colour, blinking, when)?",
+     "page": "Did the i1iSis move or make a sound? (Enter if nothing happened)"},
+    {"key": "ready", "title": "get the i1iSis ready for a page (do not feed it yet)",
+     "families": ("isis",),
+     "before": """\
+  Before you press Enter: in i1Profiler, go to the page where you measure
+  your printed chart, with your chart loaded, as you normally would. If
+  it offers a choice between Single scan and Dual scan, choose Single
+  scan. Have your printed chart page ready, but keep it in your hand.""",
+     "during": """\
+  When the recording runs: click Measure (or Start Measurement) in
+  i1Profiler, and wait until the i1iSis is ready for the page (its light
+  blinks green when it waits for a chart). Then wait about 10 seconds
+  more. Do NOT feed the page in this step. If i1Profiler does not wait,
+  or asks for the page at once, that is fine: stop the step and say so.""",
+     "lights": "What did the light on the i1iSis do?",
+     "page": "Did the i1iSis move, whirr or click (for example a calibration)? "
+             "(Enter if nothing happened)"},
+    {"key": "page-single", "title": "feed one page, single scan",
+     "families": ("isis",),
+     "before": """\
+  Before you press Enter: i1Profiler should now be waiting for the page
+  (if you stopped it, get it there again, with Single scan). Hold page 1
+  of your chart the way you always feed it.""",
+     "during": """\
+  When the recording runs: feed the page as usual (push it in quickly,
+  about 5 cm, along the left-hand guide; the i1iSis then pulls it in by
+  itself). Wait until the page has come out again AND i1Profiler shows
+  it as measured. That can take a minute or two. If i1Profiler then asks
+  for the next page, do NOT feed it: just stop the step.""",
+     "lights": "What did the light do before, during and after the page?",
+     "page": "How did the page move? (in, out, back and forth, how many times, "
+             "any sounds)"},
+    {"key": "page-dual", "title": "the same page again, dual scan",
+     "families": ("isis",),
+     "before": """\
+  Before you press Enter: switch i1Profiler to Dual scan, if it offers
+  it (for the i1iSis it reads M0 and M2, for the i1iSis 2 also M1). If
+  i1Profiler has to start the measurement again for that, that is fine:
+  get it to the point where it waits for the page. If you cannot find a
+  Dual scan setting, type  s  to skip this step.""",
+     "during": """\
+  When the recording runs: feed the same page again, exactly as before.
+  Wait until the page has come out again AND i1Profiler shows it as
+  measured (a dual scan takes longer).""",
+     "lights": "What did the light do this time?",
+     "setting": "Which setting was on in i1Profiler for this page? (for example "
+                "\"dual scan, M0 M1 M2\")",
+     "page": "How did the page move? Did it go through once or twice, or back "
+             "and forth?"},
+    {"key": "page-skewed", "title": "the same page, fed a little crooked",
+     "families": ("isis",),
+     "before": """\
+  Before you press Enter: go back to Single scan and get i1Profiler to
+  wait for the page again. The i1iSis is made to correct a page that
+  goes in slightly crooked; this step shows how. If you would rather not,
+  type  s  to skip it.""",
+     "during": """\
+  When the recording runs: feed the same page at a slight angle (a few
+  millimetres crooked, not more). Never force it. Wait until the page
+  has come out and i1Profiler has accepted or refused it, and do what
+  i1Profiler asks.""",
+     "lights": "What did the light do?",
+     "page": "How did the page move this time? Did i1Profiler accept it?"},
+    {"key": "blank-page", "title": "a sheet without a chart (fails on purpose)",
+     "families": ("isis",),
+     "before": """\
+  Before you press Enter: take one plain sheet of normal printer paper,
+  with nothing printed on it, and get i1Profiler to wait for a page
+  again. The i1iSis will not find a chart on it, which is what we want to
+  see. If you would rather not, type  s  to skip this step.""",
+     "during": """\
+  When the recording runs: feed the plain sheet like a chart page. Wait
+  until it has come out and i1Profiler shows a message, then do what
+  i1Profiler asks (for example cancel, or feed the right page).""",
+     "lights": "What did the light do when the sheet could not be read?",
+     "page": "How did the sheet move, and what did i1Profiler say?"},
 ]
 
 # Profiles whose instrument has lights worth asking about. The original
 # i1Pro has none (the i1Pro 2's Rev E capability bits are the first to list
 # indicator LEDs, i1pro_imp.h:165).
-PROFILES_WITH_LIGHTS = ("i1pro2", "i1pro3", "munki", "generic")
+PROFILES_WITH_LIGHTS = ("i1pro2", "i1pro3", "munki", "isis", "generic")
 
 
 def steps_for(profile: str) -> list:
     return [s for s in SESSION_STEPS if profile in s["families"]]
+
+
+def step_keys_unique() -> bool:
+    """1.6: two families may share a step key ("idle"), one family never."""
+    return all(len({s["key"] for s in steps_for(p)}) == len(steps_for(p))
+               for p in PROFILE_NAMES)
 
 
 # ---- what the computer can do: checks ------------------------------------
@@ -5209,6 +5573,12 @@ def windows_release_check(build, display, arm: bool, profile: str | None = None,
                 "the computer; X-Rite's note does not mention it.) If the vendor "
                 "program still finds your instrument, carry on; if it does not, "
                 "this is why.")}
+        if profile == "isis":
+            return {"level": "ok", "text": (
+                f"{label}. X-Rite's note about drivers blocked on 25H2 concerns the "
+                "i1Pro 2 and the iO2, not the i1iSis. For the i1iSis, X-Rite says "
+                "i1Profiler 3.8.8 fixed its drivers on 25H2, so please use 3.8.8 or "
+                "newer.")}
         if profile == "i1pro3":
             return {"level": "ok", "text": (
                 f"{label}. X-Rite's note about drivers blocked on 25H2 concerns "
@@ -5226,8 +5596,8 @@ def parse_sc_query(text: str) -> dict:
 
 _EXTCAP_IFACE_RE = re.compile(r"^interface \{value=([^}]*)\}\{display=([^}]*)\}", re.M)
 _EXTCAP_VALUE_RE = re.compile(r"^value \{arg=(\d+)\}\{value=([^}]*)\}\{display=([^}]*)\}", re.M)
-_XRITE_NAME_RE = re.compile(r"x-?rite|eye-?one|i1 ?pro|i1 ?studio|colormunki|gretag|calibrite",
-                            re.I)
+_XRITE_NAME_RE = re.compile(r"x-?rite|eye-?one|i1 ?pro|i1 ?studio|i1 ?isis|colormunki|gretag|"
+                            r"calibrite", re.I)
 
 
 def parse_extcap_interfaces(text: str) -> list:
@@ -5310,9 +5680,17 @@ def windows_program_versions() -> dict:
         "ForEach-Object { $_.DisplayName + ' :: ' + $_.DisplayVersion }"))
 
 
-def i1profiler_check(version, profile: str) -> dict:
+def i1profiler_check(version, profile: str, build=None) -> dict:
     if not version:
         return {"level": "unknown", "text": "not found (that is fine if you use another program)"}
+    # 1.6: i1Profiler 3.8.8's release notes: "Fixes issue where i1iSis
+    # drivers would not load on latest Windows 11 operating system (25H2)."
+    if profile == "isis" and version_tuple(version) < (3, 8, 8) and build \
+            and build >= WIN11_25H2_BUILD:
+        return {"level": "warning", "text": (
+            f"{version}. X-Rite's notes for i1Profiler 3.8.8 say that older versions "
+            "could not load the i1iSis drivers on this Windows version (25H2). If "
+            "i1Profiler does not find your i1iSis, please update it to 3.8.8 or newer.")}
     if profile == "i1pro2" and version_tuple(version) >= (3, 8, 7):
         return {"level": "warning", "text": (
             f"{version}. i1Profiler 3.8.7 removed support for the i1Pro 2, so this "
@@ -5603,7 +5981,7 @@ def windows_capture_checks(profile: str) -> dict:
                                              vendor_driver_working=working),
             "service": service, "usbpcapcmd": cmd, "hubs": hubs,
             "admin": windows_is_admin(), "programs": programs, "arm": arm,
-            "i1profiler": i1profiler_check(i1p, profile), "build": build,
+            "i1profiler": i1profiler_check(i1p, profile, build["build"]), "build": build,
             "drivers": drivers}
 
 
@@ -6148,7 +6526,7 @@ def choose_profile(pids: list) -> str:
 
 
 def _ask_profile(default: str, seen: bool = True) -> str:
-    keys = ["i1pro2", "i1pro", "i1pro3", "munki", "generic"]
+    keys = ["i1pro2", "i1pro", "i1pro3", "munki", "isis", "generic"]
     print("\n  Which instrument do you use for this session?")
     for i, key in enumerate(keys, 1):
         # 1.5.3: only when an instrument was really seen (found on a Mac
@@ -6187,6 +6565,11 @@ def _ask_program(detected: dict) -> tuple:
 
 
 def privacy_text(profile: str) -> str:
+    isis = """
+  - For the i1iSis: the colour values it measured from your chart page
+    (your printer's and paper's colours; they say nothing about you)
+    and, if the chart has a barcode, what the barcode holds, which may
+    include the chart's name.""" if profile == "isis" else ""
     return f"""\
   WHAT THE RECORDING CONTAINS, AND WHAT HAPPENS TO IT
   - The USB conversation between the program and the instrument. That
@@ -6198,7 +6581,7 @@ def privacy_text(profile: str) -> str:
     type anything private during a step. After each step the tool makes a
     copy that holds ONLY the instrument's traffic (its device address and
     nothing else), and that copy is the only thing to send.
-  - Your short notes for each step.
+  - Your short notes for each step.{isis}
   Nothing is uploaded, ever. You decide whether to send the files, and you
   send them yourself. At the end the tool offers to delete the full
   recordings, which you never need to send."""
@@ -6348,7 +6731,7 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
             zero = False
             for name in entry.get("files_full", []):
                 src = os.path.join(full_dir, name)
-                check = check_capture(src)
+                check = check_capture(src, profile)
                 entry["check"].append(f"{name}: {check['xrite_packets']} instrument packets; "
                                       f"{check['verdict']}")
                 activity += check.get("activity") or 0
@@ -6356,7 +6739,7 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                 zero = zero or check["code"] == "all-zero"
                 if check["xrite_packets"] and check["code"] in ("ok", "all-zero"):
                     dst_name = name.replace("-full.pcap", "-instrument.pcap")
-                    if filter_xrite_capture(src, os.path.join(folder, dst_name)):
+                    if filter_xrite_capture(src, os.path.join(folder, dst_name), profile):
                         entry["files_xrite"].append(dst_name)
             if recorder is not None and (not entry["files_xrite"] or zero):
                 entry["empty"] = True
@@ -6398,11 +6781,15 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                 _write_session(session, folder)
                 session["ended"] = interrupted
                 break
+            example = ('"page 1, measured", or "refused: barcode not found"'
+                       if profile == "isis" else '"strip A, accepted", or "refused: too fast"')
             entry["notes"] = _session_ask(
                 "\n  In one line: what did you do, and what did the program show?\n"
-                "  (for example: \"strip A, accepted\", or \"refused: too fast\")\n  > ")
+                f"  (for example: {example})\n  > ")
             if step.get("setting"):
                 entry["setting"] = _session_ask(f"  {step['setting']}\n  > ")
+            if step.get("page"):
+                entry["page"] = _session_ask(f"  {step['page']}\n  > ")
             if lights:
                 entry["lights"] = _session_ask(
                     f"  {step['lights']}\n  (colours, blinking, when; Enter if you did not "
@@ -6608,7 +6995,7 @@ def finish_session(session: dict, folder: str) -> tuple:
         # Recorded by hand with Wireshark: keep only the instrument's traffic
         # in the folder that gets sent, and move the full file out of it.
         copy = os.path.join(folder, "whole-session-instrument.pcap")
-        if filter_xrite_capture(whole, copy):
+        if filter_xrite_capture(whole, copy, session.get("family")):
             os.makedirs(full_dir, exist_ok=True)
             try:
                 os.replace(whole, os.path.join(full_dir, "whole-session.pcapng"))
@@ -6773,21 +7160,23 @@ def parse_step_numbers(text: str, total: int) -> list:
     return sorted(out)
 
 
-def instrument_session_step(pids: list, direct: bool, only: list | None = None) -> dict:
+def instrument_session_step(pids: list, direct: bool, only: list | None = None,
+                            prefer: str | None = None) -> dict:
     """The i1Pro / ColorMunki recording, from start to end, any platform.
 
     Returns what happened, for the closing words: {"profile", "recorded",
     "help"} (1.5.1). "help" holds the texts to repeat at the very end when
     nothing could be recorded, so they are the last thing on the screen
-    instead of being buried above "ALL DONE"."""
+    instead of being buried above "ALL DONE".
+    prefer (1.6): the profile to offer first (--isis), whatever is plugged in."""
     outcome = {"profile": None, "recorded": False, "help": [], "reason": ""}
     system = platform.system()
-    default = choose_profile(pids)
+    default = prefer or choose_profile(pids)
     print("\n" + "=" * 68)
     print("  RECORDING WHAT THE MEASURING PROGRAM SAYS TO YOUR INSTRUMENT")
     print("=" * 68)
     try:
-        profile = _ask_profile(default, seen=any(k in PROFILE_IDS for k in pids))
+        profile = _ask_profile(default, seen=any(PROFILE_IDS.get(k) == default for k in pids))
     except _StopSession:
         section("Instrument recording session", "[ended before it started]")
         return outcome
@@ -6830,8 +7219,19 @@ def instrument_session_step(pids: list, direct: bool, only: list | None = None) 
     print("  pressed Enter here to start that step. Before that, nothing is recorded.")
     print("  Each step is recorded into its own small file. You can skip or repeat")
     print("  any step and stop at any time; the steps you finished are kept.")
-    print("  You need: the instrument, the program you normally measure with, and")
-    print("  one printed test chart.")
+    if profile == "isis":
+        print("  You need: the i1iSis, i1Profiler, one printed chart page for the")
+        print("  i1iSis and, for step 6, one plain sheet of normal printer paper.")
+        print()
+        print(ISIS_CHART_TEXT)
+        if not any(PROFILE_IDS.get(k) == "isis" for k in pids):
+            print()
+            print("  The i1iSis is not plugged in right now. Please switch it on FIRST and")
+            print("  then plug in its USB cable (X-Rite says that in the other order")
+            print("  i1Profiler does not see it), and run this tool again.")
+    else:
+        print("  You need: the instrument, the program you normally measure with, and")
+        print("  one printed test chart.")
     print()
     print(privacy_text(profile))
     print()
@@ -6945,6 +7345,11 @@ def instrument_session_step(pids: list, direct: bool, only: list | None = None) 
             and version and version_tuple(version) >= (3, 8, 7):
         print("\n  Please note: i1Profiler 3.8.7 and newer no longer talk to the i1Pro 2.")
         print("  If yours still finds the instrument, carry on.")
+    if profile == "isis" and "i1profiler" in (program or "").lower() \
+            and version and version_tuple(version) < (3, 8, 8) and system == "Windows":
+        print("\n  Please note: X-Rite's notes for i1Profiler 3.8.8 say it fixes the i1iSis")
+        print("  drivers on Windows 11 version 25H2. If your i1Profiler does not find the")
+        print("  i1iSis, updating to 3.8.8 or newer is the first thing to try.")
     if profile == "i1pro" and "i1profiler" in (program or "").lower() \
             and version and version_tuple(version) >= (3, 2, 0):
         print("\n  Please note: i1Profiler 3.2.0 and newer no longer talk to the original")
@@ -7097,7 +7502,7 @@ def main(argv: list | None = None) -> int:
 
     parser = argparse.ArgumentParser(
         description="Collect information about X-Rite instruments (i1iO, i1Pro family, "
-                    "ColorMunki / i1Studio) for ChromIQ, and optionally record what the "
+                    "ColorMunki / i1Studio, i1iSis) for ChromIQ, and optionally record what the "
                     "vendor program says to them. Never sends anything to the device and "
                     "never changes a system setting."
     )
@@ -7106,6 +7511,9 @@ def main(argv: list | None = None) -> int:
     parser.add_argument("--i1pro", "--instrument", action="store_true", dest="instrument",
                         help="the guided recording session for a handheld instrument "
                              "(i1Pro, i1Pro 2, i1Pro 3, ColorMunki, i1Studio)")
+    parser.add_argument("--isis", action="store_true",
+                        help="the guided recording session for an i1iSis chart reader "
+                             "(i1iSis, i1iSis XL, i1iSis 2, i1iSis 2 XL)")
     parser.add_argument("--io", action="store_true",
                         help="the i1iO table: its three questions and the optional "
                              "recording (skips the question what to do)")
@@ -7252,7 +7660,7 @@ def main(argv: list | None = None) -> int:
 
     choice, summary = choose_what_to_do(args, summary)
     section("What the user chose", {1: "1: record an i1iO table",
-                                    2: "2: record a handheld instrument",
+                                    2: "2: record a handheld instrument or an i1iSis",
                                     3: "3: nothing more, just the report"}[choice])
     ids = detected_ids(summary)
     known, here = plugged_in_now(ids)
@@ -7265,10 +7673,10 @@ def main(argv: list | None = None) -> int:
         print("-" * 68)
         if not any(k in PROFILE_IDS for k in here):
             print()
-            print("  No handheld instrument is plugged in right now. You can still go")
-            print("  through the start of the session: it shows what this computer offers")
-            print("  for a recording and says what is missing. For the recording itself,")
-            print("  the instrument has to be plugged in.")
+            print("  No handheld instrument and no i1iSis is plugged in right now. You can")
+            print("  still go through the start of the session: it shows what this")
+            print("  computer offers for a recording and says what is missing. For the")
+            print("  recording itself, the instrument has to be plugged in.")
         only = None
         if args.steps:
             only = parse_step_numbers(args.steps, 99)
@@ -7276,7 +7684,8 @@ def main(argv: list | None = None) -> int:
                 print(f"  --steps {args.steps}: no step numbers in it; please give them like "
                       "--steps 7,9")
                 return 2
-        outcome = instrument_session_step(ids, direct=True, only=only)
+        outcome = instrument_session_step(ids, direct=True, only=only,
+                                          prefer="isis" if args.isis else None)
         return finish_report(args, system, instrument=True, outcome=outcome)
 
     print("-" * 68)
@@ -7402,8 +7811,9 @@ def what_to_do_question(sug: dict, known: bool, here: list, drivers: dict) -> li
     mark = {n: "   <- suggested" if n == sug["choice"] else "" for n in (1, 2, 3)}
     lines += ["", "  What would you like to do?",
               "    1. record an i1iO table" + mark[1],
-              "    2. record a handheld instrument" + mark[2],
-              "       (the i1Pro family, the ColorMunki, the i1Studio)",
+              "    2. record a handheld instrument or an i1iSis" + mark[2],
+              "       (the i1Pro family, the ColorMunki, the i1Studio, the i1iSis",
+              "       chart readers)",
               "    3. nothing more: just make the report" + mark[3],
               "    a. look again (after plugging something in)"]
     return lines
@@ -7411,7 +7821,8 @@ def what_to_do_question(sug: dict, known: bool, here: list, drivers: dict) -> li
 
 def choose_what_to_do(args, summary: str) -> tuple:
     """(choice, summary). The command line options decide without asking."""
-    if args.instrument or isinstance(getattr(args, "steps", None), str):
+    if args.instrument or getattr(args, "isis", False) is True \
+            or isinstance(getattr(args, "steps", None), str):
         return 2, summary
     if args.io or args.annotate or args.skip_annotate:
         return 1, summary
