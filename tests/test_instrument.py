@@ -28,9 +28,6 @@ sys.path.insert(0, HERE)
 
 import chromiq_io_probe as probe  # noqa: E402
 
-# 1.5.5: the steps of these tests take milliseconds; the "that was very
-# short" question has its own tests (test_enter_key.py).
-probe.SHORT_STEP_SECONDS = 0.0
 import synth  # noqa: E402
 
 
@@ -450,9 +447,10 @@ class SessionTests(TempDirCase):
         patcher = mock.patch.dict(os.environ, {"FAKE_LOG": self.log, "FAKE_PCAPS": self.pcaps})
         patcher.start()
         self.addCleanup(patcher.stop)
-        p = mock.patch.object(probe, "RECORDER_STARTUP_WAIT", 0.3)
-        p.start()
-        self.addCleanup(p.stop)
+        for p in (mock.patch.object(probe, "RECORDER_STARTUP_WAIT", 0.3),
+                  mock.patch.object(probe, "SHORT_STEP_SECONDS", 0.0)):
+            p.start()
+            self.addCleanup(p.stop)
         # One synthetic recording per step key, plus a keyboard on the hub.
         files = synth.i1pro2_session_files(self.pcaps, os)
         for key in ("unknown",):
@@ -651,6 +649,7 @@ class LinuxRecorderTests(TempDirCase):
         answers = iter(["", "e", "ok", "", "", "", "q", "ok2", ""])
         with mock.patch.dict(os.environ, env), \
                 mock.patch.object(probe, "RECORDER_STARTUP_WAIT", 0.3), \
+                mock.patch.object(probe, "SHORT_STEP_SECONDS", 0.0), \
                 mock.patch.object(probe, "ask", lambda *_a, **_k: next(answers)), \
                 redirect_stdout(io.StringIO()):
             recorder = probe.TcpdumpRecorder(["usbmon1"], "", mac=False)

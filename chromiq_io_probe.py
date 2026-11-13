@@ -6102,6 +6102,32 @@ def flush_pending_input() -> int:
     return dropped
 
 
+def quick_edit_off():
+    """1.5.5 review: in the classic Windows console a click into the window
+    starts a text selection ("Select" in the title), and the next Enter only
+    ends that selection instead of reaching the tool. That fits "keyboard
+    not accepting Enter" too. Switch QuickEdit off for the session and give
+    back the old mode afterwards. Returns a function that restores it."""
+    if os.name != "nt":
+        return lambda: None
+    try:
+        import ctypes                                     # noqa: PLC0415
+        from ctypes import wintypes                       # noqa: PLC0415
+        k32 = ctypes.windll.kernel32                      # type: ignore[attr-defined]
+        k32.GetStdHandle.restype = wintypes.HANDLE
+        handle = k32.GetStdHandle(-10)                    # STD_INPUT_HANDLE
+        mode = wintypes.DWORD()
+        if not k32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return lambda: None
+        old = mode.value
+        new = (old | 0x0080) & ~0x0040                    # EXTENDED_FLAGS on, QUICK_EDIT off
+        if new == old or not k32.SetConsoleMode(handle, new):
+            return lambda: None
+        return lambda: k32.SetConsoleMode(handle, old)
+    except Exception:                                     # noqa: BLE001
+        return lambda: None
+
+
 def _session_ask(prompt: str, flush: bool = True) -> str:
     """ask(), but Ctrl-C and a closed window end the session cleanly. Keys
     pressed before the question appeared are thrown away first (1.5.5)."""
@@ -6221,6 +6247,7 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
             pass
     lights = profile in PROFILES_WITH_LIGHTS
     recording = False
+    restore_console = quick_edit_off()
     try:
         if recorder is not None and not recorder.session_start():
             session["ended"] = "the recording program could not be started"
@@ -6407,6 +6434,10 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                 files = recorder.stop()
                 session["unfinished_files"] = [os.path.basename(p) for p in files]
             recorder.session_end()
+        try:
+            restore_console()
+        except Exception:                                 # noqa: BLE001
+            pass
         for sig, handler in old_handlers.items():
             try:
                 signal.signal(sig, handler)

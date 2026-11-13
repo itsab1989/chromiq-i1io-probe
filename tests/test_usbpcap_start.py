@@ -32,8 +32,6 @@ HUB2 = ("value {arg=99}{value=2}{display=[2] Generic USB Hub}{enabled=true}\n"
         "value {arg=99}{value=3}{display=[3] i1Pro3}{enabled=true}{parent=2}\n")
 
 
-# 1.5.5: these steps take milliseconds; the short-step question has its own tests.
-probe.SHORT_STEP_SECONDS = 0.0
 
 
 def _answers(it):
@@ -60,7 +58,8 @@ class Base(unittest.TestCase):
         pcaps = os.path.join(self.dir, "pcaps")
         os.mkdir(pcaps)
         for p in (mock.patch.dict(os.environ, {"FAKE_LOG": self.log, "FAKE_PCAPS": pcaps}),
-                  mock.patch.object(probe, "RECORDER_STARTUP_WAIT", 0.3)):
+                  mock.patch.object(probe, "RECORDER_STARTUP_WAIT", 0.3),
+                  mock.patch.object(probe, "SHORT_STEP_SECONDS", 0.0)):
             p.start()
             self.addCleanup(p.stop)
         probe._SECTIONS.clear()

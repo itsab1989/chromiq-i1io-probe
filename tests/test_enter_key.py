@@ -153,6 +153,9 @@ class BufferedEnters(Base):
         self.assertIn("still recording: type  e  and press Enter to stop", screen)
         self.assertEqual(session["steps"][0]["files_xrite"],
                          ["step1-idle-take1-USBPcap1-instrument.pcap"])
+        # What remains without the flush (written down on purpose): the
+        # buffered Enters still blank the notes of that step.
+        self.assertEqual(session["steps"][0]["notes"], "")
 
     def test_a_very_short_step_asks_whether_it_was_on_purpose(self):
         console = FakeConsole(["", "e", "r", "", "e", "", "notes", "lights", "", "q"])
@@ -257,9 +260,6 @@ class Texts(unittest.TestCase):
         self.assertEqual(keys, [])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class SlowSwipe(unittest.TestCase):
 
@@ -284,3 +284,106 @@ class SlowSwipe(unittest.TestCase):
                 files[key] = w.save(os.path.join(d, key + ".pcap"))
             text = probe.summarize_session([files["scan-fast"], files["scan-slow"]])
         self.assertNotIn("most likely not slower", text)
+
+
+class MoreFlows(Base):
+
+    def test_an_empty_step_asks_to_repeat_at_once(self):
+        # start, stop, "r" (repeat), take 2 also empty, Enter (go on), quit
+        console = FakeConsole(["", "e", "r", "", "e", "", "q"])
+        session, screen = self.run_session(console, recording=descriptor_only(), short=0.0)
+        self.assertEqual([s.get("take") for s in session["steps"]], [1, 2])
+        self.assertFalse(session["steps"][0]["kept"])
+        self.assertNotIn("notes", session["steps"][1])
+        self.assertTrue(any("record this step again" in p for p in console.prompts))
+
+    def test_a_replaced_take_is_not_reported_as_empty(self):
+        session = {"steps": [{"number": 1, "key": "idle", "title": "t", "take": 1,
+                              "kept": False, "empty": True},
+                             {"number": 1, "key": "idle", "title": "t", "take": 2,
+                              "kept": True, "files_xrite": ["a-instrument.pcap"]}],
+                   "ended": "all steps done"}
+        os.makedirs(self.folder, exist_ok=True)
+        with mock.patch.object(probe, "summarize_session", lambda _p: "x"), \
+                redirect_stdout(io.StringIO()):
+            lines, _a = probe.finish_session(session, self.folder)
+        text = "\n".join(lines)
+        self.assertIn("replaced by the next take", text)
+        self.assertNotIn("EMPTY", text)
+
+    def test_all_zero_is_never_good(self):
+        text = probe.handheld_step_verdict({"files_xrite": ["x"]}, 5, False, zero=True)
+        self.assertIn("ALL-ZERO", text)
+        self.assertNotIn("good", text)
+
+    def test_closed_input_at_start_ends_the_session(self):
+        console = FakeConsole([])
+        session, _screen = self.run_session(console)
+        self.assertEqual(session["steps"], [])
+        self.assertIn("input ended", session["ended"])
+
+    def test_ranges_and_wrong_lists(self):
+        self.assertEqual(probe.parse_step_numbers("7-9", 9), [7, 8, 9])
+        self.assertEqual(probe.parse_step_numbers("10", 9), [])
+        with redirect_stdout(io.StringIO()) as out:
+            code = probe.main(["--steps", "seven"])
+        self.assertEqual(code, 2)
+        self.assertIn("no step numbers", out.getvalue())
+
+
+@unittest.skipIf(os.name == "nt", "a POSIX pseudo-terminal")
+class RealTerminalFlush(unittest.TestCase):
+    """The real flush on a real (pseudo-)terminal: Enters pressed while the
+    child is busy must not reach the next input()."""
+
+    def run_child(self, flush):
+        import pty
+        import select
+        import time
+        code = ("import sys, time\n"
+                f"sys.path.insert(0, {os.path.dirname(HERE)!r})\n"
+                "import chromiq_io_probe as p\n"
+                "print('BUSY', flush=True)\n"
+                "time.sleep(1.0)\n"
+                + ("p.flush_pending_input()\n" if flush else "")
+                + "print('ASK', flush=True)\n"
+                "a = input()\n"
+                "print('GOT[' + a + ']', flush=True)\n")
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.execv(sys.executable, [sys.executable, "-c", code])
+        out = b""
+        sent = False
+        answered = False
+        end = time.time() + 20
+        while time.time() < end:
+            r, _, _ = select.select([fd], [], [], 0.1)
+            if r:
+                try:
+                    chunk = os.read(fd, 4096)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                out += chunk
+            if b"BUSY" in out and not sent:
+                os.write(fd, b"\r\r\r")       # impatient Enters while busy
+                sent = True
+            if b"ASK" in out and not answered:
+                time.sleep(0.2)
+                os.write(fd, b"real\r")
+                answered = True
+            if b"GOT[" in out and b"]" in out.split(b"GOT[")[-1]:
+                break
+        os.waitpid(pid, 0)
+        return out.decode("utf-8", "replace")
+
+    def test_flush_throws_the_enters_away(self):
+        self.assertIn("GOT[real]", self.run_child(flush=True))
+
+    def test_without_flush_an_enter_answers(self):
+        self.assertIn("GOT[]", self.run_child(flush=False))
+
+
+if __name__ == "__main__":
+    unittest.main()
