@@ -32,9 +32,44 @@ The i1iSis chart readers (i1iSis, i1iSis XL, i1iSis 2, i1iSis 2 XL).
   3.8.8 or newer is needed for the i1iSis (X-Rite says that version fixed
   its drivers there). The i1Pro 2 warning is not shown to i1iSis owners.
 - **Tested promise:** a new test runs a whole simulated i1iSis session and
-  fails if the tool opens any device or writes anywhere outside its own
-  folders, and a source check fails if the tool ever gains a way to talk to
-  a USB device.
+  fails if the tool opens any device (through `open`, `io.open`, `os.open`
+  or `pathlib`), starts a program that is not on the list taken from its own
+  source, or writes anywhere outside its own folders. Nine deliberately
+  broken copies of the tool are run through it, and every one is caught. A
+  source check fails if the tool ever gains a way to talk to a USB device.
+- **Not yet tried with a real i1iSis.** Everything above was tested with
+  invented recordings only.
+
+An independent review before the release found, and this release fixes:
+
+- **Privacy:** when a recording held no USB description (USBPcap's retry
+  without injected descriptions, or a device never plugged in again), a
+  device guessed from i1Pro commands could end up in the i1iSis copy, even
+  as its only content, while the check said OK. Now an i1iSis session keeps
+  ONLY the i1iSis when the recording shows one; without one, only X-Rite
+  devices the tool does not know (and it says so right after the step);
+  never a known other instrument (now also the i1Display 3L, 0765:600a) and
+  never a guessed device. Without any USB description nothing is kept, and
+  the step says "NOTHING KEPT" and how to repeat it.
+- `--analyze` and `analysis.txt` use the same choice: a raw recording with
+  an i1iSis in it lists only the i1iSis, never a monitor calibrator, and
+  never another device's text as lines sent to the i1iSis. The answers of
+  devices the tool has no decoder for (the i1iSis among them) are never
+  shown, only their sizes.
+- The privacy texts say exactly what is kept, and that the serial number
+  and calibration data are "very likely" in an i1iSis recording (not yet
+  proven for this family).
+- A restart as administrator on Windows forgot `--isis` and `--steps`.
+- Texts that still spoke to i1Pro owners in an i1iSis session: the Mac
+  "not possible" box, the Windows on ARM note, the closing "WHAT TO DO NOW"
+  (switch the i1iSis on before plugging it in) and the "not plugged in"
+  note (the session goes on, and now the text says so).
+- An old chart page works only if i1Profiler still has that chart; the
+  paper is normal 80 g/m2 printer paper, the same size as the chart.
+- Step 5 is in the checklist; the step box reads "Then:" for the i1iSis.
+- The build smoke-tests the frozen binary on an invented i1iSis recording.
+- A test of the Enter-key fix could fail at random (it wrote into a
+  terminal that had already closed); it no longer does (30 of 30 runs).
 
 ## v1.5.5
 

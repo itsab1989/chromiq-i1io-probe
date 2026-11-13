@@ -488,8 +488,8 @@ where Argyll documents them) and lists everything else raw.
 
 The i1iSis reads a whole printed chart page by itself: you push the page in,
 it pulls it through and measures every patch. The free ArgyllCMS driver, which
-ChromIQ uses, cannot talk to the i1iSis at all, and nobody outside X-Rite has
-described how i1Profiler does it. If you own an i1iSis, i1iSis XL, i1iSis 2 or
+ChromIQ uses, cannot talk to the i1iSis at all, and as far as we know, nobody
+outside X-Rite has described how i1Profiler does it. If you own an i1iSis, i1iSis XL, i1iSis 2 or
 i1iSis 2 XL, a recording of a few pages helps us learn the basics. As always,
 **nothing is promised**: whether ChromIQ can ever use an i1iSis is a separate
 question, and the answer may be no.
@@ -511,8 +511,9 @@ version fixed the i1iSis drivers there.
 ### The chart page you need
 
 One printed chart page made for the i1iSis. **Its colours do not matter for
-this recording at all**, so an old chart page you still have is perfect, and
-so is a quick print on normal paper. This tool ships no chart. If you have
+this recording at all.** An old chart page you still have is perfect, as long
+as i1Profiler still has that chart (open the same chart file in i1Profiler
+before step 2). A quick print is fine too. This tool ships no chart. If you have
 none, make one in i1Profiler:
 
 - in the printer profiling part, go to the test chart page. With the i1iSis
@@ -522,9 +523,13 @@ none, make one in i1Profiler:
   in "i1iSis" (for an i1iSis XL: "i1iSis XL");
 - if the chart has a barcode, i1Profiler asks you to save the chart before
   printing it. That is normal: save it, then print;
-- a chart with only one page is easiest. Print page 1; that is all you need.
+- a chart with only one page is easiest. Print page 1 on normal 80 g/m2
+  printer paper; that is all you need. (X-Rite's guide asks for paper 0.08 to
+  0.45 mm thick; normal printer paper is right, please do not use thinner
+  paper.)
 
-For step 6 you also need one plain sheet of normal printer paper.
+For step 6 you also need one plain sheet of normal 80 g/m2 printer paper, the
+same size as your chart.
 
 ### The steps
 

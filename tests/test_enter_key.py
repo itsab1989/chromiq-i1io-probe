@@ -369,9 +369,16 @@ class RealTerminalFlush(unittest.TestCase):
             if b"BUSY" in out and not sent:
                 os.write(fd, b"\r\r\r")       # impatient Enters while busy
                 sent = True
-            if b"ASK" in out and not answered:
+            if b"ASK" in out and not answered and b"GOT[" not in out:
                 time.sleep(0.2)
-                os.write(fd, b"real\r")
+                # 1.6 review: without the flush a buffered Enter answers at
+                # once and the child may have ended before this write; a
+                # write into a closed terminal is then not an error of the
+                # tool (it raised EIO, 2 runs in 20).
+                try:
+                    os.write(fd, b"real\r")
+                except OSError:
+                    pass
                 answered = True
             if b"GOT[" in out and b"]" in out.split(b"GOT[")[-1]:
                 break

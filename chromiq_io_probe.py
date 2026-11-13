@@ -890,9 +890,34 @@ def sip_steps_text(apple_silicon: bool) -> str:
        and press Return. It should say "enabled"."""
 
 
-def recording_not_possible_text(r: dict, device: str = "table") -> str:
-    """device: "table" (the i1iO, 1.4) or "instrument" (the 1.5 session)."""
+def recording_not_possible_text(r: dict, device: str = "table",
+                                profile: str | None = None) -> str:
+    """device: "table" (the i1iO, 1.4) or "instrument" (the 1.5 session).
+    profile "isis" (1.6 review): the Windows facts for the i1iSis, not the
+    i1Pro 2's."""
     reasons = "\n".join("    - " + _wrap(reason, 66, "      ") for reason in r["reasons"])
+    if profile == "isis":
+        device = "i1iSis"
+        which_windows = """\
+     Which Windows works: X-Rite says i1Profiler 3.8.8 fixed the i1iSis
+     drivers on Windows 11 version 25H2, so please use 3.8.8 or newer
+     there. Switch the i1iSis on BEFORE you plug in its USB cable.
+     A Windows virtual machine on an Apple Silicon Mac does NOT work for
+     a recording: it runs Windows on ARM, where the recorder this tool
+     uses (USBPcap) does not exist. Whether X-Rite's i1iSis driver works
+     on Windows on ARM is not known."""
+        warning = ""
+    else:
+        which_windows = """\
+     Which Windows works: the X-Rite driver for the i1Pro 2 and the i1iO 2
+     needs Windows 10 with i1Profiler 3.8.5, or Windows 11 version 24H2 or
+     older with i1Profiler 3.8.6. X-Rite says the driver is blocked on
+     Windows 11 version 25H2 and newer.
+     A Windows virtual machine on an Apple Silicon Mac does NOT work for
+     a recording: it runs Windows on ARM, where the recorder this tool
+     uses (USBPcap) does not exist. We also know of no X-Rite driver
+     there for the i1Pro 2, the i1iO or the ColorMunki."""
+        warning = "\n\n" + I1PROFILER_WARNING
     return f"""\
   RECORDING THE USB TRAFFIC IS NOT POSSIBLE ON THIS MAC RIGHT NOW
 
@@ -910,14 +935,7 @@ def recording_not_possible_text(r: dict, device: str = "table") -> str:
      (wireshark.org) and tick "USBPcap" when its installer offers it.
      Then run this tool on that PC and choose the recording step; it tells
      you exactly what to do.
-     Which Windows works: the X-Rite driver for the i1Pro 2 and the i1iO 2
-     needs Windows 10 with i1Profiler 3.8.5, or Windows 11 version 24H2 or
-     older with i1Profiler 3.8.6. X-Rite says the driver is blocked on
-     Windows 11 version 25H2 and newer.
-     A Windows virtual machine on an Apple Silicon Mac does NOT work for
-     a recording: it runs Windows on ARM, where the recorder this tool
-     uses (USBPcap) does not exist. We also know of no X-Rite driver
-     there for the i1Pro 2, the i1iO or the ColorMunki.
+{which_windows}
 
   2. SWITCH SIP OFF ON THIS MAC, ONLY FOR THE RECORDING
      The honest risk: while SIP is off, macOS no longer protects its own
@@ -936,9 +954,7 @@ def recording_not_possible_text(r: dict, device: str = "table") -> str:
      Mac. Examples: Cynthion with the free Packetry program (about 210
      EUR), or Taradov's open-hardware USB Sniffer (about 35 USD; its
      software is ready-made only for Windows and Linux). Only worth it if
-     you already own one or enjoy this kind of thing.
-
-{I1PROFILER_WARNING}
+     you already own one or enjoy this kind of thing.{warning}
 
   REMINDER: if you switch SIP off for a recording, switch it back on
   afterwards with   csrutil enable   (steps above)."""
@@ -4584,6 +4600,7 @@ def summarize_isis(results: list, steps: list, checks: list, session, xr: dict) 
                f"{yes[any(v.get('config') for v in xr.values())]}")
     out.append(f"    one page measured, single scan ....... {yes['page-single' in keys]}")
     out.append(f"    the same page, dual scan ............. {yes['page-dual' in keys]}")
+    out.append(f"    the same page, fed a little crooked .. {yes['page-skewed' in keys]}")
     out.append(f"    a page that fails on purpose ......... {yes['blank-page' in keys]}")
     out.append(f"    notes on how the page moved .......... "
                f"{yes[any(r[2].get('page') for r in results)]}")
@@ -5279,7 +5296,8 @@ PROFILE_PURPOSE = {
   The i1iSis reads a whole printed chart page by itself: you push the
   page in, it pulls it through and measures every patch. The free
   ArgyllCMS driver, which ChromIQ uses, cannot talk to the i1iSis at all,
-  and nobody outside X-Rite has described how i1Profiler does it. So this
+  and as far as we know, nobody outside X-Rite has described how
+  i1Profiler does it. So this
   session is about the basics: what i1Profiler says to the i1iSis when it
   starts, how it gets it ready for a page, what travels while a page is
   measured (once in a single scan and once in a dual scan), and what
@@ -5295,8 +5313,9 @@ PROFILE_PURPOSE = {
 # with this tool.
 ISIS_CHART_TEXT = """  THE CHART PAGE YOU NEED
   You need ONE printed chart page made for the i1iSis. Its colours do
-  not matter for this recording at all, so an old chart page you still
-  have is perfect, and so is a quick print on normal paper.
+  not matter for this recording at all. An old chart page you still have
+  is perfect, as long as i1Profiler still has that chart (open the same
+  chart file in i1Profiler before step 2). A quick print is fine too.
   If you have none, make one in i1Profiler:
     - in the printer profiling part, go to the test chart page. With the
       i1iSis plugged in, i1Profiler lays the chart out for it by itself
@@ -5307,7 +5326,9 @@ ISIS_CHART_TEXT = """  THE CHART PAGE YOU NEED
     - if the chart has a barcode, i1Profiler asks you to save the chart
       before printing it. That is normal: save it, then print.
     - a chart with only one page is easiest. Print page 1 on normal
-      paper; that is all you need."""
+      80 g/m2 printer paper; that is all you need. (X-Rite's guide asks
+      for paper 0.08 to 0.45 mm thick; normal printer paper is right,
+      please do not use thinner paper.)"""
 
 
 PROMISE_TEXT = """\
@@ -5444,7 +5465,7 @@ SESSION_STEPS = [
     # 3.8.8's own texts and help; "switch it on BEFORE plugging in the USB
     # cable" from i1Profiler 3.8.8's release notes.
     {"key": "idle", "title": "start i1Profiler, then leave it idle",
-     "families": ("isis",),
+     "families": ("isis",), "box": "Then: ",
      "before": """\
   Before you press Enter: quit i1Profiler if it is open. The i1iSis
   should be switched on and connected, with no page in it. (Please
@@ -5458,7 +5479,7 @@ SESSION_STEPS = [
      "lights": "What did the light on the i1iSis do (colour, blinking, when)?",
      "page": "Did the i1iSis move or make a sound? (Enter if nothing happened)"},
     {"key": "ready", "title": "get the i1iSis ready for a page (do not feed it yet)",
-     "families": ("isis",),
+     "families": ("isis",), "box": "Then: ",
      "before": """\
   Before you press Enter: in i1Profiler, go to the page where you measure
   your printed chart, with your chart loaded, as you normally would. If
@@ -5474,7 +5495,7 @@ SESSION_STEPS = [
      "page": "Did the i1iSis move, whirr or click (for example a calibration)? "
              "(Enter if nothing happened)"},
     {"key": "page-single", "title": "feed one page, single scan",
-     "families": ("isis",),
+     "families": ("isis",), "box": "Then: ",
      "before": """\
   Before you press Enter: i1Profiler should now be waiting for the page
   (if you stopped it, get it there again, with Single scan). Hold page 1
@@ -5489,7 +5510,7 @@ SESSION_STEPS = [
      "page": "How did the page move? (in, out, back and forth, how many times, "
              "any sounds)"},
     {"key": "page-dual", "title": "the same page again, dual scan",
-     "families": ("isis",),
+     "families": ("isis",), "box": "Then: ",
      "before": """\
   Before you press Enter: switch i1Profiler to Dual scan, if it offers
   it (for the i1iSis it reads M0 and M2, for the i1iSis 2 also M1). If
@@ -5506,7 +5527,7 @@ SESSION_STEPS = [
      "page": "How did the page move? Did it go through once or twice, or back "
              "and forth?"},
     {"key": "page-skewed", "title": "the same page, fed a little crooked",
-     "families": ("isis",),
+     "families": ("isis",), "box": "Then: ",
      "before": """\
   Before you press Enter: go back to Single scan and get i1Profiler to
   wait for the page again. The i1iSis is made to correct a page that
@@ -5520,12 +5541,13 @@ SESSION_STEPS = [
      "lights": "What did the light do?",
      "page": "How did the page move this time? Did i1Profiler accept it?"},
     {"key": "blank-page", "title": "a sheet without a chart (fails on purpose)",
-     "families": ("isis",),
+     "families": ("isis",), "box": "Then: ",
      "before": """\
-  Before you press Enter: take one plain sheet of normal printer paper,
-  with nothing printed on it, and get i1Profiler to wait for a page
-  again. The i1iSis will not find a chart on it, which is what we want to
-  see. If you would rather not, type  s  to skip this step.""",
+  Before you press Enter: take one plain sheet of normal 80 g/m2
+  printer paper, the same size as your chart, with nothing printed on
+  it, and get i1Profiler to wait for a page again. The i1iSis will not
+  find a chart on it, which is what we want to see. If you would rather
+  not, type  s  to skip this step.""",
      "during": """\
   When the recording runs: feed the plain sheet like a chart page. Wait
   until it has come out and i1Profiler shows a message, then do what
@@ -5614,6 +5636,14 @@ def windows_release_check(build, display, arm: bool, profile: str | None = None,
         # asks for Microsoft's own WinUSB driver (seen in a user's report),
         # and nobody has tried i1Profiler with it on ARM. "Problem" stays,
         # because there is no recorder for ARM either way.
+        if profile == "isis":
+            return {"level": "problem", "text": (
+                "This Windows runs on an ARM processor. Whether X-Rite's driver for the "
+                "i1iSis works here is not known: X-Rite does not say, and we have no "
+                "report either way. The recorder this tool uses (USBPcap) does not exist "
+                "for ARM processors, so a recording cannot be made on this PC. Please use "
+                "a Windows PC with an Intel or AMD processor for the recording (with "
+                "i1Profiler 3.8.8 or newer on Windows 11 version 25H2).")}
         if profile == "i1pro3":
             return {"level": "problem", "text": (
                 "This Windows runs on an ARM processor. The i1Pro 3 asks Windows for "
@@ -6749,7 +6779,8 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
             print("-" * 68)
             print(step["before"])
             print()
-            print(step_box(step["during"]))
+            print(step_box(step["during"], step.get("box", "Then do this in the measuring "
+                                                    "program: ")))
             answer = _session_ask("\n  Press Enter to START recording (s = skip this step, "
                                   "q = stop): ").lower()
             if not answer and _INPUT_ENDED:
@@ -6973,16 +7004,16 @@ def handheld_step_verdict(entry: dict, activity: int, empty: bool, zero: bool = 
             "talking to the instrument? Please repeat it.")
 
 
-def step_box(during: str) -> str:
+def step_box(during: str, prefix: str = "Then do this in the measuring program: ") -> str:
     """1.5.4: the three things to do in one step, framed, so the order is
     impossible to miss (a real tester measured in the program without ever
     starting a step here)."""
     text = " ".join(during.split())
-    for prefix in ("When the recording runs:", "When the recording runs"):
-        if text.startswith(prefix):
-            text = text[len(prefix):].strip()
+    for lead in ("When the recording runs:", "When the recording runs"):
+        if text.startswith(lead):
+            text = text[len(lead):].strip()
     rows = ["1. Press Enter HERE to start recording."]
-    rows += _wrap("2. Then do this in the measuring program: " + text, 60, "   ").split("\n")
+    rows += _wrap("2. " + prefix + text, 60, "   ").split("\n")
     rows += ["3. Come back to THIS window, type  e  and press Enter to stop."]
     width = max(len(r) for r in rows) + 4
     line = "  +" + "-" * (width - 2) + "+"
@@ -7305,6 +7336,7 @@ def instrument_session_step(pids: list, direct: bool, only: list | None = None,
         section("Instrument recording session", "[ended before it started]")
         return outcome
     outcome["profile"] = profile
+    _RUN["profile"] = profile                  # 1.6 review: for the relaunch and the end box
     print("\n  WHAT THIS IS FOR")
     print(PROFILE_PURPOSE[profile])
     print()
@@ -7345,14 +7377,16 @@ def instrument_session_step(pids: list, direct: bool, only: list | None = None,
     print("  any step and stop at any time; the steps you finished are kept.")
     if profile == "isis":
         print("  You need: the i1iSis, i1Profiler, one printed chart page for the")
-        print("  i1iSis and, for step 6, one plain sheet of normal printer paper.")
+        print("  i1iSis and, for step 6, one plain sheet of normal 80 g/m2 printer")
+        print("  paper, the same size as your chart.")
         print()
         print(ISIS_CHART_TEXT)
         if not any(PROFILE_IDS.get(k) == "isis" for k in pids):
             print()
-            print("  The i1iSis is not plugged in right now. Please switch it on FIRST and")
-            print("  then plug in its USB cable (X-Rite says that in the other order")
-            print("  i1Profiler does not see it), and run this tool again.")
+            print("  The i1iSis is not plugged in right now. Before the first step, please")
+            print("  switch it on FIRST and then plug in its USB cable (X-Rite says that")
+            print("  in the other order i1Profiler does not see it). The session goes on")
+            print("  from here; nothing is recorded until you start a step.")
     else:
         print("  You need: the instrument, the program you normally measure with, and")
         print("  one printed test chart.")
@@ -7433,7 +7467,8 @@ def instrument_session_step(pids: list, direct: bool, only: list | None = None,
             print("  " + readiness_report(readiness).replace("\n", "\n  "))
             recorder = TcpdumpRecorder(readiness["interfaces"], "", mac=True)
         else:
-            print(recording_not_possible_text(readiness, device="instrument"))
+            print(recording_not_possible_text(readiness, device="instrument",
+                                              profile=profile))
             print("\n  The vendor programs (i1Profiler, ccStudio, the ColorMunki and")
             print("  i1Studio programs) run on Windows and on the Mac, so the Windows")
             print("  route above works with the same instrument.")
@@ -7673,7 +7708,7 @@ def main(argv: list | None = None) -> int:
     _INPUT_ENDED.clear()
     _RUN.clear()
     _RUN.update(output=args.output, no_redact=args.no_redact, relaunched=args.relaunched,
-                no_pause=args.no_pause)
+                no_pause=args.no_pause, isis=args.isis, steps=args.steps)
     SELFTEST.clear()
     SELFTEST.update(x.strip() for x in args.selftest.split(",") if x.strip())
     if SELFTEST:
@@ -8475,16 +8510,21 @@ def relaunch_command() -> tuple:
     """(program, parameters, folder) to start this tool again, straight into
     the handheld session."""
     extra = " --relaunched"
+    # 1.6 review: the copy started as administrator keeps the session's
+    # instrument and its step list.
+    if _RUN.get("steps"):
+        extra += f' --steps "{_RUN["steps"]}"'
     if _RUN.get("output"):
         extra += f' -o "{_RUN["output"]}"'
     if _RUN.get("no_redact"):
         extra += " --no-redact"
     if SELFTEST:
         extra += f" --selftest {','.join(sorted(SELFTEST))}"
+    session = "--isis" if _RUN.get("profile") == "isis" or _RUN.get("isis") else "--i1pro"
     if getattr(sys, "frozen", False):
-        return sys.executable, "--i1pro" + extra, os.getcwd()
+        return sys.executable, session + extra, os.getcwd()
     script = os.path.abspath(__file__)
-    return sys.executable, f'"{script}" --i1pro' + extra, os.getcwd()
+    return sys.executable, f'"{script}" {session}' + extra, os.getcwd()
 
 
 def offer_relaunch_as_admin(launch=None) -> bool:
@@ -8540,7 +8580,11 @@ def what_to_do_lines(causes: list, report_path: str | None) -> list:
     if not causes:
         return []
     steps = []
-    if "no_instrument" in causes:
+    if "no_instrument" in causes and _RUN.get("profile") == "isis":
+        steps.append("Switch the i1iSis on FIRST, then plug its USB cable straight into "
+                     "the computer (not through a USB hub). X-Rite says that in the other "
+                     "order i1Profiler does not see the i1iSis.")
+    elif "no_instrument" in causes:
         steps.append("Plug the instrument in (straight into the computer, not through "
                      "a USB hub), and switch the table on if you have one.")
     if "usbpcap_missing" in causes:
