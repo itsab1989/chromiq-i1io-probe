@@ -30,6 +30,24 @@ It takes about **two minutes**, and you do **not** need to be technical.
 > [up to five short steps](#the-i1io-steps-in-154). There is still no recording
 > from a handheld instrument.
 
+> **Important if you made a recording with version 1.6.1 or older:** those
+> versions could keep traffic of **another USB device** that shared the
+> instrument's USB hub (for example a USB disk or memory stick) in the files
+> meant to hold only the instrument's traffic, and in `analysis.txt` and the
+> report. For a disk that can include its model name, its serial number and
+> the first sectors of the disk. Version 1.6.2 fixes this. What to do:
+> 1. Update to 1.6.2.
+> 2. Clean what you already made: run the tool with `--clean` and the
+>    `SEND-THIS-....zip` (or the session folder). It writes a cleaned copy
+>    next to it and says what it removed (how much, and what kind of device
+>    it looked like, never the content); your original stays as it was.
+>    Or simply delete the old files.
+> 3. If you are unsure, unplug other USB devices (above all disks and
+>    memory sticks) while you record.
+>
+> If you already sent us an older file, tell us and we will delete it.
+> [Why it happened](#which-traffic-is-the-instruments-since-162).
+
 > **Important for owners of an i1Pro 2 or an i1iO 2:** i1Profiler **3.8.7**
 > (July 2026) removed support for the i1Pro 2 and the i1iO 2. Please stay on
 > **i1Profiler 3.8.6 or older**, and do not let it update itself.
@@ -373,16 +391,21 @@ measuring program and one printed test chart.
    dial's calibration position).
 3. Scan one strip in single-scan mode at your normal speed.
 4. The same strip in dual-scan mode (i1Pro 2 and i1Pro 3 only).
-5. The same strip again, about twice as fast.
-6. The same strip again, slowly (about three times as long).
+5. The same strip again, clearly faster (press the button, wait for the
+   ready signal, then move).
+6. The same strip again, slowly: about twice as long as the normal scan in
+   step 3 (about 5 seconds, counted).
 7. Let one scan fail on purpose, for example by lifting the instrument
    halfway (skip it if you would rather not).
 8. Read one single patch, if the program offers it.
 9. The same strip without the ruler, as a comparison, if the program allows
    it (i1Pro 2 and i1Pro 3 only).
 
-After each step you type one line about what you did and what the program
-showed, and (for instruments with lights) one line about what the lights did.
+Each step's instructions are a short numbered list, one action per line
+(since 1.6.2). After each step you type one line about what you did and what
+the program showed, which measurement condition the program showed (M0, M1,
+M2 or dual scan) where it matters, and (for instruments with lights) one
+line about what the lights did.
 
 ### What it needs
 
@@ -460,8 +483,10 @@ showed, and (for instruments with lights) one line about what the lights did.
   before you start.
 - While a step records, USBPcap also sees the other devices on the same USB
   root hub, such as a keyboard. After each step the tool makes a copy that
-  holds **only the instrument's traffic** (its device address and nothing
-  else). Only that copy goes into the session folder (`instrument-session-<date>`);
+  holds **only the instrument's traffic** (by the rules
+  [below](#which-traffic-is-the-instruments-since-162); up to 1.6.1 by its
+  device address alone, which was not enough). Only that copy goes into the
+  session folder (`instrument-session-<date>`);
   the full recordings sit in a separate folder ending in `-FULL-do-not-send`,
   and the tool offers to delete them at the end.
 - Your one-line notes for each step, the program name and version, and the
@@ -498,9 +523,9 @@ i1iSis 2 XL, a recording of a few pages helps us learn the basics. As always,
 question, and the answer may be no.
 
 **Please note: this session has not been tried with a real i1iSis yet.** We
-built and tested it with made-up recordings only. So if something in it looks odd or does not fit what your
-i1iSis does, that is not your fault: please tell us, it helps just as much as
-a recording.
+built and tested it with made-up recordings only. So if something in it looks
+odd or does not fit what your i1iSis does, that is not your fault: please tell
+us, it helps just as much as a recording.
 
 The tool offers the session when it sees an i1iSis plugged in (choice 2 at the
 question "What would you like to do?"). You can also start it directly with
@@ -609,7 +634,8 @@ i1Studio or i1iO table); otherwise it is read as before 1.6. When you give
 `--analyze` several plain files that come from different instruments (for
 example an i1Pro 2 recording and an i1iSis recording), it does not mix them:
 it lists which instrument each file shows and asks you to analyse each
-instrument's recordings on their own (since 1.6.1). `--analyze`
+instrument's recordings on their own (since 1.6.1; since 1.6.2 it prints the
+paths as you gave them, and ends with exit code 2). `--analyze`
 (and `analysis.txt` in the zip) lists each step's traffic, puts the steps side
 by side (how long, how many bytes each way), says whether the i1iSis seems to
 talk through a USB-to-serial chip like the i1iO table does, and, if the
@@ -626,7 +652,9 @@ program opens files and starts programs (`open`, `io.open`, `os.open` and so
 `pathlib`, `subprocess`, `os.system`, `os.popen`, `os.posix_spawn`,
 `os.spawn*`, `os.exec*`, `os.fork`, `os.forkpty`, `os.openpty`, the `pty`
 module, and libraries or Python's own C functions reached through `ctypes`).
-It fails if the tool opens a device, writes outside its own folders, or starts
+It fails if the tool opens a device (on Windows also by a reserved name such
+as `COM3` or `nul`, or by a `\\.\` or `\\?\` device path; since 1.6.2),
+writes outside its own folders, or starts
 a program other than the ones it names, each command line with the arguments
 the tool really builds (each PowerShell command is compared with the exact
 scripts the tool holds). A check of the source bans those functions outright
@@ -728,9 +756,53 @@ Useful options:
   whether the table's commands were recorded. The table's serial number is
   hidden unless you add `--no-redact`.
   With no path it finds the newest session or recording next to the tool.
-  Reads only; sends nothing to the device.
+  Reads only; sends nothing to the device. It reads only what belongs to
+  the instrument (1.6.2), so it never prints another device's bytes.
+- `--clean ZIP_OR_FOLDER ...` (1.6.2): for files made with version 1.6.1 or
+  older. Writes a cleaned copy of a `SEND-THIS-....zip` (as
+  `...-cleaned.zip`), a session folder (as `...-cleaned`) or a single
+  recording (as `...-cleaned.pcap`), next to the original: only the
+  instrument's traffic by the rules of 1.6.2, `analysis.txt` made again from
+  the cleaned recordings, and the analysis inside the report replaced. It
+  says per file what it removed, as counts and the kind of device it looked
+  like, never the content. The original is not changed; delete it yourself
+  once you have the cleaned copy.
 
 The tests need nothing but Python: `python3 -m unittest discover -s tests -v`.
+
+---
+
+## Which traffic is the instrument's (since 1.6.2)
+
+A real Windows recording showed a USB disk's traffic carrying the
+instrument's own USB address. The reason is in USBPcap, the recorder: the
+address it writes into each packet is one it remembered when the device was
+started, and after Windows gives a device a new address (for example after
+waking from hibernation) another device can by then own the remembered one
+(USBPcap's own issue 105). The tool used to keep everything at the
+instrument's address, so it kept the disk's traffic too. A Mac recording
+names the device in every packet, and Linux never gives one address to two
+devices at the same time, but an address can come back after a replug.
+
+Since 1.6.2 a packet is kept only when all of this holds:
+
+1. its address belonged to the instrument at that moment (each USB
+   description at an address starts a new owner; the address every device
+   uses while it is being set up is never kept);
+2. it travels on endpoint 0 or on one of the instrument's own endpoints, of
+   the right kind (from the instrument's own USB description in the
+   recording, or the endpoints its family is known to have);
+3. it is not another kind of device's traffic: no disk commands, their data
+   or their status, no requests of a disk, keyboard, mouse or hub, nothing
+   aimed at an endpoint the instrument does not have.
+
+Whatever cannot be attributed with certainty is left out, and the step's
+check says so ("some traffic could not be attributed to the instrument and
+was left out"), with how much and what kind of device it looked like, never
+what it was. The analysis reads only what is kept. One limit remains: a
+device that sends nothing recognisable on exactly the instrument's endpoint
+numbers cannot be told apart. If you are unsure, unplug other USB devices
+while you record.
 
 ---
 

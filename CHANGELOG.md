@@ -1,5 +1,59 @@
 # Changelog
 
+## v1.6.2
+
+**A privacy fix. Please read this if you made a recording with 1.6.1 or
+older.**
+
+- **Versions up to 1.6.1 could keep traffic of another USB device** that
+  shared the instrument's USB hub in the files meant to hold only the
+  instrument's traffic, and in `analysis.txt` and the report. A real Windows
+  recording held a USB disk's traffic this way, including the disk's model
+  name, its serial number and its first sectors. The reason: USBPcap writes
+  into each packet a device address it remembered earlier, and after Windows
+  gives a device a new address another device can own the remembered one
+  (USBPcap issue 105); the tool kept everything at the instrument's address.
+  Mac recordings name the device in every packet and were not affected this
+  way; on Linux an address can come back after a replug.
+- **What to do:** update to 1.6.2; clean what you already made with
+  `--clean SEND-THIS-....zip` (or the session folder), or delete the old
+  files; if you are unsure, unplug other USB devices while you record. If
+  you already sent us an older file, tell us and we will delete it.
+- **The fix:** a packet is kept only if its address belonged to the
+  instrument at that moment, it travels on one of the instrument's own
+  endpoints (of the right kind), and it is not another kind of device's
+  traffic (disk commands, their data and status; disk, keyboard, mouse and
+  hub requests). Whatever cannot be attributed with certainty is left out,
+  and the step's check, `--analyze` and `--clean` say how much and what kind
+  of device it looked like, never what it was. The analysis reads only what
+  is kept, so it can no longer print another device's bytes or find
+  "possible position data" in them.
+- **New: `--clean`** writes a cleaned copy of a `SEND-THIS-....zip`, a
+  session folder or a recording, makes `analysis.txt` again and replaces the
+  analysis inside the report. The original is not changed.
+- **Clearer steps** (from a tester's answer): every step is a short numbered
+  list, one action per line. Scan steps say: press the button, wait until
+  the instrument or program signals it is ready, then move. "Slow" now
+  means about twice as long as the normal scan, with the seconds counted.
+  The measurement condition (M0, M1, M2, dual scan) is asked where it
+  matters.
+- **Analysis:** the i1Pro 2's lights in words (colour, side, pulses, how
+  often), the ruler's position steps per scan (and "no motion" in the
+  no-ruler control), fast and slow judged by the ruler against the normal
+  scan, readings checked per measurement instead of per transfer, and
+  "requests both know" instead of "both use".
+- **From the 1.6.1 review:** the refusal for recordings of different
+  instruments prints the paths as you gave them and ends with exit code 2;
+  the same i1Pro 2 with and without its USB description is listed once; the
+  read-only test also knows Windows device names (`COM3`, `nul`, `\\?\`
+  device paths).
+- Tests: recordings with a disk, a keyboard and a hub at the instrument's
+  address, replugs, the i1Pro 3, the i1iSis and the i1iO table beside a
+  disk, for Windows, macOS and Linux; every file the tool writes is scanned
+  for marker strings planted in the other device's traffic. What is kept
+  from clean recordings is unchanged against the tagged 1.5.5, except where
+  synthetic data sat on an endpoint the instrument does not have.
+
 ## v1.6.1
 
 - **`--analyze` with several plain files from different instruments:**

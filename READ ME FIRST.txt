@@ -9,6 +9,26 @@ i1iSis XL, i1iSis 2, i1iSis 2 XL).
 Thank you for helping!  This takes about two minutes.
 
 
+IMPORTANT IF YOU RECORDED WITH VERSION 1.6.1 OR OLDER
+---------------------------------------------------
+
+Those versions could keep traffic of ANOTHER USB device that shared
+the instrument's USB hub (for example a USB disk or memory stick) in
+the files meant to hold only the instrument's traffic.  Version
+1.6.2 fixes this.  Please clean what you already made:
+
+    run the tool with   --clean  SEND-THIS-....zip
+
+(on Windows in a Command Prompt, in the tool's folder:
+     chromiq-io-probe-windows.exe --clean SEND-THIS-....zip
+ on a Mac in the Terminal:
+     ./chromiq-io-probe-macos --clean SEND-THIS-....zip )
+
+It writes a cleaned copy next to it and says what it removed.  Or
+simply delete the old files.  If you are unsure, unplug other USB
+devices while you record.
+
+
 THE SHORT VERSION
 -----------------
 
