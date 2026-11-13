@@ -184,7 +184,8 @@ class SharedAddress(unittest.TestCase):
                     lambda: probe.clean_paths([raw])[0]):
             r, so = quiet(fn2)
             texts += [r or "", so]
-        return {"seen": probe.foreign_seen(att["left_out"]), "left_out": att["left_out"],
+        return {"seen": probe.foreign_seen(att["left_out"]),
+                "hidden": probe.hide_contents(att["left_out"]), "left_out": att["left_out"],
                 "text": in_text("\n".join(texts))}
 
     def test_no_marker_in_any_text_once_another_device_was_seen(self):
@@ -203,7 +204,7 @@ class SharedAddress(unittest.TestCase):
                            ("munki", "keyboard-83")):
             with self.subTest(session=prof):
                 r = self.results[(prof, name)]
-                self.assertIn("hid", r["left_out"])
+                self.assertIn("button", r["left_out"])
                 self.assertEqual(r["text"], [])
 
 

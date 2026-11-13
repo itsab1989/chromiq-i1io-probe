@@ -233,8 +233,9 @@ jobs:
             - **1.6.2 leaves out** traffic at the instrument's address on
               endpoints the instrument does not have (the case found), other
               devices' kinds of traffic (disk, keyboard, mouse, hub), and
-              monitor calibrators; then the analysis shows no contents of
-              that step and asks you to record it again.
+              monitor calibrators. When another device was also seen on one
+              of the instrument's own endpoints, the analysis shows no
+              contents of that step and asks you to record it again.
             - **It cannot tell apart** a device that was given the
               instrument's address and uses the same endpoint numbers (for
               example a USB 3 "UAS" disk, a printer, a phone or a USB-serial

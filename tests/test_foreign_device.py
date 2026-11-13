@@ -707,8 +707,13 @@ class CleanOldFiles(_Base):
             step = json.load(fh)["steps"][0]
         self.assertTrue(probe.foreign_seen(step["left_out"]))
         self.assertTrue(step["check"][0].startswith("cleaned by version"))
+        # 1.6.2: a bulk-only disk on two endpoints the i1Pro 2 does not have
+        # (the real case) is removed, and the instrument's contents are shown
+        self.assertTrue(step["explained"])
         with open(os.path.join(folder + "-cleaned", "analysis.txt"), encoding="utf-8") as fh:
-            self.assertIn("so the contents are not shown", " ".join(fh.read().split()))
+            text = " ".join(fh.read().split())
+        self.assertIn("traffic at this instrument's address was removed", text)
+        self.assertNotIn("so the contents are not shown", text)
 
     def test_a_zip_cannot_write_outside_its_folder(self):
         evil = os.path.join(self.dir, "SEND-THIS-evil.zip")

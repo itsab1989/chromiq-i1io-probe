@@ -24,10 +24,15 @@ older.**
   requests; other devices' USB descriptions; a keyboard on the instrument's
   own button endpoint), and when the address belonged to another device at
   that time. No session keeps a monitor calibrator (such as an i1Display)
-  any more. When a recording shows such traffic, the analysis shows no
-  contents of that step at all, only counts and sizes, and the step's
-  check and `--clean` say so and ask you to record it again with the other
-  devices unplugged.
+  any more. When that traffic is fully explained as one USB disk on
+  two endpoints the instrument does not have (the case in that
+  recording), the analysis shows the instrument's step as usual, with a
+  note that another device's traffic was removed. When another device's
+  traffic was also seen on one of the instrument's own endpoints, or could
+  not be placed, the analysis shows no contents of that step, only counts
+  and sizes, marks it as "not shown" in every comparison, and the step's
+  check and `--clean` ask you to record it again with the other devices
+  unplugged.
 - **What can still happen:** a device that was given the instrument's
   address AND uses the same endpoint numbers as the instrument looks to
   the recording exactly like the instrument, and its traffic can still end

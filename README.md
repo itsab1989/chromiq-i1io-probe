@@ -806,9 +806,13 @@ when:
 
 No session keeps a monitor calibrator (such as an i1Display) either. The
 step's check says what was left out, how much and what kind of device it
-looked like, never what it was. When a recording shows another device at the
-instrument's address in this way, the analysis shows no contents of that
-step, only counts and sizes, and asks you to record it again with the other
+looked like, never what it was. When all of that traffic is explained as one
+USB disk on two endpoints the instrument does not have (as in the recording
+we saw), the analysis shows the step as usual, with a note that another
+device's traffic was removed. When another device's traffic was also seen on
+one of the instrument's own endpoints, or could not be placed, the analysis
+shows no contents of that step, only counts and sizes, marks it as "not
+shown" in every comparison, and asks you to record it again with the other
 devices unplugged.
 
 **What 1.6.2 cannot tell apart.** A device that was given the instrument's

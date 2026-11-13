@@ -2864,7 +2864,7 @@ def check_capture(path: str, profile: str | None = None) -> dict:
     if code == "ok" and not identified:
         verdict += (" Which device each packet belongs to could not be told from this "
                     "recording (it holds no USB description).")
-    note = left_out_text(left_out)
+    note = left_out_text(left_out, att.get("explained", False))
     if note:
         verdict += " " + note
     return {"ok": code == "ok", "packets": len(recs), "xrite_packets": xrite,
@@ -2872,7 +2872,7 @@ def check_capture(path: str, profile: str | None = None) -> dict:
             "payload_bytes": payload_bytes, "nonzero_bytes": nonzero,
             "identified": identified, "activity": activity,
             "kept": how if xrite else "", "kept_ids": kept_ids if xrite else [],
-            "left_out": left_out}
+            "left_out": left_out, "explained": att.get("explained", False)}
 
 
 def record_device_keys(linktype: int, recs) -> list:
@@ -3026,7 +3026,7 @@ def summarize_captures(paths):
             out.append("")
             continue
         devices, cmds, timeline, bulk, descriptors = _analyze_darwin(recs)
-        if foreign_seen(check.get("left_out")):
+        if hide_contents(check.get("left_out"), check.get("explained", False)):
             timeline = []                  # 1.6.2: no contents (WITHHELD_TEXT)
             out.append("     " + _wrap(WITHHELD_TEXT, 62, "     "))
         if devices:
@@ -3422,6 +3422,9 @@ LEFT_OUT_KINDS = {
     "hub": "traffic of a USB hub",
     "description": "another device's USB description",
     "endpoint": "traffic on an endpoint the instrument does not have",
+    "shared-endpoint": "traffic of the wrong kind on one of the instrument's endpoints",
+    "button": "traffic of a keyboard or other input device on the instrument's button "
+              "endpoint",
     "owner": "traffic from a time when that address belonged to another device",
     "unattributed": "traffic that could not be attributed with certainty",
 }
@@ -3560,11 +3563,22 @@ def _config_kind(lines) -> str | None:
     return None
 
 
+def _bot_signature(ev) -> bool:
+    data = ev["data"]
+    return ((not ev["dir_in"] and len(data) == 31 and data[:4] == b"USBC")
+            or (ev["dir_in"] and len(data) == 13 and data[:4] == b"USBS"))
+
+
 def _bot_drops(events, keys) -> tuple:
     """Mass-storage bulk-only transport at the instrument's address: the
     31-byte "USBC" command, its data phase and the 13-byte "USBS" status.
-    Returns (ids of the events to drop, addresses where it was seen)."""
-    drop, seen = set(), set()
+    Returns (ids of the events to drop, addresses where it was seen, the
+    disk's endpoint pair per address when its complete commands show it).
+    1.6.2: a bulk-only disk has exactly one bulk IN and one bulk OUT endpoint
+    (USB Mass Storage Class, Bulk-Only Transport 1.0, section 4.3), so once
+    complete commands show the pair, a command whose start the recording
+    missed is narrowed to that pair too."""
+    drop, seen, pairs = set(), set(), {}
     by_key: dict = {}
     for ev in events:
         if ev["kind"] == "data" and ev["type"] == "bulk" and (ev["bus"], ev["dev"]) in keys:
@@ -3592,12 +3606,20 @@ def _bot_drops(events, keys) -> tuple:
         if not windows:
             continue
         seen.add(key)
+        known = set().union(*(w[2] for w in windows if w[2] is not None))
+        signed = {ev["ep"] for ev in evs if _bot_signature(ev)}
+        if len(known) == 2 and len({e & 0x80 for e in known}) == 2 and signed <= known:
+            pairs[key] = known
+            windows = [(a, b, e if e is not None else known) for a, b, e in windows]
+        for ev in evs:
+            if _bot_signature(ev):
+                drop.add(id(ev))               # a command or status block itself
         for ev in evs:
             for start, end, eps in windows:
                 if start <= ev["t"] <= end and (eps is None or ev["ep"] in eps):
                     drop.add(id(ev))
                     break
-    return drop, seen
+    return drop, seen, pairs
 
 
 def attribute_records(linktype: int, recs, profile: str | None = None,
@@ -3738,7 +3760,9 @@ def attribute_records(linktype: int, recs, profile: str | None = None,
         want = eps.get(ep)
         if ep not in eps or (kind != "info" and (
                 kind != want if want is not None else kind not in ("bulk", "interrupt"))):
-            mark(ri, "endpoint")
+            # 1.6.2: on an endpoint NUMBER the instrument also has, the
+            # other device may have sent more there that cannot be told apart
+            mark(ri, "shared-endpoint" if ep in eps else "endpoint")
             continue
         keep[ri] = True
 
@@ -3768,7 +3792,7 @@ def attribute_records(linktype: int, recs, profile: str | None = None,
         if (ev["kind"] == "control" and ev["rt"] == 0x80 and ev["req"] == 6
                 and ev["wValue"] >> 8 == 1 and len(ev["in"]) >= 17 and ev["in"][1] == 1):
             own_strings.setdefault(seg_for_event(ev), {0}).update(ev["in"][14:17])
-    bot_ids, bot_keys = _bot_drops(
+    bot_ids, bot_keys, bot_pairs = _bot_drops(
         mine, {(ev["bus"], ev["dev"]) for ev in mine})
     conflict = set()                    # owners with another device's traffic in them
     decisions = []
@@ -3788,7 +3812,7 @@ def attribute_records(linktype: int, recs, profile: str | None = None,
             kind = "storage"
         elif (btn and ev["kind"] == "data" and ev["dir_in"] and ev["ep"] == btn[0]
               and not btn[1](ev["data"])):
-            kind = "hid"                    # not the instrument's button: an input device
+            kind = "button"                 # not the instrument's button: an input device
         elif ev["kind"] == "control":
             rt, req = ev["rt"], ev["req"]
             rtype = (rt >> 5) & 3
@@ -3866,6 +3890,21 @@ def attribute_records(linktype: int, recs, profile: str | None = None,
         kind = reasons[0] if reasons else "unattributed"
         left[kind] = left.get(kind, 0) + 1
     result["left_out"] = left
+    # 1.6.2: is all the other traffic at the address explained as ONE
+    # bulk-only disk whose two endpoints the instrument does not have (the
+    # case of the real recording)? Then nothing of that disk can be among the
+    # instrument's records, and the analysis may show them (G2).
+    foreign_eps = {fields[ri][1] for ri, why in enumerate(drop_reason)
+                   if why in ("endpoint", "storage") and fields[ri]
+                   and fields[ri][1] & 0x7F and fields[ri][1] != 0xFF}
+    explained = bool(left) and set(left) <= {"storage", "endpoint", "owner"}
+    if explained and (set(left) - {"owner"}):
+        for s in wanted:
+            pair = bot_pairs.get(addr(s)) if not darwin else None
+            eps = allowed.get(s) or {}
+            if pair is None or pair & set(eps) or not foreign_eps <= pair:
+                explained = False
+    result["explained"] = explained
     result["devices"] = {addr(s): devices[s] for s in wanted}
     return result
 
@@ -3874,11 +3913,36 @@ def attribute_records(linktype: int, recs, profile: str | None = None,
 # instrument's address at the same time ("owner": the address only
 # belonged to another device at another time).
 PROVEN_FOREIGN = frozenset({"storage", "hid", "hub", "description", "endpoint",
-                            "unattributed"})
+                            "shared-endpoint", "button", "unattributed"})
+# ... and the kinds that mean it used one of the instrument's OWN endpoint
+# numbers (or could not be placed at all), so that more of its traffic may
+# hide among the instrument's: then a step's contents are not shown (G2).
+# Traffic only on endpoints the instrument does not have, or recognised class
+# traffic (as in the real recording that led to 1.6.2), is simply removed,
+# and the rest is the instrument's by rules 1 to 3.
+SHARED_ENDPOINT_KINDS = frozenset({"shared-endpoint", "button", "unattributed"})
+
+REMOVED_TEXT = ("Another USB device's traffic at this instrument's address was removed "
+                "from this step (it used endpoints the instrument does not have, or was a "
+                "disk's, keyboard's or hub's own kind of traffic). What is shown is the "
+                "instrument's.")
+HIDDEN_CELL = "contents not shown (another device shared this address)"
 
 WITHHELD_TEXT = ("Another USB device shared this instrument's address in this recording, "
                  "so the contents are not shown here, only counts and sizes. Please record "
                  "this again with the other USB devices unplugged.")
+
+
+def hide_contents(left: dict | None, explained: bool = False) -> bool:
+    """1.6.2 (G2): may another device's traffic hide among the instrument's
+    in this recording? Then its analysis shows counts and sizes only. Not
+    when all of it is explained as one bulk-only disk on two endpoints the
+    instrument does not have (attribute_records' "explained")."""
+    if not left:
+        return False
+    if any(left.get(k) for k in SHARED_ENDPOINT_KINDS):
+        return True
+    return foreign_seen(left) and not explained
 
 
 def foreign_seen(left: dict | None) -> bool:
@@ -3888,7 +3952,7 @@ def foreign_seen(left: dict | None) -> bool:
     return any(left.get(k) for k in PROVEN_FOREIGN) if left else False
 
 
-def left_out_text(left: dict) -> str:
+def left_out_text(left: dict, explained: bool = False) -> str:
     """The plain words for what attribute_records() left out, or ""."""
     total = sum(left.values())
     if not total:
@@ -3898,11 +3962,15 @@ def left_out_text(left: dict) -> str:
     text = (f"Some traffic could not be attributed to the instrument and was left out: "
             f"{total} {word} at the instrument's USB address ("
             + ", ".join(kinds) + "). That part is not in the files meant to be sent.")
-    if foreign_seen(left):
-        text += (" Another USB device shared the instrument's address, and what it sent "
-                 "on the instrument's own endpoints cannot be told apart. Please record "
-                 "this again with every other USB device unplugged that you can (or at "
-                 "least those on the same hub or dock).")
+    if hide_contents(left, explained):
+        text += (" Another USB device shared the instrument's address, also on one of the "
+                 "instrument's own endpoints, where its traffic cannot be told apart. "
+                 "Please record this again with every other USB device unplugged that "
+                 "you can (or at least those on the same hub or dock).")
+    elif foreign_seen(left):
+        text += (" Another USB device shared the instrument's address (on endpoints the "
+                 "instrument does not have). If you can, unplug the other USB devices "
+                 "before the next recording.")
     return text
 
 
@@ -4847,6 +4915,8 @@ def format_step(name: str, res: dict, notes: dict | None = None) -> list:
     out = [f"--- {name} ---"]
     if res.get("withheld"):
         out.append("  " + _wrap(WITHHELD_TEXT, 64, "  "))
+    elif (notes or {}).get("removed"):
+        out.append("  " + _wrap(REMOVED_TEXT, 64, "  "))
     if res.get("empty"):
         out.append("  EMPTY: nothing was recorded in this step, please repeat it.")
     notes = notes or {}
@@ -5009,14 +5079,17 @@ def session_steps(paths: list) -> tuple:
             events = []
             # 1.6.2: the step check of the session (or --clean) noted that
             # another device shared the address; the copy no longer shows it
-            withheld = foreign_seen(step.get("left_out"))
+            withheld = hide_contents(step.get("left_out"), step.get("explained", False))
+            removed = foreign_seen(step.get("left_out"))
             if files:
                 for f in files:
                     evs, devs, check = _xrite_events(f, family)
                     events += evs
                     devinfo.update(devs)
                     checks.append((os.path.basename(f), check))
-                    withheld = withheld or foreign_seen(check.get("left_out"))
+                    withheld = withheld or hide_contents(check.get("left_out"),
+                                                         check.get("explained", False))
+                    removed = removed or foreign_seen(check.get("left_out"))
             elif whole and step.get("start_epoch") is not None:
                 # One recording for the whole session (Wireshark by hand):
                 # cut it at the times the tool noted.
@@ -5027,7 +5100,9 @@ def session_steps(paths: list) -> tuple:
                         checks.append((os.path.basename(f), cache[f][2]))
                     lo, hi = step["start_epoch"], step.get("end_epoch") or 1e18
                     events += [e for e in cache[f][0] if lo <= e["t"] <= hi]
-                    withheld = withheld or foreign_seen(cache[f][2].get("left_out"))
+                    withheld = withheld or hide_contents(cache[f][2].get("left_out"),
+                                                         cache[f][2].get("explained", False))
+                    removed = removed or foreign_seen(cache[f][2].get("left_out"))
             events.sort(key=lambda e: e["t"])
             title = f"step {step.get('number', '?')}: {step.get('title', step.get('key'))}"
             if step.get("take", 1) > 1:
@@ -5036,7 +5111,7 @@ def session_steps(paths: list) -> tuple:
                                           "lights": step.get("lights", ""),
                                           "setting": step.get("setting", ""),
                                           "page": step.get("page", ""),
-                                          "withheld": withheld},
+                                          "withheld": withheld, "removed": removed},
                           bool(step.get("control")), step.get("key", "")))
         return steps, devinfo, checks, session
     # 1.6: one decision for all the plain files together (plain_file_profile).
@@ -5069,7 +5144,9 @@ def session_steps(paths: list) -> tuple:
         low = os.path.basename(f).lower()
         control = "noruler" in low or "no-ruler" in low or "control" in low
         steps.append((os.path.basename(f), evs,
-                      {"withheld": foreign_seen(check.get("left_out"))}, control, low))
+                      {"withheld": hide_contents(check.get("left_out"),
+                                                 check.get("explained", False)),
+                       "removed": foreign_seen(check.get("left_out"))}, control, low))
     return steps, devinfo, checks, {"plain": plain, "families": families}
 
 
@@ -5274,10 +5351,24 @@ def summarize_session(paths: list) -> str:
     if empties:
         out.append("  EMPTY STEPS (nothing recorded, please repeat them): " + "; ".join(empties))
         out.append("")
+    # 1.6.2: a step whose contents are not shown is "not shown", never "zero"
+    # or "none": it is marked in every table, and no comparison or verdict
+    # is drawn from its missing contents.
+    hidden = {r[0] for r in results if r[1].get("withheld")}
+    if hidden:
+        out.append("  " + _wrap(
+            f"{len(hidden)} step{'s' if len(hidden) != 1 else ''} below "
+            f"{'are' if len(hidden) != 1 else 'is'} not shown (another USB device shared "
+            "the instrument's address there): the comparisons leave "
+            f"{'them' if len(hidden) != 1 else 'it'} out, and say so.", 64, "  "))
+        out.append("")
     out.append("  STEPS SIDE BY SIDE")
     out.append(f"  {'step':32} {'meas':>4} {'readings':>8} {'secs':>6} {'rd/s':>5} "
                f"{'ruler':>5} {'other ep B':>10} {'lights':>6}")
     for name, res, _notes, _control, _key in results:
+        if name in hidden:
+            out.append(f"  {name[:32]:32} {HIDDEN_CELL}")
+            continue
         ms = res["measurements"]
         reads = sum(m["readings"] for m in ms)
         secs = sum(m["duration"] for m in ms)
@@ -5307,12 +5398,19 @@ def summarize_session(paths: list) -> str:
         out.append("")
 
     controls = [r for r in full if r[3]]
-    if controls:
-        base = set().union(*(r[1]["features"] for r in controls))
+    shown_controls = [r for r in controls if r[0] not in hidden]
+    if controls and not shown_controls:
+        out.append("  ONLY WITH THE RULER: not compared, because the no-ruler control step is "
+                   "not shown.")
+    if shown_controls:
+        base = set().union(*(r[1]["features"] for r in shown_controls))
         out.append("  ONLY WITH THE RULER (seen in a ruler step, never in the no-ruler control):")
         anything = False
         for name, res, _n, control, key in results:
             if control or "scan" not in key:
+                continue
+            if name in hidden:
+                out.append(f"    {name}: not compared ({HIDDEN_CELL})")
                 continue
             extra = sorted(f for f in res["features"] - base if not f.startswith("light "))
             if extra:
@@ -5323,12 +5421,18 @@ def summarize_session(paths: list) -> str:
                        "the control.")
         # 1.6.2: the commands alone can hide the main result (a real control
         # step used the same ruler bits, but its position never changed).
+    if controls:
         moved = [(name, res["motion"], control) for name, res, _n, control, _k in results
                  if res.get("motion")]
-        if moved:
+        if moved or hidden:
             out.append("  THE RULER'S POSITION, STEP BY STEP:")
-            for name, st, control in moved:
-                out.append(f"    {name}{'  [CONTROL]' if control else ''}: {motion_text(st)}")
+            for name, res, _n, control, key in results:
+                st = res.get("motion")
+                if name in hidden and ("scan" in key or control):
+                    out.append(f"    {name}{'  [CONTROL]' if control else ''}: {HIDDEN_CELL}")
+                elif st:
+                    out.append(f"    {name}{'  [CONTROL]' if control else ''}: "
+                               f"{motion_text(st)}")
             still = [name for name, st, control in moved if control and not st["steps"]]
             if still:
                 out.append("    " + _wrap(
@@ -5339,7 +5443,12 @@ def summarize_session(paths: list) -> str:
 
     fast = [r for r in full if "fast" in r[4]]
     slow = [r for r in full if "slow" in r[4]]
-    if fast and slow:
+    if fast and slow and (fast[-1][0] in hidden or slow[-1][0] in hidden):
+        out.append("  FAST AGAINST SLOW SWIPE: not compared, because the "
+                   + " and the ".join(n for n in (fast[-1][0], slow[-1][0]) if n in hidden)
+                   + " step's contents are not shown.")
+        out.append("")
+    elif fast and slow:
         def stats(r):
             ms = [m for m in r[1]["measurements"] if m["readings"]]
             reads = sum(m["readings"] for m in ms)
@@ -5364,7 +5473,7 @@ def summarize_session(paths: list) -> str:
         # 1.6.2: by the ruler, when the recording has it: how long the
         # instrument really moved, against the normal scan.
         fm, sm = motion_seconds(fast[-1][1].get("motion")), motion_seconds(slow[-1][1].get("motion"))
-        normal = [r for r in full if "single" in r[4]]
+        normal = [r for r in full if "single" in r[4] and r[0] not in hidden]
         nm = motion_seconds(normal[-1][1].get("motion")) if normal else None
         if fm is not None or sm is not None:
             out.append("    by the ruler, the instrument moved for: "
@@ -5399,6 +5508,10 @@ def summarize_session(paths: list) -> str:
     out.append("  THE LIGHTS' LANGUAGE (light commands per step, in order):")
     any_led = False
     for name, res, notes, _c, _k in results:
+        if name in hidden:
+            out.append(f"    {name}: {HIDDEN_CELL}"
+                       + (f"; operator saw: {notes['lights']}" if notes.get("lights") else ""))
+            continue
         if res["leds"]:
             any_led = True
             out.append(f"    {name}: " + " | ".join(d["text"] for _r, d in res["leds"]))
@@ -5406,7 +5519,9 @@ def summarize_session(paths: list) -> str:
                 out.append(f"        operator saw: {notes['lights']}")
         elif notes.get("lights"):
             out.append(f"    {name}: no light command recorded; operator saw: {notes['lights']}")
-    if not any_led:
+    if not any_led and hidden:
+        out.append("    No light command in the steps that are shown.")
+    elif not any_led:
         out.append("    No light command in any step. If the operator saw the light(s) "
                    "change, the program drives them some other way: look at the unknown "
                    "requests and at data on endpoints the open driver never uses, at the "
@@ -5427,20 +5542,27 @@ def summarize_session(paths: list) -> str:
     out.append(f"    real instrument traffic, not zeros ... {yes[have_traffic]}")
     out.append(f"    USB description (endpoint list) ...... "
                f"{yes[any(v.get('config') for v in xr.values())]}")
-    out.append(f"    measurements with readings ........... {yes[bool(scan_ms)]}")
+    def yes_or_hidden(value):
+        # 1.6.2: a NO that hidden steps could turn into a yes is "not known"
+        return "yes" if value else ("not known (steps not shown)" if hidden else "NO")
+    out.append(f"    measurements with readings ........... {yes_or_hidden(bool(scan_ms))}")
     out.append(f"    a fast and a slow swipe .............. {yes[bool(fast and slow)]}")
     if family in ("i1pro2", "i1pro3"):
         out.append(f"    a dual-scan step ..................... "
                    f"{yes[any('dual' in r[4] for r in full)]}")
         out.append(f"    a no-ruler control ................... {yes[bool(controls)]}")
     if family in ("i1pro2", "i1pro3", "munki"):
-        out.append(f"    light commands ....................... {yes[any_led]}")
+        out.append(f"    light commands ....................... {yes_or_hidden(any_led)}")
     out.append("")
     ruler_cmd = any(r[1]["ruler"] for r in results)
     other_ep = any(i["ep"] not in fam["argyll_eps"] for r in results
                    for i in r[1]["endpoints"].values())
     unknown = any(r[1]["unknown"] for r in results)
-    if family == "generic":
+    if hidden and len(hidden) == len(results):
+        out.append("  In plain words: no step is shown, because another USB device shared "
+                   "the instrument's address; please record again with the other USB "
+                   "devices unplugged.")
+    elif family == "generic":
         out.append("  In plain words: the tool has no decoder for this device; everything is "
                    "listed raw above.")
     elif family == "i1pro2" and (ruler_cmd or other_ep or unknown):
@@ -5453,7 +5575,7 @@ def summarize_session(paths: list) -> str:
             found.append("requests the open driver does not know")
         out.append("  In plain words: the recording shows " + ", and ".join(found) +
                    ". These are the places to look for how the program uses the ruler.")
-    elif family == "i1pro2" and scan_ms:
+    elif family == "i1pro2" and scan_ms and not hidden:
         out.append("  In plain words: no sign of ruler traffic. No 0xD7, no ruler bits, no "
                    "data on endpoints the open driver never uses, no unknown requests. "
                    "Either the program did not use the ruler here, or its position data "
@@ -5464,6 +5586,9 @@ def summarize_session(paths: list) -> str:
                    + ("it also shows requests or endpoints the open driver does not use, "
                       "listed above." if (unknown or other_ep) else
                       "it uses only requests and endpoints the open driver knows."))
+    elif hidden:
+        out.append("  In plain words: the steps that are shown hold no measurement with "
+                   "readings; the others are not shown.")
     else:
         out.append("  In plain words: there is no measurement with readings in these files "
                    "yet.")
@@ -5542,6 +5667,13 @@ def summarize_isis(results: list, steps: list, checks: list, session, xr: dict) 
                    f"{from_dev:>11,} {transfers:>9}")
     out.append("")
 
+    hidden = [r[0] for r in results if r[1].get("withheld")]
+    if hidden:
+        out.append("  " + _wrap("Not shown, only counted above (another USB device shared "
+                                "the instrument's address there): " + "; ".join(hidden)
+                                + ". What follows comes from the other steps only.",
+                                64, "  "))
+        out.append("")
     # 1.6.2: nothing of a step in which another device shared the address
     events = [e for _n, evs, notes, *_ in steps if not notes.get("withheld") for e in evs]
     ftdi = looks_like_ftdi(events)
@@ -5989,7 +6121,7 @@ def io_capture(path: str) -> dict | None:
                 for key, info in devices.items() if key in table) or any(
         (ev.get("vid"), ev.get("pid")) == (XRITE_VID, IO_TABLE_PID) for ev in events)
     return {"path": path, "t0": t0, "events": events, "table": table, "pro": pro,
-            "foreign": foreign_seen(att["left_out"]),
+            "foreign": hide_contents(att["left_out"], att.get("explained", False)),
             "lines": io_table_lines(events, table), "linktype": linktype, "by_id": by_id}
 
 
@@ -7970,6 +8102,9 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                 for kind, count in (check.get("left_out") or {}).items():
                     entry.setdefault("left_out", {})
                     entry["left_out"][kind] = entry["left_out"].get(kind, 0) + count
+                if check.get("left_out"):
+                    entry["explained"] = entry.get("explained", True) and \
+                        bool(check.get("explained"))
                 empty = empty or check["code"] == "empty-step"
                 zero = zero or check["code"] == "all-zero"
                 if check["code"] == "unidentified":
@@ -8118,7 +8253,7 @@ def handheld_step_verdict(entry: dict, activity: int, empty: bool, zero: bool = 
         text = f"this step recorded {activity} {word} of the instrument: good."
         if entry.get("left_out"):
             # 1.6.2: traffic at the instrument's address that was not its own.
-            text += " " + left_out_text(entry["left_out"])
+            text += " " + left_out_text(entry["left_out"], entry.get("explained", False))
         return text
     if entry.get("unidentified"):
         return ("NOTHING KEPT: this recording does not show which device is the i1iSis "
@@ -8462,7 +8597,7 @@ def clean_recording(src: str, dst: str, profile=None) -> dict:
         except OSError:
             pass
     return {"ok": ok, "records": len(recs), "kept": len(kept),
-            "left_out": att["left_out"]}
+            "left_out": att["left_out"], "explained": att.get("explained", False)}
 
 
 def _clean_report_text(text: str, analysis: str | None) -> tuple:
@@ -8523,12 +8658,18 @@ def _clean_folder_files(src_dir: str, dst_dir: str, lines: list) -> dict:
             lines.append(f"    {name}: kept {res['kept']:,} of {res['records']:,} records; "
                          + (f"removed {what}" if what else
                             f"removed {removed:,} records of other devices"))
-            if foreign_seen(res["left_out"]):
+            if hide_contents(res["left_out"], res.get("explained", False)):
                 lines.append("      " + _wrap(
-                    "Another USB device shared the instrument's address in this recording. "
-                    "What it sent on the instrument's own endpoints cannot be told apart, so "
-                    "if you can, please record this step again with the other USB devices "
-                    "unplugged. The analysis shows no contents of this step.", 60, "      "))
+                    "Another USB device shared the instrument's address in this recording, "
+                    "also on one of the instrument's own endpoints. What it sent there "
+                    "cannot be told apart, so if you can, please record this step again "
+                    "with the other USB devices unplugged. The analysis shows no contents "
+                    "of this step.", 60, "      "))
+            elif foreign_seen(res["left_out"]):
+                lines.append("      " + _wrap(
+                    "Another USB device shared the instrument's address in this recording, "
+                    "on endpoints the instrument does not have; that traffic was removed and "
+                    "the rest is the instrument's.", 60, "      "))
         else:
             lines.append(f"    {name}: nothing to remove ({res['kept']:,} records kept)")
     if session is not None:
@@ -8541,10 +8682,14 @@ def _clean_folder_files(src_dir: str, dst_dir: str, lines: list) -> dict:
             done = [d for d in done if d]
             if not done:
                 continue
+            step.pop("left_out", None)
+            step.pop("explained", None)
             for d in done:
                 for k, v in d["left_out"].items():
                     step.setdefault("left_out", {})
                     step["left_out"][k] = step["left_out"].get(k, 0) + v
+                if d["left_out"]:
+                    step["explained"] = step.get("explained", True) and d["explained"]
             step["check"] = [f"cleaned by version {PROBE_VERSION}: kept {d['kept']:,} of "
                              f"{d['records']:,} records" for d in done]
         with open(os.path.join(dst_dir, "session.json"), "w", encoding="utf-8") as fh:
