@@ -505,7 +505,8 @@ class Session(_IsisSessionBase):
     def test_whole_session(self):
         answers = []
         for key in ISIS_KEYS:
-            answers += ["", "e", f"did {key}"] + (["dual, M0 M2"] if key == "page-dual" else [])
+            answers += ["", "e", f"did {key}"] + (["dual, M0 M2"] if key == "page-dual" else
+                                                  ["single, M0"] if key == "page-single" else [])
             answers += [f"moved {key}", "green", ""]
         session, screen = self.run_session(answers, profile="isis")
         self.assertEqual(session["ended"], "all steps done")
@@ -518,6 +519,7 @@ class Session(_IsisSessionBase):
         self.assertEqual([s["key"] for s in saved], ISIS_KEYS)
         self.assertEqual(saved[2]["page"], "moved page-single")
         self.assertEqual(saved[3]["setting"], "dual, M0 M2")
+        self.assertEqual(saved[2]["setting"], "single, M0")
         self.assertEqual(saved[0]["lights"], "green")
         for step in saved:
             for name in step["files_xrite"]:
@@ -1020,7 +1022,8 @@ class ReadOnlyPromise(_IsisSessionBase):
     def watched_session(self, mod, only=None):
         answers = []
         for key in ISIS_KEYS:
-            answers += ["", "e", "ok"] + (["dual"] if key == "page-dual" else []) + ["", "", ""]
+            answers += ["", "e", "ok"] + (["dual"] if key in ("page-dual", "page-single")
+                                          else []) + ["", "", ""]
         replies = iter(answers)
         recorder = mod.UsbPcapRecorder(self.exe, ["\\\\.\\USBPcap1"], "")
         with DeviceWatch(self.dir, self.exe) as watch, \

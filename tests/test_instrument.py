@@ -489,8 +489,8 @@ class SessionTests(TempDirCase):
 
     def test_record_repeat_skip_and_stop(self):
         answers = ["", "e", "started fine", "white, then off", "",          # 1 idle
-                   "", "e", "cal ok", "blinked", "r",                       # 2 calibrate
-                   "", "e", "cal ok again", "steady green", "",             # 2 take 2
+                   "", "e", "cal ok", "M0", "blinked", "r",                 # 2 calibrate
+                   "", "e", "cal ok again", "M0", "steady green", "",       # 2 take 2
                    "s",                                                    # 3 skipped
                    "q"]                                                    # stop at 4
         session, screen = self.run_session(answers)
@@ -575,7 +575,9 @@ class SessionTests(TempDirCase):
     def test_whole_session_then_finish_analysis_and_delete(self):
         answers = []
         for n in range(1, 10):
-            answers += ["", "e", "did it"] + (["dual, M1"] if n == 4 else []) + ["lights", ""]
+            # 1.6.2: the measurement condition is asked from step 2 on
+            answers += ["", "e", "did it"] + (["dual, M1"] if n == 4 else ["M0"] if n >= 2
+                                               else []) + ["lights", ""]
         session, _screen = self.run_session(answers)
         self.assertEqual(session["ended"], "all steps done")
         with mock.patch.object(probe, "ask", lambda *_a, **_k: "yes"), \
@@ -646,7 +648,7 @@ class LinuxRecorderTests(TempDirCase):
         env = {"PATH": bin_dir + os.pathsep + os.environ.get("PATH", ""),
                "FAKE_LOG": log, "FAKE_PCAPS": pcaps}
         folder = os.path.join(self.dir, "instrument-session-linux")
-        answers = iter(["", "e", "ok", "", "", "", "q", "ok2", ""])
+        answers = iter(["", "e", "ok", "", "", "", "q", "ok2", "", ""])
         with mock.patch.dict(os.environ, env), \
                 mock.patch.object(probe, "RECORDER_STARTUP_WAIT", 0.3), \
                 mock.patch.object(probe, "SHORT_STEP_SECONDS", 0.0), \
