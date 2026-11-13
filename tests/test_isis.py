@@ -832,6 +832,13 @@ class DeviceWatch:
                              LoadLibrary=refuse("ctypes.pydll.LoadLibrary"))),
                          mock.patch.object(ctypes, "pythonapi", _Refusing(watch, "ctypes.pythonapi")),
                          mock.patch.object(ctypes, "_dlopen", refuse("ctypes._dlopen"))]
+        import _ctypes
+        import multiprocessing.process
+        for name in ("dlopen", "dlsym", "dlclose"):
+            if hasattr(_ctypes, name):
+                self._patches.append(mock.patch.object(_ctypes, name, refuse("_ctypes." + name)))
+        self._patches.append(mock.patch.object(multiprocessing.process.BaseProcess, "start",
+                                               refuse("multiprocessing.Process.start")))
         import pty
         for mod, name in ((os, "forkpty"), (os, "openpty"), (os, "fork"), (pty, "fork"),
                           (pty, "openpty"), (pty, "spawn")):
@@ -881,6 +888,12 @@ MUTATIONS = {
     # third review
     "pythonapi_open": '__import__("ctypes").pythonapi.open(b"/dev/zero", 1)',
     "forkpty": '(lambda r: os._exit(0) if r[0] == 0 else os.waitpid(r[0], 0))(os.forkpty())',
+    # fourth review
+    "ctypes_dlsym": '(lambda c, _c: c.CFUNCTYPE(c.c_int, c.c_char_p, c.c_int)('
+                    '_c.dlsym(_c.dlopen(None), "open"))(b"/dev/zero", 1))'
+                    '(__import__("ctypes"), __import__("_ctypes"))',
+    "multiprocessing_spawn": '__import__("multiprocessing").get_context("spawn").Process('
+                             'target=os.getpid).start()',
 }
 MUTATION_ANCHOR = '    os.makedirs(folder, exist_ok=True)\n    _END["session_folder"] = folder\n'
 
@@ -963,7 +976,8 @@ class ReadOnlyPromise(_IsisSessionBase):
                         r"\bPyDLL\b", r"\bcdll\b", r"\bpydll\b", r"\boledll\b",
                         r"LoadLibrary", r"find_library", r"-exec\b", r"\bpythonapi\b",
                         r"\b_dlopen\b", r"\bforkpty\b", r"\bopenpty\b", r"\bos\.fork\b",
-                        r"^\s*import pty\b", r"\bpty\.\w"):
+                        r"^\s*import pty\b", r"\bpty\.\w", r"\b_ctypes\b", r"\bdlsym\b",
+                        r"\bCFUNCTYPE\b", r"\bmultiprocessing\b", r"\b_posixsubprocess\b"):
             self.assertIsNone(re.search(pattern, src, re.M), pattern)
 
     def test_the_patterns_match_the_recorders_commands(self):
