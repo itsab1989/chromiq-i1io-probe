@@ -87,6 +87,42 @@ class DarwinOutData(TmpCase):
         self.assertEqual(len(ev), 1)
         self.assertTrue(ev[0]["dir_in"])
 
+    def test_handheld_analysis_on_a_mac_sees_trigger_bits_and_the_ruler_stop(self):
+        """The 1.5.3 reader left these empty on a Mac, so its summary could say
+        "no sign of ruler traffic" for a recording that has it."""
+        w = sio.DarwinWriter()
+        w.trigger(readings=10, lamp=41, flags=0x0105)            # scan + ruler start + lamp
+        w.control(sio.PRO, sio.PRO_PID, 0x40, 0xD7, out=synth.be16(0x0002))
+        res = probe.analyze_step(probe._events_darwin(w.records), "i1pro2")
+        ruler = " | ".join(text for _t, text in res["ruler"])
+        self.assertIn("0xD4 with ruler bits", ruler)
+        self.assertIn("0xD7 sent: parameter 0x0002", ruler)
+        self.assertEqual(res["measurements"][0]["nummeas"], 10)
+        self.assertEqual(res["measurements"][0]["intclocks"], 139)
+
+    def test_usbpcap_keeps_host_to_device_data(self):
+        """USBPcap (per its documentation, which synth.UsbPcapWriter follows):
+        OUT data in the request record, the control OUT data stage as its own
+        stage-1 record. Checked here on a synthetic file only; no real
+        Windows recording of an i1Pro 2 exists yet."""
+        w = synth.UsbPcapWriter()
+        w.describe(synth.I1PRO, 0x0971, 0x2000, synth.I1PRO2_ENDPOINTS)
+        synth.i1pro2_trigger(w, 0x0105, 10)
+        w.vendor_out(synth.I1PRO, 0xD6, synth.be32(len(synth.LED_OFF)))
+        w.bulk_out(synth.I1PRO, 0x03, synth.LED_OFF)
+        w.vendor_out(synth.I1PRO, 0xD7, synth.be16(0x0002))
+        path = w.save(self.path("win.pcap"))
+        linktype, recs = probe._read_pcap(path)
+        ev = probe.capture_events(linktype, recs)
+        outs = [e for e in ev if e["kind"] == "data" and not e["dir_in"]]
+        self.assertEqual([e["data"] for e in outs], [synth.LED_OFF])
+        ctl = {e["req"]: e["out"] for e in ev if e["kind"] == "control"}
+        self.assertEqual(len(ctl[0xD4]), 14)
+        self.assertEqual(ctl[0xD7], synth.be16(0x0002))
+        res = probe.analyze_step(ev, "i1pro2")
+        self.assertTrue(res["leds"] and res["leds"][0][1]["ok"])
+        self.assertIn("0xD7 sent: parameter 0x0002", " | ".join(t for _r, t in res["ruler"]))
+
     def test_handheld_analysis_now_sees_the_lights_on_a_mac(self):
         w = sio.DarwinWriter()
         w.control(sio.PRO, sio.PRO_PID, 0x40, 0xD6, out=synth.be32(len(synth.LED_OFF)))
@@ -176,7 +212,7 @@ class TableAnalysis(TmpCase):
         self.assertIn("every line checks out", text)
         self.assertIn("FTDI set baud rate (divisor 52, about 57,692 baud)", text)
         self.assertIn("FTDI set data format: 8 data bits, no parity, 1 stop bit", text)
-        self.assertIn("c3, sent as each scan starts (guess: head down)", text)
+        self.assertIn("c3, sent as each scan starts (guess: head down, or telling the table", text)
         self.assertIn("home / reference run", text)
         self.assertIn("(likely)", text)
         self.assertIn("i1Pro BUTTON pressed", text)
@@ -237,25 +273,25 @@ class TableAnalysis(TmpCase):
         w, path, (start, end) = self.recording()
         t0 = w.records[0][0]
         rep = self.report(t0, [
-            f"A few patches, watching the head: t={start - t0:8.3f}s .. {end - t0:8.3f}s   (x)",
+            f"One row in your usual setting, watching closely: t={start - t0:8.3f}s .. {end - t0:8.3f}s   (x)",
             f"  mark: head down at t={start - t0 + 1:8.3f}s",
-            "A small chart, measured to the end: SKIPPED",
-            f"Cancel in the middle of a row: t={end - t0 + 5:8.3f}s .. {end - t0 + 9:8.3f}s"
+            "A small chart to the end, fastest setting: SKIPPED",
+            f"A few patches in spot mode, watching the head: t={end - t0 + 5:8.3f}s .. {end - t0 + 9:8.3f}s"
             "   (x)"])
         text = probe.analyze_paths([path, rep])
         self.assertIn("(exact times)", text)
-        self.assertRegex(text, r"A few patches, watching the head: this step recorded \d+ "
+        self.assertRegex(text, r"One row in your usual setting, watching closely: this step recorded \d+ "
                                r"commands to the table: good")
-        self.assertIn("A small chart, measured to the end: skipped", text)
-        self.assertIn("Cancel in the middle of a row: no table command was recorded in "
+        self.assertIn("A small chart to the end, fastest setting: skipped", text)
+        self.assertIn("A few patches in spot mode, watching the head: no table command was recorded in "
                       "this step: please repeat it", text)
         self.assertIn(">>> OPERATOR: head down", text)
-        self.assertIn(">>> STEP: A few patches, watching the head", text)
+        self.assertIn(">>> STEP: One row in your usual setting, watching closely", text)
 
     def test_report_next_to_the_recording_is_found_by_name(self):
         w, path, (start, end) = self.recording()
         t0 = w.records[0][0]
-        self.report(t0, [f"A few patches, watching the head: t={start - t0:8.3f}s .. "
+        self.report(t0, [f"One row in your usual setting, watching closely: t={start - t0:8.3f}s .. "
                          f"{end - t0:8.3f}s   (x)"], mention=os.path.basename(path))
         text = probe.analyze_paths([path])
         self.assertIn("steps, from chromiq-io-probe-", text)
@@ -299,7 +335,7 @@ class TableAnalysis(TmpCase):
 class Steps(TmpCase):
 
     def test_three_steps_in_order_of_value(self):
-        self.assertEqual([s["key"] for s in probe.IO_STEPS], ["head", "finish", "cancel"])
+        self.assertEqual([s["key"] for s in probe.IO_STEPS], ["row", "spot", "fast", "dual"])
         for s in probe.IO_STEPS:
             for field in ("title", "prepare", "do", "arm"):
                 self.assertTrue(s[field].strip(), (s["key"], field))
@@ -307,9 +343,10 @@ class Steps(TmpCase):
     def test_walk_marks_skip_repeat_and_check(self):
         log, record = [], []
         answers = ["", "d", "u", "looked odd", "", "down on each patch", "r",   # step 1
-                   "", "", "", "",                                              # again
+                   "", "a", "l", "", "", "",                                    # again
                    "s",                                                          # step 2
-                   "", "", "", ""]                                              # step 3
+                   "", "", "", "",                                              # step 3
+                   "", "", "", ""]                                              # step 4
         checks = []
         with mock.patch.object(probe, "ask", scripted(answers)), redirect_stdout(io.StringIO()) as out:
             how = probe.run_io_steps(probe.IO_STEPS, time.time(), log, record=record,
@@ -317,26 +354,26 @@ class Steps(TmpCase):
                                      "this step recorded 3 commands to the table: good")
         self.assertEqual(how, "all steps done")
         self.assertEqual([r["title"] for r in record],
-                         ["A few patches, watching the head",
-                          "A few patches, watching the head (take 2)",
-                          "A small chart, measured to the end",
-                          "Cancel in the middle of a row"])
+                         ["One row in your usual setting, watching closely", "One row in your usual setting, watching closely (take 2)", "A few patches in spot mode, watching the head", "A small chart to the end, fastest setting", "One row with dual scan (M1 or M2)"])
         self.assertTrue(record[2]["skipped"])
+        self.assertEqual([m[0] for m in record[1]["marks"]],
+                         ["arm starts moving", "lamp lights up"])
         self.assertEqual([m[0] for m in record[0]["marks"]],
                          ["head down", "head up", "note: looked odd"])
-        self.assertEqual(len(checks), 3)
+        self.assertEqual(len(checks), 4)
         text = "\n".join(log)
         self.assertIn("  arm: down on each patch", text)
-        self.assertIn("A small chart, measured to the end: SKIPPED", text)
+        self.assertIn("A few patches in spot mode, watching the head: SKIPPED", text)
         self.assertIn("CHECK: this step recorded 3 commands", out.getvalue())
         # the log reads back as steps and marks
         parsed = probe.io_steps_from_report(
             "Stage 2: annotated capture timeline\n=====\n"
             + "\n".join(probe.io_log_header(1000.0)) + "\n" + text, 0)
         self.assertTrue(parsed["exact"])
-        self.assertEqual(len([s for s in parsed["steps"] if not s.get("skipped")]), 3)
+        self.assertEqual(len([s for s in parsed["steps"] if not s.get("skipped")]), 4)
         self.assertEqual([m["what"] for m in parsed["marks"]],
-                         ["head down", "head up", "note: looked odd"])
+                         ["head down", "head up", "note: looked odd", "arm starts moving",
+                          "lamp lights up"])
 
     def test_ctrl_c_keeps_the_finished_steps(self):
         log = []
@@ -344,7 +381,7 @@ class Steps(TmpCase):
         with mock.patch.object(probe, "ask", scripted(answers)), redirect_stdout(io.StringIO()):
             with self.assertRaises(KeyboardInterrupt):
                 probe.run_io_steps(probe.IO_STEPS, time.time(), log)
-        self.assertTrue(any(l.startswith("A few patches, watching the head: t=") for l in log))
+        self.assertTrue(any(l.startswith("One row in your usual setting, watching closely: t=") for l in log))
 
     def test_quit(self):
         log = []
@@ -353,11 +390,11 @@ class Steps(TmpCase):
                              "stopped by the operator")
 
     def test_timed_steps_write_the_log_and_the_answers(self):
-        answers = [""] * 12 + ["nothing odd", "small.pxf", "A4", "190 mm, 20 patches",
+        answers = [""] * 16 + ["nothing odd", "small.pxf", "A4", "190 mm, 20 patches",
                                "M2, scan", "no"]
         with mock.patch.object(probe, "ask", scripted(answers)), redirect_stdout(io.StringIO()):
             record = probe.io_timed_steps()
-        self.assertEqual(len(record), 3)
+        self.assertEqual(len(record), 4)
         sections = dict(probe._SECTIONS)
         timeline = sections["Stage 2: annotated capture timeline"]
         self.assertIn("session start (UTC epoch seconds): ", timeline)
@@ -381,21 +418,24 @@ class Steps(TmpCase):
         self.assertEqual(probe._SECTIONS, [])
 
     def test_summary_table_says_what_is_missing(self):
-        rows = [("A few patches, watching the head", True, 14, 3),
-                ("A small chart, measured to the end", None, 0, 0),
-                ("Cancel in the middle of a row", True, 0, 0)]
+        rows = [("One row in your usual setting, watching closely", True, 14, 3),
+                ("A few patches in spot mode, watching the head", True, 0, 0),
+                ("A small chart to the end, fastest setting", None, 0, 0),
+                ("One row with dual scan (M1 or M2)", None, 0, 0)]
         text = "\n".join(probe.io_summary_table(rows))
         self.assertIn("step", text)
         self.assertIn("recorded", text)
         self.assertIn("table commands seen", text)
         self.assertIn("<-- please repeat", text)
-        self.assertIn("Still missing: A small chart, measured to the end; Cancel in the", text)
+        self.assertIn("Still missing: A small chart to the end, fastest setting.", text)
+        self.assertIn("(fine if i1Profiler does not offer it)", text)
+        self.assertNotIn("dual scan (M1 or M2);", text)
         full = [(s["title"], True, 9, 2) for s in probe.IO_STEPS]
         self.assertIn("Nothing important is missing", "\n".join(probe.io_summary_table(full)))
 
     def test_a_repeat_that_worked_counts(self):
-        rows = [("A few patches, watching the head", True, 0, 0),
-                ("A few patches, watching the head (take 2)", True, 9, 2)]
+        rows = [("One row in your usual setting, watching closely", True, 0, 0),
+                ("One row in your usual setting, watching closely (take 2)", True, 9, 2)]
         rows += [(s["title"], True, 5, 1) for s in probe.IO_STEPS[1:]]
         self.assertIn("Nothing important is missing", "\n".join(probe.io_summary_table(rows)))
 

@@ -1353,69 +1353,110 @@ CAPTURE_HELP = {
 # 1.5.4: the steps for the NEXT i1iO recording.
 #
 # The first two real recordings (issue #129) already hold the connection,
-# the calibration, the hand alignment of the three corners and the row
-# scans. What they do not hold is what these steps ask for, ordered by how
-# much each one teaches us, so that a tester who stops after the first one
-# or two has still given the most useful part:
-#   1. what the head does: the operator marks "down" and "up" as it happens,
-#      so the unknown commands c3, c4 and d1 can be matched to the head
-#      (nothing may lower the head in a test build until this is known);
-#      in spot mode if i1Profiler offers it, which also shows a spot-only job;
-#   2. a normal end, where the arm parks by itself, with a smaller chart in
-#      another place (different coordinates, and the chart file and a ruler
-#      measurement afterwards prove the unit of length);
-#   3. a cancel in the middle of a row (how a running job is stopped).
+# the hand alignment of the three corners and the row scans. These steps ask
+# for what they lack, ordered by how much each one teaches us, so that a
+# tester who stops after the first one or two has still given the most
+# useful part. All in ONE round, because on a Mac every round costs the
+# tester two restarts with SIP switched off.
+#   1. One row in the usual setting, with the calibration, the operator
+#      marking when the arm starts along the row (a), when the lamp lights
+#      (l) and when the head goes down and up (d, u), then Cancel while the
+#      arm moves along the second row. The marks separate the table from the
+#      instrument: the recordings showed that the table seems to WAIT for
+#      the instrument (when i1Profiler started the i1Pro later after the
+#      scan move, the table finished later by the same amount, with nothing
+#      sent to the table in between), and that c3 / c4 / d1 are not
+#      understood (nothing may lower the head in a test build until they
+#      are). The calibration keeps the UV LED's calibration on the table's
+#      tile in the recording, and the cancel shows how a job is stopped.
+#   2. A few patches in spot mode, if i1Profiler offers it: head marks again,
+#      and a spot-only job.
+#   3. A small chart measured to the end with the FASTEST setting i1Profiler
+#      offers: the normal end where the arm parks by itself, other
+#      coordinates, and (with the ruler measurement afterwards) the unit of
+#      length. One fast pass per row already held every patch in the first
+#      recordings, while i1Profiler took 58 s per row.
+#   4. One row with dual scan (M1 or M2), if offered: the recording can show
+#      only what crosses the cable (the instrument settings of each pass);
+#      the M1 / M2 arithmetic most likely happens inside i1Profiler.
 # Left out on purpose:
 #   * Holding the arm back by hand, removing the instrument from the arm, or
-#     blocking the calibration, to see an error. We cannot know that this is
-#     harmless for the table's motor and belt, and the tester's hardware
-#     matters more than the error reply.
+#     blocking the calibration, to see an error; and whether the table moves
+#     without the instrument measuring. We cannot know that this is harmless
+#     for the table's motor and belt, and i1Profiler offers no way to test
+#     it; the tester's hardware matters more than the answer.
 #   * Switching the table off with the arm out on the chart: the first
-#     recordings already show the start-up path from away from home, so it
-#     costs the tester time for little.
-#   * Lowering or lifting the head on its own: we do not know of a way to do
-#     that in i1Profiler; the questions at the end ask whether there is one.
+#     recordings already show the start-up path from away from home.
+#   * Lowering or lifting the head on its own: we know of no way to do that
+#     in i1Profiler; the questions at the end ask whether there is one.
+# A step is a dict; adding one needs no other change. "optional": a step
+# that depends on what i1Profiler offers; skipping it is not "missing".
 # The tool still never sends anything to the table: these are things the
 # tester does in i1Profiler while the recording runs.
 IO_STEPS = [
-    {"key": "head",
-     "title": "A few patches, watching the head",
+    {"key": "row",
+     "title": "One row in your usual setting, watching closely",
      "prepare": """\
-  In i1Profiler, set up a chart measurement for the table as usual, up
-  to the point just before you press Measure. If i1Profiler offers to
-  measure patch by patch (often called spot mode) for the table, please
-  choose that. If you cannot find it, keep your usual setting.""",
+  In i1Profiler, set up a chart measurement for the table exactly as in
+  your first recordings, up to the point just before you press Measure.
+  Use your usual chart.""",
      "do": """\
-  Press Measure, align the three corners as usual, and let it measure
-  about 5 patches. Then press Cancel in i1Profiler and wait until the
-  arm stands still.
-  While it measures, please watch the measuring head. Each time it goes
-  DOWN onto the paper, type  d  and press Enter here. Each time it LIFTS,
-  type  u  and press Enter. If that is too fiddly, just watch it.""",
-     "arm": "What did the arm and the head do? (for example: \"head down on "
-            "each patch, up in between\")",
+  Press Measure and let it calibrate as usual, then align the three
+  corners. Watch the FIRST row closely and type a letter and Enter here
+  the moment you see it:
+     a = the arm starts moving along the row
+     l = the instrument's lamp lights up (if you can see it)
+     d = the head goes down,  u = the head lifts
+  When the arm starts along the SECOND row, press Cancel in i1Profiler
+  and wait until the arm stands still.""",
+     "arm": "When the arm started along the row, was the lamp already on? What "
+            "did the head do, and what happened after Cancel?",
      "marks": True},
-    {"key": "finish",
-     "title": "A small chart, measured to the end",
+    {"key": "spot",
+     "title": "A few patches in spot mode, watching the head",
+     "optional": True,
      "prepare": """\
-  Make or choose a small chart in i1Profiler: one or two rows are enough
-  (for example 10 to 20 patches). Please print it and place it somewhere
+  If i1Profiler offers to measure patch by patch (often called spot
+  mode) for the table, choose it and set up the measurement up to just
+  before Measure. If it does not, type  s  to skip this step.""",
+     "do": """\
+  Press Measure, align the three corners, and let it measure about 5
+  patches. Type  d  and Enter each time the head goes DOWN onto the
+  paper, and  u  and Enter each time it LIFTS. Then press Cancel and
+  wait until the arm stands still.""",
+     "arm": "What did the head do on each patch? Which setting did you use?",
+     "marks": True},
+    {"key": "fast",
+     "title": "A small chart to the end, fastest setting",
+     "prepare": """\
+  Place the SMALL chart (one or two rows, 10 to 20 patches) somewhere
   other than last time, for example near the right or the bottom edge of
-  the area the arm can reach.""",
+  the area the arm can reach. In i1Profiler choose the FASTEST way it
+  offers for the table (for example a single scan, with no extra checking
+  or averaging).""",
      "do": """\
   Press Measure, align the three corners, and let it measure the whole
   chart. Please do not cancel: let the arm park by itself at the end,
   and wait until it stands still.""",
-     "arm": "What did the arm do at the end, and where did it stop?"},
-    {"key": "cancel",
-     "title": "Cancel in the middle of a row",
+     "arm": "What did the arm do at the end, and where did it stop? Which "
+            "setting did you choose?"},
+    {"key": "dual",
+     "title": "One row with dual scan (M1 or M2)",
+     "optional": True,
      "prepare": """\
-  Use your usual chart again (any chart with at least two rows).""",
+  If i1Profiler offers dual scan, or the measurement condition M1 or M2,
+  for the table, choose it, with your usual chart. If it does not, type
+  s  to skip this step. (Good to know: the recording shows only what
+  travels over the cable. i1Profiler most likely does the M1 or M2
+  arithmetic itself, so we will see how the instrument is asked to
+  measure, not the result. It is still worth this one step.)""",
      "do": """\
-  Press Measure and align the three corners. When the arm is moving along
-  the FIRST row, press Cancel in i1Profiler. Then wait until the arm has
-  stopped or parked.""",
-     "arm": "What did the arm do after you pressed Cancel?"},
+  Press Measure (it may calibrate again), align the three corners, and
+  let it measure the FIRST row. When the arm starts along the second
+  row, press Cancel and wait until the arm stands still.""",
+     "arm": "What did the arm do this time? Was anything different from the "
+            "first step? Which setting did you choose?",
+     "marks": True},
 ]
 
 # Asked after the steps, with no recording running. They prove the unit of
@@ -1424,7 +1465,7 @@ IO_STEPS = [
 # seen in the first recordings.
 IO_QUESTIONS = [
     ("chart file",
-     "The chart from the step \"A small chart, measured to the end\": if\n"
+     "The small chart from the step \"A small chart to the end\": if\n"
      "     i1Profiler can save it (a .pxf or .txf file, or the workflow), please\n"
      "     save it and send it with the recording. What is its file name?"),
     ("paper size", "Which paper size was that chart printed on (for example A4)?"),
@@ -1433,8 +1474,9 @@ IO_QUESTIONS = [
      "     edge of its first patch to the right edge of its last patch, in\n"
      "     millimetres, and count its patches (for example: 190 mm, 20 patches)."),
     ("settings",
-     "Which settings did i1Profiler use: the measurement condition (M0, M1\n"
-     "     or M2), scan or spot mode, and the patch size it showed?"),
+     "Your usual i1Profiler settings for the table (step 1): the measuring\n"
+     "     mode (single scan, dual scan or spot), the measurement condition\n"
+     "     (M0, M1 or M2), any accuracy or averaging option, and the patch size."),
     ("head control",
      "Does i1Profiler have a button or menu that lowers or lifts the head on\n"
      "     its own, without measuring? If yes, where is it?"),
@@ -1447,15 +1489,18 @@ IO_QUESTIONS = [
 IO_READY_LIST = [
     "i1Profiler (3.8.6 or older) is open and has found the table.",
     "Your usual chart is printed (the same one as in your first recordings "
-    "is fine). Steps 1 and 3 use it.",
+    "is fine). Steps 1, 2 and 4 use it.",
     "A SMALL chart is printed: one or two rows, 10 to 20 patches, on any "
-    "paper size. Step 2 uses it.",
+    "paper size. Step 3 uses it.",
+    "You know where i1Profiler offers spot mode, its fastest setting, and "
+    "dual scan or M1 / M2 for the table (if it offers them).",
     "You know where i1Profiler lets you save that small chart (a chart "
     "file or the workflow), so you can send it.",
     "A ruler is at hand (millimetres).",
-    "You know which settings i1Profiler uses: measurement condition (M0, "
-    "M1 or M2), scan or spot mode, and the patch size.",
-    "About 20 minutes without interruption.",
+    "You know your usual settings: measuring mode (single scan, dual scan "
+    "or spot), measurement condition (M0, M1 or M2), any accuracy or "
+    "averaging option, and the patch size.",
+    "About 25 minutes without interruption.",
 ]
 
 
@@ -1476,14 +1521,16 @@ def io_summary_table(rows: list) -> list:
     for title, recorded, n, moving in rows:
         base = io_step_title(title)
         if recorded is None:
-            out.append(f"  {title[:38]:38} {'skipped':9} -")
+            optional = any(s["title"] == base and s.get("optional") for s in IO_STEPS)
+            out.append(f"  {title[:38]:38} {'skipped':9} -"
+                       + ("  (fine if i1Profiler does not offer it)" if optional else ""))
             seen_titles.setdefault(base, False)
             continue
         ok = n > 0 and moving > 0
         out.append(f"  {title[:38]:38} {'yes':9} {n}" + ("" if ok else "  <-- please repeat"))
         seen_titles[base] = seen_titles.get(base, False) or ok
     for step in IO_STEPS:
-        if not seen_titles.get(step["title"]):
+        if not seen_titles.get(step["title"]) and not step.get("optional"):
             missing.append(step["title"])
     if missing:
         which = "that step" if len(missing) == 1 else "those steps"
@@ -1494,6 +1541,10 @@ def io_summary_table(rows: list) -> list:
         out.extend(_wrap("Nothing important is missing: every step recorded commands to "
                          "the table. Thank you!", 66, "").split("\n"))
     return out
+
+
+IO_MARK_KEYS = {"d": "head down", "down": "head down", "u": "head up", "up": "head up",
+                "a": "arm starts moving", "l": "lamp lights up"}
 
 
 def _io_step_header(number: int, total: int, title: str) -> None:
@@ -1545,7 +1596,8 @@ def run_io_steps(steps: list, t0: float, log: list, check=None,
         print("\n  " + ("REHEARSAL: nothing is recorded. " if rehearse else "")
               + f"STEP {index + 1} STARTED. Do it in i1Profiler now.")
         if step.get("marks"):
-            print("  d + Enter = head down, u + Enter = head up.")
+            print("  Letters: a = arm starts moving, l = lamp lights up, d = head down,")
+            print("  u = head lifts; anything else you type is kept as a note.")
         print("  Press Enter on its own when the step is finished.")
         marks = []
         while True:
@@ -1554,8 +1606,7 @@ def run_io_steps(steps: list, t0: float, log: list, check=None,
             if not typed:
                 break
             low = typed.lower()
-            what = ("head down" if low in ("d", "down") else
-                    "head up" if low in ("u", "up") else f"note: {typed}")
+            what = IO_MARK_KEYS.get(low, f"note: {typed}")
             marks.append((what, now))
             print(f"    noted at {now - start:.1f} s: {what}")
         end = time.time()
@@ -1607,14 +1658,16 @@ def ask_io_questions(log: list) -> None:
 
 
 def io_steps_overview(steps: list) -> list:
-    lines = [f"  WHAT YOU WILL DO ({len(steps)} short steps, about 15 minutes, then a few "
+    lines = [f"  WHAT YOU WILL DO ({len(steps)} short steps, about 25 minutes, then a few "
              "questions)"]
     for i, s in enumerate(steps, 1):
         lines.append(f"    {i}. {s['title']}")
     lines += ["  The first step is the most useful one. You can skip a step, do it",
               "  again, or stop after any step: the steps you finished are kept.",
-              "  You need: the table with the i1Pro on it, i1Profiler, and two",
-              "  printed charts (your usual one, and a small one of one or two rows)."]
+              "  Steps 2 and 4 depend on what i1Profiler offers; skip them if it",
+              "  does not. You need: the table with the i1Pro on it, i1Profiler, and",
+              "  two printed charts (your usual one, and a small one of one or two",
+              "  rows)."]
     return lines
 
 
@@ -1799,7 +1852,7 @@ def macos_guided_recording(readiness: dict) -> None:
   2. The tool switches on the USB recording interfaces ({", ".join(interfaces)})
      and starts macOS's own tcpdump program on each of them. It only
      listens. It cannot move the arm.
-  3. You do three short steps in i1Profiler (about 15 minutes). After
+  3. You do four short steps in i1Profiler (about 25 minutes). After
      each one the tool checks that the table's commands were recorded.
   4. The tool stops recording, switches the interfaces off again, checks
      the recording, and makes a copy that holds only the X-Rite traffic.
@@ -3968,9 +4021,10 @@ IO_COMMANDS = {
           "meaning unknown)",
     "m2": "scan move along a row while the i1Pro measures (certain)",
     "a3": "ask for the profile of the running move (likely)",
-    "c3": "c3, sent as each scan starts (guess: head down)",
+    "c3": "c3, sent as each scan starts (guess: head down, or telling the table "
+          "to start with the instrument)",
     "c4": "c4, sent before every travel to a new row (guess: head up)",
-    "d1": "d1, sent before every scan (guess: a delay in milliseconds)",
+    "d1": "d1, sent before every scan (guess: a start delay in milliseconds)",
     "f0": "end hand-alignment mode, motors take over again (likely)",
     "f1": "free the arm, so it can be pushed by hand for alignment (likely)",
     "f3": "f3 (meaning unknown)",

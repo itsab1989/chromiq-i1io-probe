@@ -203,11 +203,13 @@ jobs:
             nothing is promised: ChromIQ cannot drive the table. There is
             still no recording from a handheld instrument.
 
-            - **Three new i1iO steps**, the most useful first: a few patches
-              while you mark when the head goes down (`d`) and up (`u`); a
-              small chart measured to the end, letting the arm park; a cancel
-              in the middle of a row. Then a few questions (chart file, paper
-              size, a ruler measurement, the i1Profiler settings).
+            - **Four new i1iO steps**, the most useful first: one row in your
+              usual setting while you mark when the arm starts (`a`), the lamp
+              lights (`l`) and the head goes down and up (`d`, `u`), then a
+              cancel; a few patches in spot mode (if offered); a small chart
+              to the end with the fastest setting; one row with dual scan (if
+              offered). Then a few questions (chart file, paper size, a ruler
+              measurement, the i1Profiler settings).
             - **On a Mac, every step is checked straight away** ("this step
               recorded 14 commands to the table: good", or "please repeat
               it"), and a table at the end says what is still missing, all

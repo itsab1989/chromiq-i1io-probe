@@ -393,9 +393,9 @@ class RecordingTests(unittest.TestCase):
         return buf.getvalue()
 
     def test_full_recording_with_real_data(self):
-        # yes to start; per step: start, stop, arm, go on (x3); notes; delete
+        # yes to start; per step: start, stop, arm, go on (x4); notes; delete
         # the full recordings; the five questions (1.5.4)
-        answers = ["yes"] + [""] * 12 + [""] + ["yes"] + [""] * 5
+        answers = ["yes"] + [""] * 16 + [""] + ["yes"] + [""] * 5
         screen = self.run_recording(answers, io_records(), keyboard_only_records())
         log = self.fake_log()
         for iface in ("XHC0", "XHC2"):
@@ -437,7 +437,7 @@ class RecordingTests(unittest.TestCase):
                 time.sleep(max(0.0, w.t - time.time()) + 0.05)
                 return ""
             return answers.pop(0) if answers else ""
-        answers = ["yes"] + [""] * 11 + [""] + ["yes"] + [""] * 5
+        answers = ["yes"] + [""] * 15 + [""] + ["yes"] + [""] * 5
         with open(os.path.join(self.pcaps, "XHC2.pcap"), "wb") as fh:
             fh.write(pcap_bytes(io_records()))
         readiness = probe.macos_recording_readiness([{"location": 0x02210000}])
@@ -450,16 +450,16 @@ class RecordingTests(unittest.TestCase):
         self.assertIn("CHECK: no table command was recorded in this step: please repeat it",
                       screen)
         result = dict(probe._SECTIONS)["Stage 2: macOS recording result"]
-        self.assertRegex(result, r"A few patches, watching the head: this step recorded \d+ "
+        self.assertRegex(result, r"One row in your usual setting, watching closely: this step recorded \d+ "
                                  r"commands to the table: good")
         glance = dict(probe._SECTIONS)["Stage 2: the steps at a glance"]
-        self.assertIn("Still missing: A small chart, measured to the end; Cancel", glance)
+        self.assertIn("Still missing: A small chart to the end, fastest setting.", glance)
         self.assertLess(screen.index("THE STEPS AT A GLANCE"), screen.rindex("csrutil enable"))
         timeline = dict(probe._SECTIONS)["Stage 2: annotated capture timeline"]
         self.assertIn("session start (UTC epoch seconds):", timeline)
 
     def test_all_zero_recording_is_reported_plainly(self):
-        answers = ["yes"] + [""] * 12 + [""] + ["no"] + [""] * 5
+        answers = ["yes"] + [""] * 16 + [""] + ["no"] + [""] * 5
         self.run_recording(answers, io_records(zero=True), keyboard_only_records())
         result = dict(probe._SECTIONS)["Stage 2: macOS recording result"]
         self.assertIn("ALL-ZERO", result)

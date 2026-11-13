@@ -30,17 +30,24 @@ drive the table. There is still no recording from a handheld instrument.
   timeline. On the two real recordings it finds exactly the same 1,125 and
   1,350 lines as our separate decoder, all with a correct check number.
 - **New i1iO steps**, exactly what the first recordings lack, the most useful
-  first: (1) a few patches, watching the head, marking `d` (down) and `u`
-  (up) as it happens, in spot mode if i1Profiler offers it; (2) a small
-  chart measured to the end, letting the arm park by itself; (3) cancel in
-  the middle of a row. Then a few questions with no recording running: the
+  first: (1) one row in the usual setting with the calibration, marking `a`
+  (the arm starts along the row), `l` (the lamp lights up), `d` and `u` (the
+  head goes down and up) as it happens, then a cancel during the second row;
+  (2) a few patches in spot mode, if offered; (3) a small chart measured to
+  the end with the fastest setting, letting the arm park by itself; (4) one
+  row with dual scan (M1 or M2), if offered. Step 1 matters most: the first
+  recordings suggest that the table waits for the instrument before it
+  moves, without being told, and the marks are how we can tell the two
+  apart. Then a few questions with no recording running: the
   chart file, the paper size, a ruler measurement, the i1Profiler settings,
   and whether i1Profiler can lower or lift the head on its own. Each step:
   what to get ready, Enter to start and stop, one line on what the arm did,
   skip or do it again; finished steps are kept, also after Ctrl-C. Left out
   on purpose: provoking an error by holding the arm back or removing the
   instrument (we cannot know that it is harmless), and switching the table
-  off with the arm out (the first recordings already show that start-up).
+  off with the arm out (the first recordings already show that start-up),
+  and trying whether the table moves without the instrument measuring
+  (i1Profiler offers no way to try it safely).
 - **On a Mac, each step is checked while SIP is still off:** right after a
   step the tool reads the recording so far and says "this step recorded 14
   commands to the table: good" or "no table command was recorded in this
