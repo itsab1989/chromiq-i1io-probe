@@ -597,7 +597,10 @@ nothing and asks you to repeat the step.
 
 ### What the analysis shows
 
-There is no decoder for the i1iSis: its protocol is not known. `--analyze`
+There is no decoder for the i1iSis: its protocol is not known. A plain
+recording given to `--analyze` is read as an i1iSis recording when it shows an
+i1iSis and no instrument the tool has a decoder for (an i1Pro, ColorMunki,
+i1Studio or i1iO table); otherwise it is read as before 1.6. `--analyze`
 (and `analysis.txt` in the zip) lists each step's traffic, puts the steps side
 by side (how long, how many bytes each way), says whether the i1iSis seems to
 talk through a USB-to-serial chip like the i1iO table does, and, if the

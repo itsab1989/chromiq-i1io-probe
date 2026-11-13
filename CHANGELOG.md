@@ -58,9 +58,12 @@ An independent review before the release found, and this release fixes:
   never a known other instrument (now also the i1Display 3L, 0765:600a) and
   never a guessed device. Without any USB description nothing is kept, and
   the step says "NOTHING KEPT" and how to repeat it.
-- `--analyze` and `analysis.txt` use the same choice: a raw recording with
-  an i1iSis in it lists only the i1iSis, never a monitor calibrator, and
-  never another device's text as lines sent to the i1iSis. The answers of
+- `--analyze` and `analysis.txt` use the same choice. A raw recording that
+  shows an i1iSis and no instrument the tool has a decoder for (i1Pro
+  family, ColorMunki, i1Studio, i1iO table) is read as an i1iSis
+  recording: it lists only the i1iSis, never a monitor calibrator beside
+  it, and never another device's text as lines sent to the i1iSis. With
+  such an instrument in it, it is read exactly as in 1.5.5. The answers of
   devices the tool has no decoder for (the i1iSis among them) are never
   shown, only their sizes.
 - The privacy texts say exactly what is kept, and that the serial number
@@ -86,8 +89,10 @@ A second review found, and this release fixes:
   and only the i1iSis session uses the i1iSis rule. A test compares twelve
   invented recordings, for every session type and for `--analyze`, with
   what the tagged 1.5.5 itself keeps.
-- `--analyze` reads a plain recording as an i1iSis recording only when the
-  only X-Rite device it knows in it is an i1iSis.
+- `--analyze` reads plain recordings as an i1iSis recording only when they
+  show an i1iSis and no instrument with a decoder (third review: a monitor
+  calibrator beside the i1iSis no longer turns the analysis into a mix of
+  both; the family and the devices listed now come from one decision).
 - An i1iSis step where the i1iSis has no USB description says NOTHING KEPT
   with the unplug-and-plug-back hint, also when another X-Rite device is
   described.

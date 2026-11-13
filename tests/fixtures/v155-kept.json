@@ -82,6 +82,16 @@
    "markers": [
     "i1iO"
    ]
+  },
+  "M-isis-with-display": {
+   "family": [],
+   "instrument_ids": [],
+   "markers": []
+  },
+  "N-mac-isis-with-display": {
+   "family": [],
+   "instrument_ids": [],
+   "markers": []
   }
  },
  "copies": {
@@ -196,6 +206,24 @@
    ],
    "records": 10,
    "xrite_packets": 10
+  },
+  "M-isis-with-display": {
+   "check": "ok",
+   "kept": [
+    "iSis",
+    "i1Display"
+   ],
+   "records": 20,
+   "xrite_packets": 20
+  },
+  "N-mac-isis-with-display": {
+   "check": "ok",
+   "kept": [
+    "iSis",
+    "i1Display"
+   ],
+   "records": 2,
+   "xrite_packets": 2
   }
  },
  "version": "1.5.5"

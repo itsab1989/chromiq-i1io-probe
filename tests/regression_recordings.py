@@ -79,6 +79,9 @@ CASES = {
     "I-linux-no-descriptions": lambda: _usbmon([3, 9, 5]),
     "K-i1pro2-alone": lambda: _usbpcap([9, 5], {9, 5}, True),
     "L-i1io-alone": lambda: _usbpcap([11, 5], {11, 5}),
+    # third review: an i1Display beside the i1iSis (the CI smoke test's case)
+    "M-isis-with-display": lambda: _usbpcap([3, 4, 5], {3, 4, 5}),
+    "N-mac-isis-with-display": lambda: _darwin([3, 4, 5]),
 }
 
 

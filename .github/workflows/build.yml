@@ -271,7 +271,10 @@ jobs:
               A second review found that the first fixes made an i1iO table
               recording keep only an i1iSis on the same bus: now every
               session except the i1iSis keeps exactly what 1.5.5 kept,
-              checked against the tagged 1.5.5 itself.
+              checked against the tagged 1.5.5 itself. A third review found
+              that the analysis of a raw i1iSis recording with a monitor
+              calibrator beside it mixed both; fixed, and the build's smoke
+              steps are now also run locally before every release.
 
             ### What's new in 1.5.5
 

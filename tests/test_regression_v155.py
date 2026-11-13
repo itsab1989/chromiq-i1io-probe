@@ -31,7 +31,7 @@ with open(os.path.join(HERE, "fixtures", "v155-kept.json"), encoding="utf-8") as
 # before 1.6), the i1iO table, and every handheld profile.
 OLD_TYPES = (None, probe.SESSION_TABLE, "i1pro2", "i1pro", "i1pro3", "munki", "generic")
 # Plain files whose only known X-Rite device is an i1iSis: read as i1iSis.
-ISIS_ONLY = {"B-two-isis-keyboard"}
+ISIS_ONLY = {"B-two-isis-keyboard", "M-isis-with-display", "N-mac-isis-with-display"}
 
 
 class SameAsV155(unittest.TestCase):
@@ -98,6 +98,20 @@ class ReviewCases(unittest.TestCase):
         part = src[src.index("def finish_recordings"):src.index("def finish_recordings") + 1200]
         self.assertIn("check_capture(path, SESSION_TABLE)", part)
         self.assertIn("filter_xrite_capture(path, dst, SESSION_TABLE)", part)
+
+    def test_isis_with_a_monitor_calibrator_is_read_as_isis_without_it(self):
+        for name in ("M-isis-with-display", "N-mac-isis-with-display"):
+            with self.subTest(recording=name):
+                rep = probe.analyze_paths([self.files[name]])
+                detail = rep.split("Instrument recording analysis")[1]
+                self.assertIn("instrument family: i1iSis chart reader", detail)
+                self.assertNotIn("0765:5020", detail)
+                self.assertNotIn("DISPLAY-SERIAL", rep)
+                self.assertEqual(detail.count("instrument at bus"), 1)
+
+    def test_isis_with_an_i1pro2_stays_handheld_as_in_v155(self):
+        got = rr.analysis_outcome(probe, self.files["G-i1pro2-with-isis"])
+        self.assertEqual(got, V155["analysis"]["G-i1pro2-with-isis"])
 
     def test_a_plain_isis_only_file_is_read_as_isis(self):
         got = rr.analysis_outcome(probe, self.files["B-two-isis-keyboard"])

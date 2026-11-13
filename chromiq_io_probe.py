@@ -178,15 +178,24 @@ def undescribed_present(keys, devices: dict) -> bool:
     return any(k is not None and k[1] != 0 and k not in described for k in keys)
 
 
+def decoder_ids() -> set:
+    """1.6: the X-Rite devices the tool has a decoder for: the i1Pro family,
+    the ColorMunki and i1Studio, and the i1iO table."""
+    return {k for k, v in PROFILE_IDS.items() if v != "isis"} | {(XRITE_VID, 0x2004)}
+
+
 def plain_file_profile(devices: dict):
-    """1.6: --analyze on a plain recording (no session.json): "isis" when the
-    only X-Rite device it shows that the tool knows is an i1iSis (and no
-    device is only guessed from an instrument's commands); else None, which
-    reads the file exactly as 1.5.5 did."""
+    """1.6: THE decision for --analyze on plain recordings (no session.json),
+    made once over all the files given: "isis" when they show an i1iSis and
+    no device the tool has a decoder for (nor one guessed from such a
+    device's commands); then the i1iSis rule applies, which drops a monitor
+    calibrator or another known instrument without a decoder. Else None:
+    the files are read exactly as 1.5.5 read them. session_family() asks
+    this same function, so the family and the selection cannot disagree."""
     ids = {(v.get("vid"), v.get("pid")) for v in devices.values()
            if v.get("vid") in XRITE_VIDS}
     guessed = any(not v.get("vid") and v.get("guess_family") for v in devices.values())
-    if ids & set(ISIS_IDS) and not ids & OTHER_INSTRUMENT_IDS and not guessed:
+    if ids & set(ISIS_IDS) and not ids & decoder_ids() and not guessed:
         return "isis"
     return None
 
@@ -4239,8 +4248,18 @@ def session_steps(paths: list) -> tuple:
                                           "page": step.get("page", "")},
                           bool(step.get("control")), step.get("key", "")))
         return steps, devinfo, checks, session
+    # 1.6: one decision for all the plain files together (plain_file_profile).
+    union: dict = {}
+    for i, f in enumerate(whole):
+        try:
+            lt, recs = _read_pcap(f)
+        except (OSError, ValueError):
+            continue
+        for key, info in device_map(capture_events(lt, recs)).items():
+            union[(i,) + tuple(key)] = info
+    plain = plain_file_profile(union)
     for f in whole:
-        evs, devs, check = _xrite_events(f, plain=True)
+        evs, devs, check = _xrite_events(f, plain)
         devinfo.update(devs)
         checks.append((os.path.basename(f), check))
         low = os.path.basename(f).lower()
@@ -4252,20 +4271,15 @@ def session_steps(paths: list) -> tuple:
 def session_family(devinfo: dict, steps: list, session: dict | None = None) -> str:
     if session and session.get("family") in FAMILIES:
         return session["family"]
+    # 1.6: plain files: the same decision as the selection in session_steps.
+    if plain_file_profile(devinfo) == "isis":
+        return "isis"
     all_events = [e for _n, evs, *_ in steps for e in evs]
-    found = []
     for info in devinfo.values():
         if info.get("vid") in XRITE_VIDS:
             fam = family_for(info["vid"], info["pid"], info.get("config"), all_events)
-            if fam != "generic":
-                found.append(fam)
-    # 1.6: an instrument with a decoder comes first, as in 1.5.5 (which did
-    # not know the i1iSis); the i1iSis only when it is the one found.
-    for fam in found:
-        if fam != "isis":
-            return fam
-    if found:
-        return found[0]
+            if fam not in ("generic", "isis"):        # 1.5.5 knew no i1iSis
+                return fam
     for info in devinfo.values():
         if info.get("guess_family"):
             fam = info["guess_family"]
