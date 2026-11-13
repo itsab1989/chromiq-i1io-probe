@@ -108,13 +108,16 @@ class I1Pro2AnalysisTests(TempDirCase):
 
     def test_open_driver_comparison(self):
         r = self.report
-        self.assertIn("requests both use: 0xC4, 0xC9, 0xCA, 0xD2, 0xD4, 0xD5, 0xD9", r)
+        self.assertIn("requests both know: 0xC4, 0xC9, 0xCA, 0xD2, 0xD4, 0xD5, 0xD9", r)
         self.assertIn("requests the open driver never sends: 0xD6 (indicator lights: "
                       "sequence), 0xD7 (RULER: stop tracking (?))", r)
 
     def test_lights_decoded(self):
-        self.assertIn("LIGHTS: [green 243 ms, off 243 ms] x3", self.report)
-        self.assertIn("calibrate.pcap: [green 243 ms, off 243 ms] x3 | [off 1 ms] x1",
+        # 1.6.2: in words first, the step list after it when it is short
+        self.assertIn("LIGHTS: green blinking (243 ms on, 243 ms off), 3 times "
+                      "([green 243 ms, off 243 ms] x3)", self.report)
+        self.assertIn("calibrate.pcap: green blinking (243 ms on, 243 ms off), 3 times "
+                      "([green 243 ms, off 243 ms] x3) | off for 1 ms ([off 1 ms] x1)",
                       self.report)
 
     def test_privacy_chip_id_hashed_eeprom_not_printed(self):
@@ -245,7 +248,7 @@ class DecoderTests(TempDirCase):
         seq = synth.be32(1) + synth.be32(7) + synth.be32(0xFFFFFFFF) + b"\x3f" + synth.be16(13700)
         dec = probe.decode_led_sequence(seq)
         self.assertTrue(dec["ok"])
-        self.assertEqual(dec["text"], "[white 1000 ms] forever")
+        self.assertEqual(dec["text"], "white, steady ([white 1000 ms] forever)")
         self.assertEqual(dec["colours"], ["white"])
 
     def test_broken_led_sequence_is_shown_raw(self):

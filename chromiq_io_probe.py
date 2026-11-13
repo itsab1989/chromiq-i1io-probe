@@ -4037,8 +4037,65 @@ def decode_led_sequence(blob: bytes) -> dict:
         reps = "forever" if blk["repeats"] == 0xFFFFFFFF else f"x{blk['repeats']}"
         parts.append(f"[{steps}] {reps}")
     colours = sorted({led_mask_text(m) for blk in blocks for m, _c in blk["codes"]} - {"off"})
-    return {"ok": True, "blocks": blocks, "text": " then ".join(parts) or "(empty)",
-            "colours": colours}
+    raw = " then ".join(parts) or "(empty)"
+    # 1.6.2: in words. A real i1Profiler sequence is a PWM ramp of hundreds of
+    # steps ("white 0 ms, off 5 ms", ...), which nobody can read; the step
+    # list is shown only when it is short.
+    words = led_words(blocks)
+    short = all(len(blk["codes"]) <= 4 for blk in blocks)
+    text = f"{words} ({raw})" if short and words else (words or raw)
+    return {"ok": True, "blocks": blocks, "text": text, "colours": colours, "raw": raw}
+
+
+_TIMES = {1: "once", 2: "twice"}
+
+
+def _led_colour_words(mask: int) -> str:
+    """"green", "blue on the left side only", ... (led_mask_text in words)."""
+    right = _rgb_name(mask & 0x01, mask & 0x02, mask & 0x04)
+    left = _rgb_name(mask & 0x08, mask & 0x10, mask & 0x20)
+    if right == left:
+        return right
+    if right == "off":
+        return f"{left} on the left side only"
+    if left == "off":
+        return f"{right} on the right side only"
+    return f"{left} on the left, {right} on the right"
+
+
+def _secs(seconds: float) -> str:
+    return f"{seconds:.1f} s" if seconds >= 0.95 else f"{seconds * 1000:.0f} ms"
+
+
+def led_words(blocks: list) -> str:
+    """1.6.2: an i1Pro 2 light sequence in plain words: colour and side
+    (the colour bits confirmed on a real i1Pro 2 by a tester's eyes: 0x09
+    red, 0x12 green, 0x20 blue on the left, 0x3F white), how long one cycle
+    takes, whether it is a smooth pulse, a blink or steady light, and how
+    often it repeats."""
+    out = []
+    for blk in blocks:
+        codes = blk["codes"]
+        total = sum(c for _m, c in codes) * LED_CLOCK_SECONDS
+        lit = [(m, c) for m, c in codes if m]
+        reps = blk["repeats"]
+        forever = reps == 0xFFFFFFFF
+        how_often = ("over and over until the next light command" if forever else
+                     _TIMES.get(reps, f"{reps} times"))
+        if not lit:
+            out.append(f"off for {_secs(total * reps)}" if not forever and reps else "off")
+            continue
+        colour = " and ".join(dict.fromkeys(_led_colour_words(m) for m, _c in lit))
+        on = sum(c for _m, c in lit) * LED_CLOCK_SECONDS
+        if on >= 0.95 * total:
+            out.append(f"{colour}, steady" + ("" if forever else
+                                               f" for {_secs(total * max(reps, 1))}"))
+        elif len(lit) > 4:
+            out.append(f"{colour}, one smooth pulse of {total:.2f} s, {how_often}")
+        else:
+            out.append(f"{colour} blinking ({on * 1000:.0f} ms on, "
+                       f"{(total - on) * 1000:.0f} ms off), {how_often}")
+    return ", then ".join(out)
 
 
 # ---- i1Pro 3 and 3 Plus -------------------------------------------------
@@ -4420,7 +4477,8 @@ def analyze_step(events: list, family: str = "i1pro2") -> dict:
               "measurements": [], "ruler": [], "leds": [], "eeprom_bytes": 0,
               "timeline": [], "features": set(), "first_t": t0,
               "last_t": events[-1]["t"] if events else 0.0, "nsen": nsen,
-              "odd_sizes": [], "ruler_like": [], "events": [], "codes": set()}
+              "odd_sizes": [], "ruler_like": [], "events": [], "codes": set(),
+              "motion": None}
     context = None
     pending_led = False
     current = None
@@ -4510,6 +4568,8 @@ def analyze_step(events: list, family: str = "i1pro2") -> dict:
         info["last"] = rel
         result["features"].add(f"data on {key}")
         foreign = ep not in fam["argyll_eps"]
+        if family == "i1pro2" and ep == I1PRO2_RULER_EP and ev["dir_in"]:
+            result["motion"] = ruler_motion(ev["data"], result["motion"])
         if ep == fam["zebra_ep"] and ev["dir_in"]:
             if current is not None:
                 current["zebra_bytes"] += size
@@ -4537,9 +4597,6 @@ def analyze_step(events: list, family: str = "i1pro2") -> dict:
             current["bytes"] += size
             current["transfers"] += 1
             current["last"] = rel
-            unit = 2 * current.get("nsen", nsen or 1)
-            if size % unit:
-                result["odd_sizes"].append((rel, size))
             result["timeline"].append((rel, f"readings on 0x{ep:02x}: {size} bytes"))
             continue
         if pending_led and ep == fam["led_ep"] and not ev["dir_in"]:
@@ -4566,7 +4623,67 @@ def analyze_step(events: list, family: str = "i1pro2") -> dict:
         unit = 2 * m.get("nsen", result["nsen"] or 0)
         m["readings"] = m["bytes"] // unit if unit else 0
         m["duration"] = max(0.0, m["last"] - m["t"])
+        # 1.6.2: a program may read with any buffer size (i1Profiler reads
+        # 2624 bytes at a time), so only a measurement's TOTAL tells whether
+        # something else travels with the readings.
+        if unit and m["bytes"] % unit:
+            result["odd_sizes"].append((m["t"], m["bytes"]))
     return result
+
+
+# 1.6.2: the i1Pro 2's ruler, as a real i1Pro 2 with i1Profiler showed it
+# (a tester's recording, 2026-11-13): bulk IN 0x85, one byte per sample,
+# values 0 to 3, one sample per 36 us integration clock, two sensors in
+# quadrature (0, 1, 3, 2 one way; the reverse the other way).
+I1PRO2_RULER_EP = 0x85
+I1PRO2_RULER_SAMPLE_S = 36e-6
+_QUADRATURE = {(0, 1): 1, (1, 3): 1, (3, 2): 1, (2, 0): 1,
+               (1, 0): -1, (3, 1): -1, (2, 3): -1, (0, 2): -1}
+
+
+def ruler_motion(data: bytes, state: dict | None = None) -> dict:
+    """Count the position steps in i1Pro 2 ruler samples (added to state)."""
+    st = state or {"samples": 0, "steps": 0, "net": 0, "illegal": 0, "first": None,
+                   "last": None, "prev": None, "odd": 0}
+    for b in data:
+        if b > 3:
+            st["odd"] += 1
+            st["samples"] += 1
+            continue
+        prev = st["prev"]
+        if prev is not None and b != prev:
+            d = _QUADRATURE.get((prev, b))
+            if d is None:
+                st["illegal"] += 1
+            else:
+                st["steps"] += 1
+                st["net"] += d
+                if st["first"] is None:
+                    st["first"] = st["samples"]
+                st["last"] = st["samples"]
+        st["prev"] = b
+        st["samples"] += 1
+    return st
+
+
+def motion_seconds(st: dict | None):
+    """How long the instrument moved, by the ruler (None if not known)."""
+    if not st or st["first"] is None:
+        return None
+    return (st["last"] - st["first"]) * I1PRO2_RULER_SAMPLE_S
+
+
+def motion_text(st: dict) -> str:
+    if st["odd"] * 4 > st["samples"]:
+        return (f"{st['samples']:,} bytes on 0x85, but not in the ruler's shape "
+                "(values above 3), so no motion is read from them")
+    if not st["steps"]:
+        return (f"{st['samples']:,} samples, and the position never changed: "
+                "no motion was seen")
+    secs = motion_seconds(st)
+    extra = f"; {st['illegal']} impossible jumps" if st["illegal"] else ""
+    return (f"{st['steps']:,} position steps (net {st['net']:+,}), moving for "
+            f"{secs:.2f} s{extra}")
 
 
 # Kept for 1.5's own callers and tests: the i1Pro 2 is the default family.
@@ -4642,9 +4759,14 @@ def format_step(name: str, res: dict, notes: dict | None = None) -> list:
                        f"{m['bytes']:,} bytes over {m['duration']:.2f} s"
                        + (f" (about {rate:.0f} readings/s)" if rate else "") + zeb)
     if res["odd_sizes"]:
-        out.append(f"  NOTE: {len(res['odd_sizes'])} measurement transfer(s) are not a whole "
-                   f"number of readings, so something else may travel inside them "
-                   f"(first: {res['odd_sizes'][0][1]} bytes at {res['odd_sizes'][0][0]:.3f}s).")
+        n = len(res["odd_sizes"])
+        out.append(f"  NOTE: {n} measurement{'s' if n != 1 else ''} hold{'' if n != 1 else 's'} "
+                   f"a total that is not a whole number of readings, so something else may "
+                   f"travel with the readings (first: {res['odd_sizes'][0][1]:,} bytes in the "
+                   f"measurement at {res['odd_sizes'][0][0]:.3f}s).")
+    if res.get("motion"):
+        out.append("  ruler (0x85, by the i1Pro 2's position samples): "
+                   + motion_text(res["motion"]))
     if res["ruler"]:
         out.append("  RULER COMMANDS:")
         out.extend(f"    {rel:8.3f}s  {text}" for rel, text in res["ruler"])
@@ -5022,7 +5144,9 @@ def summarize_session(paths: list) -> str:
         both = sorted(seen & live)
         never = sorted(c for c in seen if c not in live)
         unused = sorted(live - seen)
-        out.append("    requests both use: " + (", ".join(f"0x{c:02X}" for c in both) or "none"))
+        out.append("    requests both know: " + (", ".join(f"0x{c:02X}" for c in both) or "none")
+                   + ("  (the open driver defines them; it does not send every one of "
+                      "them in every situation)" if both else ""))
         out.append("    requests the open driver never sends: " +
                    (", ".join(f"0x{c:02X} ({fam['requests'][c][0]})" if c in fam["requests"]
                               else f"0x{c:02X} (unknown)" for c in never) or "none"))
@@ -5045,6 +5169,20 @@ def summarize_session(paths: list) -> str:
         if not anything:
             out.append("    nothing: the scan steps use the same commands and endpoints as "
                        "the control.")
+        # 1.6.2: the commands alone can hide the main result (a real control
+        # step used the same ruler bits, but its position never changed).
+        moved = [(name, res["motion"], control) for name, res, _n, control, _k in results
+                 if res.get("motion")]
+        if moved:
+            out.append("  THE RULER'S POSITION, STEP BY STEP:")
+            for name, st, control in moved:
+                out.append(f"    {name}{'  [CONTROL]' if control else ''}: {motion_text(st)}")
+            still = [name for name, st, control in moved if control and not st["steps"]]
+            if still:
+                out.append("    " + _wrap(
+                    "Without the ruler the position never changed, although the ruler was "
+                    "asked for: the program reads the strip's position from the ruler.",
+                    62, "    "))
         out.append("")
 
     fast = [r for r in full if "fast" in r[4]]
@@ -5071,10 +5209,38 @@ def summarize_session(paths: list) -> str:
             counts = [m["readings"] for m in r[1]["measurements"] if m["readings"] > 50]
             return sum(counts) / len(counts) if counts else 0
         fpm, spm = per_swipe(fast[-1]), per_swipe(slow[-1])
-        if fpm and spm and spm < 1.5 * fpm:
+        # 1.6.2: by the ruler, when the recording has it: how long the
+        # instrument really moved, against the normal scan.
+        fm, sm = motion_seconds(fast[-1][1].get("motion")), motion_seconds(slow[-1][1].get("motion"))
+        normal = [r for r in full if "single" in r[4]]
+        nm = motion_seconds(normal[-1][1].get("motion")) if normal else None
+        if fm is not None or sm is not None:
+            out.append("    by the ruler, the instrument moved for: "
+                       + ", ".join(f"{label} {v:.2f} s" for label, v in
+                                   (("normal", nm), ("fast", fm), ("slow", sm)) if v is not None))
+            ref = nm if nm else None
+            if sm is not None and ref and sm < 1.5 * ref:
+                out.append("    " + _wrap(
+                    f"NOTE: the slow swipe ({sm:.2f} s) was not clearly slower than the "
+                    f"normal one ({ref:.2f} s). If you can, please repeat the slow step and "
+                    "take about 5 seconds for the strip.", 62, "    "))
+            if fm is not None and ref and fm > 0.8 * ref:
+                out.append("    " + _wrap(
+                    f"NOTE: the fast swipe ({fm:.2f} s) was not clearly faster than the "
+                    f"normal one ({ref:.2f} s).", 62, "    "))
+            fst = fast[-1][1].get("motion")
+            if fst and fst["first"] is not None and \
+                    fst["first"] * I1PRO2_RULER_SAMPLE_S < 0.05:
+                out.append("    " + _wrap(
+                    "NOTE: in the fast step the instrument was already moving when the "
+                    "scan began, before the program's ready signal. The program most "
+                    "likely refused the strip for that reason, so this step does not show "
+                    "a fast scan. If you can, please repeat it: press, wait for the ready "
+                    "signal, then move.", 62, "    "))
+        elif fpm and spm and spm < 1.5 * fpm:
             out.append(f"    NOTE: a slow swipe took about as many readings as a fast one "
                        f"({spm:.0f} against {fpm:.0f} per swipe), so it was most likely not "
-                       "slower. Please repeat the slow step, taking 3 to 5 seconds for the "
+                       "slower. Please repeat the slow step, taking about 5 seconds for the "
                        "strip.")
         out.append("")
 
