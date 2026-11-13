@@ -28,6 +28,10 @@ USAGE
 
         python3 chromiq_io_probe.py --annotate
 
+    To see the i1iO steps first, without recording anything:
+
+        python3 chromiq_io_probe.py --rehearse
+
     On a Mac a recording is only possible when SIP is switched off. The tool
     checks that for you, says plainly whether a recording is possible, and if
     it is not, explains the other ways to make one.
@@ -74,7 +78,7 @@ import tempfile
 import threading
 import time
 
-PROBE_VERSION = "1.5.3"
+PROBE_VERSION = "1.5.4"
 
 ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/129"   # the i1iO only
 NEW_ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/new"
@@ -800,8 +804,10 @@ def recording_not_possible_text(r: dict, device: str = "table") -> str:
      needs Windows 10 with i1Profiler 3.8.5, or Windows 11 version 24H2 or
      older with i1Profiler 3.8.6. X-Rite says the driver is blocked on
      Windows 11 version 25H2 and newer.
-     A Windows virtual machine on an Apple Silicon Mac does NOT work:
-     there is no i1Pro or i1iO driver for Windows on ARM.
+     A Windows virtual machine on an Apple Silicon Mac does NOT work for
+     a recording: it runs Windows on ARM, where the recorder this tool
+     uses (USBPcap) does not exist. We also know of no X-Rite driver
+     there for the i1Pro 2, the i1iO or the ColorMunki.
 
   2. SWITCH SIP OFF ON THIS MAC, ONLY FOR THE RECORDING
      The honest risk: while SIP is off, macOS no longer protects its own
@@ -841,6 +847,39 @@ SIP_OFF_REMINDER = """\
     3. Choose Apple menu > Restart.
   To check: in the Terminal app, type   csrutil status   . It should say
   "enabled"."""
+
+
+def sip_back_on_box(apple_silicon: bool) -> str:
+    """1.5.4: the last thing on the screen after a Mac session with SIP off:
+    a friendly box with the exact steps to switch it back on, and the check."""
+    if apple_silicon:
+        start = ["1. Choose Apple menu > Shut Down and wait until the Mac is off.",
+                 "2. Press and hold the power button until \"Loading startup",
+                 "   options\" appears, then let go.",
+                 "3. Click \"Options\", then \"Continue\". If asked, choose your",
+                 "   user and type your password."]
+    else:
+        start = ["1. Choose Apple menu > Restart.",
+                 "2. Straight away press and hold Command and R together, until",
+                 "   the Apple logo appears, then let go.",
+                 "3. If asked, choose your user and type your password."]
+    body = (["Thank you for recording! Your Mac is still less protected than",
+             "usual, because System Integrity Protection (SIP) is switched off.",
+             "Please switch it back on now, it only takes a few minutes:", ""]
+            + start
+            + ["4. In the menu bar choose Utilities > Terminal.",
+               "5. Type   csrutil enable   and press Return. Answer y if asked.",
+               "6. Choose Apple menu > Restart. The Mac starts up normally.", "",
+               "To check it worked: open the Terminal app, type",
+               "   csrutil status",
+               "and press Return. It should say \"enabled\"."])
+    width = max(len(l) for l in body) + 4
+    top = "  +" + "-" * (width - 2) + "+"
+    title = "PLEASE SWITCH SIP BACK ON"
+    lines = [top, "  | " + title.center(width - 4) + " |", "  |" + " " * (width - 2) + "|"]
+    lines += ["  | " + l.ljust(width - 4) + " |" for l in body]
+    lines.append(top)
+    return "\n".join(lines)
 
 
 def _wrap(text: str, width: int, indent: str) -> str:
@@ -1009,12 +1048,15 @@ def windows_is_arm() -> bool:
     return platform.machine().upper() in ("ARM64", "AARCH64")
 
 
+# 1.5.4: worded as far as the evidence goes. Nobody has said there is no
+# such driver; we know of none, and no X-Rite statement mentions ARM.
 WINDOWS_ARM_NOTE = """\
-  This Windows runs on an ARM processor. There is no X-Rite driver for the
-  i1Pro or the i1iO on Windows on ARM, so i1Profiler cannot talk to the
-  table here. That includes a Windows virtual machine on an Apple Silicon
-  Mac. For a recording, please use a Windows PC with an Intel or AMD
-  processor."""
+  This Windows runs on an ARM processor (that includes a Windows virtual
+  machine on an Apple Silicon Mac). We know of no X-Rite driver for the
+  i1iO or the i1Pro 2 on Windows on ARM, so i1Profiler most likely cannot
+  talk to the table here. The recorder this tool uses (USBPcap) does not
+  exist for ARM processors either. For a recording, please use a Windows
+  PC with an Intel or AMD processor."""
 
 
 def collect_windows() -> None:
@@ -1308,78 +1350,324 @@ CAPTURE_HELP = {
   Windows 11 version 25H2 and newer.""",
 }
 
-# These follow i1Profiler's ACTUAL i1iO workflow, taken from its own on-screen
-# instructions: place chart -> press Measure (it calibrates and the arm slides
-# out) -> the operator GRABS THE ARM BY HAND and aligns the cross hairs on the
-# top-left, bottom-left and bottom-right corners -> it then scans row by row.
-# There is no "go home" button (the arm parks itself) and no electrostatic-foil
-# toggle (the static mat just holds the paper).
-CAPTURE_STEPS = [
-    ("Connect",
-     "Start i1Profiler and let it find the table. Do nothing else yet."),
-    ("Idle",
-     "Leave everything completely untouched for about 10 seconds."),
-    ("Measure pressed",
-     "Place a chart on the table, then press \"Measure\". The device\n"
-     "    calibrates itself and the arm slides out to its ready position."),
-    ("Align top-left",
-     "Grab the arm by hand and line the cross hairs up on the TOP-LEFT\n"
-     "    corner patch, then confirm it."),
-    ("Align bottom-left",
-     "Same again for the BOTTOM-LEFT corner patch."),
-    ("Align bottom-right",
-     "Same again for the BOTTOM-RIGHT corner patch."),
-    ("Scanning",
-     "Let it scan at least the first two rows, then stop or cancel it."),
-    ("Spot measurement",
-     "If your setup offers Spot mode, take ONE single spot reading.\n"
-     "    If it does not, just type 'skip'."),
-    ("Finished",
-     "Let it finish or cancel, and wait until the arm has parked itself."),
+# 1.5.4: the steps for the NEXT i1iO recording.
+#
+# The first two real recordings (issue #129) already hold the connection,
+# the calibration, the hand alignment of the three corners and the row
+# scans. What they do not hold is what these steps ask for, ordered by how
+# much each one teaches us, so that a tester who stops after the first one
+# or two has still given the most useful part:
+#   1. what the head does: the operator marks "down" and "up" as it happens,
+#      so the unknown commands c3, c4 and d1 can be matched to the head
+#      (nothing may lower the head in a test build until this is known);
+#      in spot mode if i1Profiler offers it, which also shows a spot-only job;
+#   2. a normal end, where the arm parks by itself, with a smaller chart in
+#      another place (different coordinates, and the chart file and a ruler
+#      measurement afterwards prove the unit of length);
+#   3. a cancel in the middle of a row (how a running job is stopped).
+# Left out on purpose:
+#   * Holding the arm back by hand, removing the instrument from the arm, or
+#     blocking the calibration, to see an error. We cannot know that this is
+#     harmless for the table's motor and belt, and the tester's hardware
+#     matters more than the error reply.
+#   * Switching the table off with the arm out on the chart: the first
+#     recordings already show the start-up path from away from home, so it
+#     costs the tester time for little.
+#   * Lowering or lifting the head on its own: we do not know of a way to do
+#     that in i1Profiler; the questions at the end ask whether there is one.
+# The tool still never sends anything to the table: these are things the
+# tester does in i1Profiler while the recording runs.
+IO_STEPS = [
+    {"key": "head",
+     "title": "A few patches, watching the head",
+     "prepare": """\
+  In i1Profiler, set up a chart measurement for the table as usual, up
+  to the point just before you press Measure. If i1Profiler offers to
+  measure patch by patch (often called spot mode) for the table, please
+  choose that. If you cannot find it, keep your usual setting.""",
+     "do": """\
+  Press Measure, align the three corners as usual, and let it measure
+  about 5 patches. Then press Cancel in i1Profiler and wait until the
+  arm stands still.
+  While it measures, please watch the measuring head. Each time it goes
+  DOWN onto the paper, type  d  and press Enter here. Each time it LIFTS,
+  type  u  and press Enter. If that is too fiddly, just watch it.""",
+     "arm": "What did the arm and the head do? (for example: \"head down on "
+            "each patch, up in between\")",
+     "marks": True},
+    {"key": "finish",
+     "title": "A small chart, measured to the end",
+     "prepare": """\
+  Make or choose a small chart in i1Profiler: one or two rows are enough
+  (for example 10 to 20 patches). Please print it and place it somewhere
+  other than last time, for example near the right or the bottom edge of
+  the area the arm can reach.""",
+     "do": """\
+  Press Measure, align the three corners, and let it measure the whole
+  chart. Please do not cancel: let the arm park by itself at the end,
+  and wait until it stands still.""",
+     "arm": "What did the arm do at the end, and where did it stop?"},
+    {"key": "cancel",
+     "title": "Cancel in the middle of a row",
+     "prepare": """\
+  Use your usual chart again (any chart with at least two rows).""",
+     "do": """\
+  Press Measure and align the three corners. When the arm is moving along
+  the FIRST row, press Cancel in i1Profiler. Then wait until the arm has
+  stopped or parked.""",
+     "arm": "What did the arm do after you pressed Cancel?"},
 ]
 
-# The short version used for a Mac recording: start, one small action, stop.
-RECORDING_STEPS = [
-    ("Replug",
-     "If i1Profiler is open, quit it. Unplug the table's USB cable, wait\n"
-     "    5 seconds, and plug it back in. That puts the table's full USB\n"
-     "    description into the recording. Type 'skip' if you would rather not."),
-    ("Connect",
-     "Start i1Profiler and let it find the table. Do nothing else yet."),
-    ("Idle",
-     "Leave everything untouched for about 10 seconds."),
-    ("One small action",
-     "Place a chart on the table and press \"Measure\". Let the device\n"
-     "    calibrate and the arm slide out, then cancel the measurement."),
-    ("Parked",
-     "Wait until the arm has parked itself."),
+# Asked after the steps, with no recording running. They prove the unit of
+# length (a ruler against the corner positions the table reports) and tell
+# which i1Profiler setting gave the "three scans, then patch by patch" rows
+# seen in the first recordings.
+IO_QUESTIONS = [
+    ("chart file",
+     "The chart from the step \"A small chart, measured to the end\": if\n"
+     "     i1Profiler can save it (a .pxf or .txf file, or the workflow), please\n"
+     "     save it and send it with the recording. What is its file name?"),
+    ("paper size", "Which paper size was that chart printed on (for example A4)?"),
+    ("ruler",
+     "Please measure the first row of that chart with a ruler: from the left\n"
+     "     edge of its first patch to the right edge of its last patch, in\n"
+     "     millimetres, and count its patches (for example: 190 mm, 20 patches)."),
+    ("settings",
+     "Which settings did i1Profiler use: the measurement condition (M0, M1\n"
+     "     or M2), scan or spot mode, and the patch size it showed?"),
+    ("head control",
+     "Does i1Profiler have a button or menu that lowers or lifts the head on\n"
+     "     its own, without measuring? If yes, where is it?"),
 ]
 
-# Offered after RECORDING_STEPS, for anyone with ten more minutes.
-EXTRA_RECORDING_STEPS = [("Measure pressed again",
-                          "Press \"Measure\" again and let the arm slide out.")] \
-    + CAPTURE_STEPS[3:]
+
+# 1.5.4: everything to have ready BEFORE the recording, so a tester on a
+# Mac does it all in one round with SIP switched off. Shown once before the
+# recording starts, and in --rehearse.
+IO_READY_LIST = [
+    "i1Profiler (3.8.6 or older) is open and has found the table.",
+    "Your usual chart is printed (the same one as in your first recordings "
+    "is fine). Steps 1 and 3 use it.",
+    "A SMALL chart is printed: one or two rows, 10 to 20 patches, on any "
+    "paper size. Step 2 uses it.",
+    "You know where i1Profiler lets you save that small chart (a chart "
+    "file or the workflow), so you can send it.",
+    "A ruler is at hand (millimetres).",
+    "You know which settings i1Profiler uses: measurement condition (M0, "
+    "M1 or M2), scan or spot mode, and the patch size.",
+    "About 20 minutes without interruption.",
+]
 
 
-def run_walkthrough(steps: list, t0: float) -> list:
-    """Time each step. Returns timeline lines. Ctrl-C ends it early."""
-    log = []
-    print("\nDo each step in i1Profiler, then press Enter here immediately after.")
-    print("If a step is not possible on your setup, just type 'skip'.\n")
-    for name, instruction in steps:
-        print(f"--- {name} ---")
-        print(f"    {instruction}")
-        start = time.time() - t0
-        answer = ask("    press Enter when finished (or 'skip'): ", interruptible=True)
-        end = time.time() - t0
-        if answer.lower().startswith("s"):
-            log.append(f"{name}: SKIPPED")
-            print("    skipped\n")
+def io_ready_text() -> str:
+    lines = ["  HAVE YOU GOT EVERYTHING READY?"]
+    for item in IO_READY_LIST:
+        lines.append("    [ ] " + _wrap(item, 60, " " * 8))
+    return "\n".join(lines)
+
+
+def io_summary_table(rows: list) -> list:
+    """rows: (step title, recorded: bool or None for skipped, commands, moving).
+    The end-of-session table and one plain line on what is missing."""
+    out = ["THE STEPS AT A GLANCE",
+           f"  {'step':38} {'recorded':9} {'table commands seen'}"]
+    missing = []
+    seen_titles = {}
+    for title, recorded, n, moving in rows:
+        base = io_step_title(title)
+        if recorded is None:
+            out.append(f"  {title[:38]:38} {'skipped':9} -")
+            seen_titles.setdefault(base, False)
             continue
-        flat = " ".join(instruction.split())
-        log.append(f"{name}: t={start:8.3f}s .. {end:8.3f}s   ({flat})")
-        print(f"    recorded {start:.3f}s .. {end:.3f}s\n")
-    return log
+        ok = n > 0 and moving > 0
+        out.append(f"  {title[:38]:38} {'yes':9} {n}" + ("" if ok else "  <-- please repeat"))
+        seen_titles[base] = seen_titles.get(base, False) or ok
+    for step in IO_STEPS:
+        if not seen_titles.get(step["title"]):
+            missing.append(step["title"])
+    if missing:
+        which = "that step" if len(missing) == 1 else "those steps"
+        out.extend(_wrap("Still missing: " + "; ".join(missing) + ". If you can, run the "
+                         "tool again now, while SIP is still off (on a Mac), and do only "
+                         f"{which} (type  s  to skip the others).", 66, "").split("\n"))
+    else:
+        out.extend(_wrap("Nothing important is missing: every step recorded commands to "
+                         "the table. Thank you!", 66, "").split("\n"))
+    return out
+
+
+def _io_step_header(number: int, total: int, title: str) -> None:
+    print("\n" + "-" * 68)
+    print(f"  STEP {number} of {total}: {title}")
+    print("-" * 68)
+
+
+def run_io_steps(steps: list, t0: float, log: list, check=None,
+                 record: list | None = None, rehearse: bool = False) -> str:
+    """Walk the i1iO steps, one at a time.
+
+    Each step: what to prepare, Enter to start, what to do, Enter to stop
+    (with  d  /  u  marks for the head on the way), one line on what the arm
+    did, then the check, and the choice to do it again. The recording itself
+    runs for the whole session (the table and i1Profiler keep talking
+    between steps, and a line cut in two is unreadable), so a step is a pair
+    of time marks in it.
+
+    log: the report lines, appended to as each step finishes, so a Ctrl-C or
+    a closed window keeps every finished step. check(start, end): what the
+    recording shows for the step, or None. record: gets one dict per step.
+    Returns how the walk ended."""
+    record = [] if record is None else record
+    total = len(steps)
+    index, take = 0, 1
+    while index < total:
+        step = steps[index]
+        title = step["title"] + (f" (take {take})" if take > 1 else "")
+        _io_step_header(index + 1, total, title)
+        print("  GET READY:")
+        print(step["prepare"])
+        print()
+        print("  THEN:")
+        print(step["do"])
+        answer = ask("\n  Press Enter to START this step, or type  s  to skip it,\n"
+                     "  or  q  to stop here: ", interruptible=True).strip().lower()
+        if answer.startswith("q"):
+            log.append(f"stopped by the operator before: {step['title']}")
+            return "stopped by the operator"
+        if answer.startswith("s"):
+            log.append(f"{title}: SKIPPED")
+            record.append({"title": title, "skipped": True})
+            print("  Skipped.")
+            index += 1
+            take = 1
+            continue
+        start = time.time()
+        print("\n  " + ("REHEARSAL: nothing is recorded. " if rehearse else "")
+              + f"STEP {index + 1} STARTED. Do it in i1Profiler now.")
+        if step.get("marks"):
+            print("  d + Enter = head down, u + Enter = head up.")
+        print("  Press Enter on its own when the step is finished.")
+        marks = []
+        while True:
+            typed = ask("  > ", interruptible=True).strip()
+            now = time.time()
+            if not typed:
+                break
+            low = typed.lower()
+            what = ("head down" if low in ("d", "down") else
+                    "head up" if low in ("u", "up") else f"note: {typed}")
+            marks.append((what, now))
+            print(f"    noted at {now - start:.1f} s: {what}")
+        end = time.time()
+        flat = " ".join(step["do"].split())
+        log.append(f"{title}: t={start - t0:8.3f}s .. {end - t0:8.3f}s   ({flat})")
+        for what, when in marks:
+            log.append(f"  mark: {what} at t={when - t0:8.3f}s")
+        entry = {"title": title, "start": start, "end": end, "marks": marks}
+        record.append(entry)
+        arm = ask(f"\n  In one line: {step['arm']}\n  (Enter to skip)\n  > ",
+                  interruptible=True).strip()
+        if arm:
+            log.append(f"  arm: {arm}")
+            entry["arm"] = arm
+        verdict = None
+        if rehearse:
+            print("\n  (Rehearsal: nothing was recorded, so there is nothing to check.)")
+        elif check is not None:
+            try:
+                verdict = check(start, end)
+            except Exception as exc:                      # noqa: BLE001
+                verdict = None
+                log.append(f"  check: could not be made ({exc})")
+            if verdict:
+                print(f"\n  CHECK: {verdict}.")
+                log.append(f"  check: {verdict}")
+                entry["check"] = verdict
+        again = ask("\n  Press Enter to go on, or type  r  to do this step again"
+                    + ("" if rehearse else "\n  (the recording keeps both tries)")
+                    + ": ", interruptible=True).strip().lower()
+        if again.startswith("r"):
+            take += 1
+            continue
+        index += 1
+        take = 1
+    return "all steps done"
+
+
+def ask_io_questions(log: list) -> None:
+    """The questions that need no recording; the answers go into the report."""
+    print("\n" + "-" * 68)
+    print("  LAST: A FEW QUESTIONS (nothing is recorded now)")
+    print("-" * 68)
+    print("  Just press Enter to skip any of them.\n")
+    for n, (key, question) in enumerate(IO_QUESTIONS, 1):
+        answer = ask(f"  {n}. {question}\n     > ").strip()
+        log.append(f"{key}: {answer or '[no answer]'}")
+
+
+def io_steps_overview(steps: list) -> list:
+    lines = [f"  WHAT YOU WILL DO ({len(steps)} short steps, about 15 minutes, then a few "
+             "questions)"]
+    for i, s in enumerate(steps, 1):
+        lines.append(f"    {i}. {s['title']}")
+    lines += ["  The first step is the most useful one. You can skip a step, do it",
+              "  again, or stop after any step: the steps you finished are kept.",
+              "  You need: the table with the i1Pro on it, i1Profiler, and two",
+              "  printed charts (your usual one, and a small one of one or two rows)."]
+    return lines
+
+
+def rehearse_io() -> int:
+    """--rehearse: walk the i1iO steps without recording anything, so a
+    tester can see them before switching SIP off, and we can test them."""
+    print("=" * 68)
+    print("  ChromIQ X-Rite instrument probe " + PROBE_VERSION + ": REHEARSAL")
+    print("=" * 68)
+    print()
+    print("  This walks through the i1iO recording steps WITHOUT recording")
+    print("  anything and without saving anything. Nothing is sent to the table.")
+    print("  Use it to see the steps before the real recording.")
+    print()
+    print("\n".join(io_steps_overview(IO_STEPS)))
+    print()
+    print(io_ready_text())
+    run_io_steps(IO_STEPS, time.time(), [], rehearse=True)
+    print("\n" + "-" * 68)
+    print("  At the end of the real recording, the tool asks these questions:")
+    for n, (_key, question) in enumerate(IO_QUESTIONS, 1):
+        print(f"  {n}. {question}")
+    print()
+    print("  That was the rehearsal. For the real recording, run the tool again")
+    print("  and choose 1 (the i1iO table); on a Mac, SIP must be switched off")
+    print("  first, and the tool says how.")
+    return 0
+
+
+def io_live_check(paths, start: float, end: float) -> str | None:
+    """While the recording runs: what the recording so far shows for one
+    step. Reads the growing recording files (tcpdump writes every packet at
+    once with -U); never touches a device."""
+    lines = []
+    found = False
+    for path in paths:
+        try:
+            linktype, recs = _read_pcap(path)
+        except (OSError, ValueError):
+            continue
+        if linktype == LINKTYPE_USB_DARWIN:
+            recs = [r for r in recs if _darwin_vid(r[1]) in XRITE_VIDS]
+        if not recs:
+            continue
+        events = capture_events(linktype, recs)
+        keys = io_table_keys(events, device_map(events))
+        if keys:
+            found = True
+            lines += io_table_lines(events, keys)
+    if not found:
+        return "no table command was recorded in this step: please repeat it"
+    n, moving = io_count_commands(lines, start, end)
+    return io_step_verdict(n, moving)
+
 
 
 def annotate_session() -> None:
@@ -1400,10 +1688,11 @@ def annotate_session() -> None:
     print(I1PROFILER_WARNING)
 
     print("\n" + "-" * 68)
-    print("Next: I would walk you through " + str(len(CAPTURE_STEPS)) + " short operations in i1Profiler")
-    print("(connect, align the arm on the chart corners, scan a couple of")
-    print("rows) and time each one, so the recording can be split up later.")
-    print("It takes about 10 minutes and needs the recording to be running.")
+    print("\n".join(io_steps_overview(IO_STEPS)))
+    print()
+    print(io_ready_text())
+    print("  The recording has to run for the whole time. This tool notes when")
+    print("  each step starts and ends, so the recording can be read step by step.")
     print("-" * 68)
 
     if not said_yes(ask("\nIs the recording running? Shall I start the walkthrough? (yes / no): ")):
@@ -1414,18 +1703,38 @@ def annotate_session() -> None:
         section("Stage 2: timed recording",
                 "[walkthrough skipped by operator, no recording running]")
         return
+    io_timed_steps()
+    print("\nStop your recording now and save the file.")
+    print("Send BOTH the recording and this probe report.\n")
+
+
+def io_log_header(t0: float) -> list:
+    """The first lines of the step log. 1.5.4 adds the exact start as UTC
+    epoch seconds (the same clock as the recording), so --analyze places
+    every step exactly; 1.5.3 reports had only the local clock time."""
+    local = datetime.datetime.fromtimestamp(t0).isoformat()
+    return [f"session start (monotonic zero): {local}",
+            f"session start (UTC epoch seconds): {t0:.3f}"]
+
+
+def io_timed_steps(check=None) -> list:
+    """The steps, timed, while someone else's recording runs (Wireshark on
+    Windows, a hardware sniffer on a Mac). Returns the step records."""
     t0 = time.time()
-    log = [f"session start (monotonic zero): {datetime.datetime.now().isoformat()}"]
+    log = io_log_header(t0)
+    record: list = []
     try:
-        log += run_walkthrough(CAPTURE_STEPS, t0)
+        log.append("walk: " + run_io_steps(IO_STEPS, t0, log, check=check, record=record))
     except KeyboardInterrupt:
         log.append("walkthrough ended early with Ctrl-C")
-    notes = ask("Anything odd happen? (free text, Enter to skip): ")
+    notes = ask("\nAnything odd happen? (free text, Enter to skip): ")
     if notes:
         log.append(f"operator notes: {notes}")
     section("Stage 2: annotated capture timeline", "\n".join(log))
-    print("\nStop your recording now and save the file.")
-    print("Send BOTH the recording and this probe report.\n")
+    answers: list = []
+    ask_io_questions(answers)
+    section("Stage 2: answers about the chart and the settings", "\n".join(answers))
+    return record
 
 
 # --------------------------------------------------------------------------
@@ -1486,9 +1795,13 @@ def macos_guided_recording(readiness: dict) -> None:
   2. The tool switches on the USB recording interfaces ({", ".join(interfaces)})
      and starts macOS's own tcpdump program on each of them. It only
      listens. It cannot move the arm.
-  3. You do a few short steps in i1Profiler (about 3 minutes).
+  3. You do three short steps in i1Profiler (about 15 minutes). After
+     each one the tool checks that the table's commands were recorded.
   4. The tool stops recording, switches the interfaces off again, checks
      the recording, and makes a copy that holds only the X-Rite traffic.
+     Then it asks a few questions about the chart.
+
+  Before you start: open i1Profiler and let it find the table.
 
   Please do not type anything private on a USB keyboard while it records:
   a recording holds everything on the same USB bus, and the tool records
@@ -1497,6 +1810,8 @@ def macos_guided_recording(readiness: dict) -> None:
 
   It does not change System Integrity Protection; you switched that off
   yourself, and you switch it back on yourself afterwards.""")
+    print()
+    print(io_ready_text())
     if not said_yes(ask("\n  Start the recording now? (yes / no): ")):
         print("\n  No recording made. That is fine; your report is still useful.\n")
         section("Stage 2: macOS recording", "[recording possible, but declined by operator]")
@@ -1532,7 +1847,8 @@ def macos_guided_recording(readiness: dict) -> None:
     brought_up: list = []
     procs: dict = {}
     files: dict = {}
-    log = [f"session start (monotonic zero): {datetime.datetime.now().isoformat()}"]
+    log: list = []
+    record: list = []
     old_handlers = {}
     for sig in (signal.SIGHUP, signal.SIGTERM):
         try:
@@ -1578,13 +1894,11 @@ def macos_guided_recording(readiness: dict) -> None:
             print("  RECORDING. Now do the steps below.")
             print("=" * 68)
             t0 = time.time()
-            log += run_walkthrough(RECORDING_STEPS, t0)
-            print("-" * 68)
-            print("  That is the short version done. If you have about 10 more")
-            print("  minutes, the longer part (aligning the arm on the corners and")
-            print("  scanning two rows) shows us much more of how the table works.")
-            if said_yes(ask("  Carry on with the longer part? (yes / no): ", interruptible=True)):
-                log += run_walkthrough(EXTRA_RECORDING_STEPS, t0)
+            log += io_log_header(t0)
+            recorded = [files[i] for i in live]
+            log.append("walk: " + run_io_steps(
+                IO_STEPS, t0, log, record=record,
+                check=lambda a, b: io_live_check(recorded, a, b)))
     except KeyboardInterrupt:
         ended_early = "Ctrl-C"
     except _Hangup:
@@ -1637,16 +1951,28 @@ def macos_guided_recording(readiness: dict) -> None:
         log.append(f"operator notes: {notes}")
     section("Stage 2: annotated capture timeline", "\n".join(log))
 
-    result_lines = finish_recordings(files)
+    result_lines = finish_recordings(files, record)
     section("Stage 2: macOS recording result", "\n".join(result_lines))
     print("\n" + "\n".join("  " + l for l in result_lines))
+    if record and not ended_early:
+        answers: list = []
+        ask_io_questions(answers)
+        section("Stage 2: answers about the chart and the settings", "\n".join(answers))
+    if _IO_SUMMARY:
+        section("Stage 2: the steps at a glance", "\n".join(_IO_SUMMARY))
+        print("\n" + "\n".join("  " + l for l in _IO_SUMMARY))
     print()
     print(SIP_OFF_REMINDER)
     print()
 
 
-def finish_recordings(files: dict) -> list:
-    """Check each recording, make the X-Rite-only copies, offer to delete the rest."""
+_IO_SUMMARY: list = []          # 1.5.4: the step table, repeated at the very end
+
+
+def finish_recordings(files: dict, record: list | None = None) -> list:
+    """Check each recording, make the X-Rite-only copies, offer to delete the
+    rest. 1.5.4: record (the steps) adds the per-step check of the table's
+    commands."""
     lines = ["RECORDING CHECK"]
     send = []
     full = []
@@ -1664,6 +1990,25 @@ def finish_recordings(files: dict) -> list:
             if kept:
                 send.append(dst)
                 lines.append(f"  X-Rite-only copy ({kept} packets): {os.path.basename(dst)}")
+    steps = [r for r in record or [] if not r.get("skipped")]
+    if steps:
+        table_lines = []
+        for dst in send:
+            cap = io_capture(dst)
+            if cap:
+                table_lines += cap["lines"]
+        rows = []
+        lines.append("")
+        lines.append("THE STEPS, CHECKED IN THE FINISHED RECORDING")
+        for r in record:
+            if r.get("skipped"):
+                lines.append(f"  {r['title']}: skipped")
+                rows.append((r["title"], None, 0, 0))
+                continue
+            n, moving = io_count_commands(table_lines, r["start"], r["end"])
+            lines.append(f"  {r['title']}: {io_step_verdict(n, moving)}")
+            rows.append((r["title"], True, n, moving))
+        _IO_SUMMARY[:] = io_summary_table(rows)
     lines.append("")
     if send:
         lines.append("Please attach these files to the GitHub issue, together with the report:")
@@ -1840,6 +2185,23 @@ def parse_config_descriptor(blob: bytes) -> list:
     return lines
 
 
+def is_serial_string(resp: bytes, index: int, serial_index) -> bool:
+    """1.5.4: is this USB string descriptor the device's serial number?
+    Certain when the recording holds the device descriptor (its
+    iSerialNumber). Without it, a string of digits and capital letters with
+    no space is taken as one: the i1iO's and the i1Pro 2's serial strings
+    are digits, their maker and product strings are words."""
+    if index == 0 or len(resp) < 4 or resp[1] != 3:
+        return False
+    if serial_index is not None:
+        return index == serial_index
+    try:
+        text = resp[2:resp[0]].decode("utf-16-le")
+    except UnicodeDecodeError:
+        return False
+    return bool(re.fullmatch(r"[0-9A-Z]{4,}", text)) and any(c.isdigit() for c in text)
+
+
 def _analyze_darwin(recs):
     """Device-agnostic summary: (devices, cmd_counts, timeline, bulk, descriptors)."""
     submits = {}                    # seq -> (bRequest, dir_in, wLen, ts, wValue, bmReqType)
@@ -1848,6 +2210,7 @@ def _analyze_darwin(recs):
     timeline = []
     bulk_bytes = 0
     descriptors: list = []
+    serial_index: dict = {}         # (vid, pid) -> iSerialNumber, when recorded
     t0 = recs[0][0] if recs else 0.0
     for ts, data in recs:
         if len(data) < _DARWIN_HDR:
@@ -1887,8 +2250,15 @@ def _analyze_darwin(recs):
                             if lines and (tag, tuple(lines)) not in descriptors:
                                 descriptors.append((tag, tuple(lines)))
                             break
+                if rtype == 0x80 and breq == 6 and (wvalue >> 8) == 1 and len(resp) >= 17:
+                    serial_index[(vid, pid)] = resp[16]
+                shown = resp[:16]
+                if (REDACT and rtype == 0x80 and breq == 6 and (wvalue >> 8) == 3
+                        and is_serial_string(resp, wvalue & 0xFF,
+                                             serial_index.get((vid, pid)))):
+                    shown = b"<serial>"
                 if len(timeline) < 30:
-                    timeline.append((tsub - t0, breq, dir_in, wlen, resp[:16]))
+                    timeline.append((tsub - t0, breq, dir_in, wlen, shown))
             elif dlen >= 64:
                 bulk_bytes += dlen
     return devices, cmd_counts, timeline, bulk_bytes, descriptors
@@ -2108,7 +2478,8 @@ def summarize_captures(paths):
             for tsec, breq, dir_in, wlen, resp in timeline:
                 out.append(f"        {tsec:7.3f}s  req=0x{breq:02X} "
                            f"{'IN ' if dir_in else 'OUT'} wLen={wlen:<4} -> "
-                           f"{resp.hex()}  |{_fmt_ascii(resp)}|")
+                           + ("<serial number hidden>" if resp == b"<serial>" else
+                              f"{resp.hex()}  |{_fmt_ascii(resp)}|"))
         out.append("     VERDICT: " + (
             "OK, real device traffic captured. Good to send."
             if real else
@@ -2250,8 +2621,19 @@ def _events_usbmon(recs, hdr_len: int) -> list:
 
 
 def _events_darwin(recs) -> list:
+    """macOS records -> events.
+
+    1.5.4: measured on the first real i1iO recordings (macOS 15/26, tcpdump
+    on XHCn): data going TO the device travels in the COMPLETION record, not
+    in the submit. A bulk OUT submit carries the length but no bytes, and a
+    control OUT submit carries only its 8-byte setup; the data stage comes
+    with the completion. 1.5.3 read OUT data only from the submit, so every
+    command the vendor program sent was missing from --analyze. The submit's
+    bytes are still used when a completion arrives empty (other macOS
+    versions may differ), and nothing is counted twice."""
     events = []
     pending = {}
+    out_submits = {}                  # seq -> the event of a non-control OUT submit
     for ts, d in recs:
         if len(d) < _DARWIN_HDR:
             continue
@@ -2276,16 +2658,34 @@ def _events_darwin(recs) -> list:
                 continue
         if direction == 1 and seq in pending:
             ev = pending.pop(seq)
+            body = bytes(payload[:dlen] if dlen else payload)
             if ev["rt"] & 0x80:
-                ev["in"] = bytes(payload[:dlen] if dlen else payload)
+                ev["in"] = body
+            elif body and not ev["out"]:
+                ev["out"] = body            # the data stage of a control OUT
             continue
         dir_in = bool(ep & 0x80)
         data = payload[:dlen] if dlen else payload
-        if not data or (direction == 1) != dir_in:
+        if not dir_in and (ep & 0x7f):
+            if direction == 0:
+                out_submits[seq] = {"kind": "data", "t": ts, "bus": bus, "dev": dev,
+                                    "ep": ep, "type": etype, "dir_in": False,
+                                    "data": bytes(data), "vid": vid, "pid": pid}
+                continue
+            sub = out_submits.pop(seq, None)
+            data = data or (sub["data"] if sub else b"")
+        elif direction != 1:
+            continue
+        if not data:
             continue
         events.append({"kind": "data", "t": ts, "bus": bus, "dev": dev, "ep": ep,
                        "type": etype, "dir_in": dir_in, "data": bytes(data),
                        "vid": vid, "pid": pid})
+    # An OUT whose completion the recording did not catch (it was stopped in
+    # between): keep its bytes if the submit had any, at the submit's time.
+    leftovers = [ev for ev in out_submits.values() if ev["data"]]
+    if leftovers:
+        events = sorted(events + leftovers, key=lambda e: e["t"])
     return events
 
 
@@ -3521,6 +3921,540 @@ def summarize_i1pro_session(paths: list) -> str:
 
 
 # --------------------------------------------------------------------------
+# 1.5.4: the i1iO table (0971:2004)
+#
+# Adapted from our own decoder written for the first two real recordings
+# (issue #129: i1Profiler 3.8.6 on a Mac, an i1iO 2 with an i1Pro 2 on it).
+# What those recordings showed, with the same three words for how sure we
+# are that the decode notes use:
+#   * The table talks through an FTDI USB-to-serial chip (certain for FTDI:
+#     the vendor requests are FTDI's own). Bulk OUT carries text lines to the
+#     table; bulk IN brings its answers, and every 64-byte USB packet from
+#     the chip starts with 2 status bytes that are not data (certain).
+#   * One command per line, ended by CR (certain). Lines to the table start
+#     with ';'; the table answers every one with ':!' (accepted) and ':$'
+#     (done, with a status digit and any data).
+#   * The last two characters of every line are a checksum: the two's
+#     complement of the 8-bit sum of all characters before them (certain:
+#     it fits all 2,475 lines in both recordings).
+# What each command MEANS is mostly not proved. Every description below
+# carries its word (certain, likely, guess), a meaning nobody knows says
+# "meaning unknown", and a command not seen in the first recordings is
+# flagged as new. The raw line is always printed too, so anyone can check.
+# --------------------------------------------------------------------------
+
+IO_TABLE_PID = 0x2004
+IO_PRO_PID = 0x2000
+_HEX2_RE = re.compile(r"[0-9a-fA-F]{2}")
+
+# Commands seen in the first recordings: id -> (what it does, how sure).
+IO_COMMANDS = {
+    "s0": "status query (always answered 0 so far; meaning: likely)",
+    "a1": "identification, sent when the table is opened (guess: hardware and "
+          "firmware version)",
+    "k2": "information k2 (meaning unknown)",
+    "a0": "information a0 (meaning unknown)",
+    "u8": "read the table's memory",
+    "i1": "home / reference run: the arm goes to its parking place (likely)",
+    "p0": "where is the measuring opening? (likely)",
+    "p1": "where is the point under the alignment sight? read after a button "
+          "press (likely)",
+    "m0": "travel move (certain)",
+    "m1": "move out to the hand-alignment start (how it differs from m0: "
+          "meaning unknown)",
+    "m2": "scan move along a row while the i1Pro measures (certain)",
+    "a3": "ask for the profile of the running move (likely)",
+    "c3": "c3, sent as each scan starts (guess: head down)",
+    "c4": "c4, sent before every travel to a new row (guess: head up)",
+    "d1": "d1, sent before every scan (guess: a delay in milliseconds)",
+    "f0": "end hand-alignment mode, motors take over again (likely)",
+    "f1": "free the arm, so it can be pushed by hand for alignment (likely)",
+    "f3": "f3 (meaning unknown)",
+    "f4": "is the arm free? 00 = motors in control, 01 = free (likely)",
+}
+IO_MOVING = ("m0", "m1", "m2", "i1")
+
+
+def io_ftdi_payload(transfer: bytes, packet: int = 64) -> bytes:
+    """Data from the FTDI chip: drop the 2 status bytes at the start of
+    every 64-byte USB packet (a long transfer holds several packets)."""
+    return b"".join(transfer[i + 2:i + packet] for i in range(0, len(transfer), packet))
+
+
+def io_checksum(body: str) -> str:
+    """The checksum a line must end with: two's complement of the byte sum."""
+    return f"{(-sum(body.encode('latin-1', 'replace'))) & 0xFF:02x}"
+
+
+def io_checksum_ok(line: str) -> bool:
+    """Sum of every character (the start character included) plus the
+    checksum byte is 0 modulo 256."""
+    if len(line) < 3 or not _HEX2_RE.fullmatch(line[-2:]):
+        return False
+    return (sum(line[:-2].encode("latin-1", "replace")) + int(line[-2:], 16)) & 0xFF == 0
+
+
+def _io_s16(text: str) -> int:
+    v = int(text, 16)
+    return v - 0x10000 if v & 0x8000 else v
+
+
+def io_table_keys(events: list, devices: dict) -> set:
+    """(bus, address) of the table: by its USB IDs (in the macOS header or
+    the recorded USB description), or, when the recording holds neither, by
+    a line with a correct checksum sent to it. A replug gives a new address;
+    every one is kept."""
+    keys = set()
+    for key, info in devices.items():
+        if info.get("vid") == XRITE_VID and info.get("pid") == IO_TABLE_PID:
+            keys.add(key)
+    for ev in events:
+        key = (ev["bus"], ev["dev"])
+        if ev.get("vid") == XRITE_VID and ev.get("pid") == IO_TABLE_PID:
+            keys.add(key)
+        elif (ev["kind"] == "data" and not ev["dir_in"] and ev["data"][:1] == b";"
+              and key not in keys):
+            text = ev["data"].decode("latin-1")
+            if any(io_checksum_ok(part) for part in text.split("\r") if part.startswith(";")):
+                keys.add(key)
+    return keys
+
+
+def io_pro_keys(events: list, devices: dict, table: set) -> set:
+    """(bus, address) of the i1Pro mounted on the table."""
+    keys = set()
+    for key, info in devices.items():
+        if key in table:
+            continue
+        if (info.get("vid") == XRITE_VID and info.get("pid") == IO_PRO_PID) \
+                or info.get("guess_family") in ("i1pro2", "i1pro"):
+            keys.add(key)
+    for ev in events:
+        if ev.get("vid") == XRITE_VID and ev.get("pid") == IO_PRO_PID:
+            keys.add((ev["bus"], ev["dev"]))
+    return keys - table
+
+
+def io_table_lines(events: list, keys: set) -> list:
+    """The table's serial conversation as lines, in the order they ended:
+    [{"t": time of the first byte, "t_end": time of the CR, "who": "host" or
+    "table", "line", "ok": checksum right}]. A line still open when the
+    recording ends is kept, marked "unfinished"."""
+    bufs = {False: bytearray(), True: bytearray()}
+    first = {False: None, True: None}
+    lines = []
+    for ev in events:
+        if ev["kind"] != "data" or (ev["bus"], ev["dev"]) not in keys:
+            continue
+        inbound = ev["dir_in"]
+        payload = io_ftdi_payload(ev["data"]) if inbound else ev["data"]
+        for b in payload:
+            if first[inbound] is None:
+                first[inbound] = ev["t"]
+            if b == 0x0D:
+                text = bufs[inbound].decode("latin-1")
+                if text:
+                    lines.append({"t": first[inbound], "t_end": ev["t"],
+                                  "who": "table" if inbound else "host", "line": text,
+                                  "ok": io_checksum_ok(text)})
+                bufs[inbound].clear()
+                first[inbound] = None
+            elif b != 0x0A:
+                bufs[inbound].append(b)
+    for inbound in (False, True):
+        if bufs[inbound]:
+            text = bufs[inbound].decode("latin-1")
+            lines.append({"t": first[inbound], "t_end": first[inbound],
+                          "who": "table" if inbound else "host", "line": text,
+                          "ok": False, "unfinished": True})
+    return lines
+
+
+def io_describe_command(line: str) -> str:
+    """Plain words for a line sent to the table (';' id arguments checksum)."""
+    cid, args = line[1:3], line[3:-2]
+    if cid in ("m0", "m1", "m2") and len(args) == 12:
+        try:
+            x, y, v = _io_s16(args[0:4]), _io_s16(args[4:8]), int(args[8:12], 16)
+        except ValueError:
+            return IO_COMMANDS[cid] + f" (arguments {args})"
+        return (f"to X={x} Y={y} at speed {v}: {IO_COMMANDS[cid]}; "
+                f"{x / 10:.1f}, {y / 10:.1f} mm if the unit is 0.1 mm (likely)")
+    if cid == "u8" and len(args) == 12:
+        try:
+            return (f"read the table's memory at 0x{int(args[:8], 16):X}, "
+                    f"{int(args[8:], 16)} bytes (certain)")
+        except ValueError:
+            pass
+    if cid == "d1" and len(args) == 4:
+        try:
+            return f"{IO_COMMANDS['d1']}: {int(args, 16)}"
+        except ValueError:
+            pass
+    if cid in IO_COMMANDS:
+        return IO_COMMANDS[cid] + (f" (arguments {args})" if args else "")
+    return f"<-- NEW: command {cid!r} was not in the first recordings" + \
+        (f" (arguments {args})" if args else "")
+
+
+def io_describe_reply(line: str) -> str:
+    """Plain words for a ':$' answer (':$' id status data checksum)."""
+    cid, status, data = line[2:4], line[4:5], line[5:-2]
+    text = "done, status 0" if status == "0" else \
+        f"done, status {status}  <-- NOT 0 (meaning unknown; only 0 and, once, 3 seen so far)"
+    try:
+        if cid in ("p0", "p1") and len(data) == 8:
+            return f"{text}: X={_io_s16(data[:4])} Y={_io_s16(data[4:])}"
+        if cid == "a3" and len(data) == 20:
+            return (f"{text}: {int(data[:8], 16)} (meaning: guess), "
+                    f"{int(data[8:16], 16)} ms of travel and speed {int(data[16:], 16)} "
+                    "(certain)")
+    except ValueError:
+        pass
+    if cid == "u8":
+        return f"{text}: {len(data) // 2} bytes of the table's memory"
+    if cid == "f4" and data in ("00", "01"):
+        return f"{text}: {data} (" + ("motors in control" if data == "00" else "arm free") \
+            + ", likely)"
+    return f"{text}" + (f", data {data}" if data else "")
+
+
+def io_redact(line: str, u8_addr) -> str:
+    """Hide the table's serial number. It sits in the table's memory at
+    0x604C (4 bytes, certain: it is the same number as the USB serial), and
+    i1Profiler reads it with u8. Replaced by <serial> unless --no-redact."""
+    if not REDACT or not line.startswith(":$u8") or u8_addr is None:
+        return line
+    lo, hi = 0x604C, 0x6050
+    data_start = 5                       # after ':$u8' and the status digit
+    out = line
+    nbytes = max(0, (len(line) - 2 - data_start) // 2)
+    if u8_addr < hi and u8_addr + nbytes > lo:
+        a = data_start + 2 * max(0, lo - u8_addr)
+        b = data_start + 2 * min(nbytes, hi - u8_addr)
+        out = line[:a] + "<serial>" + line[b:]
+    return out
+
+
+_FTDI_REQUESTS = {0x00: "reset", 0x01: "set modem control", 0x02: "set flow control",
+                  0x03: "set baud rate", 0x04: "set data format", 0x09: "set latency timer",
+                  0x0A: "get latency timer"}
+
+
+def io_describe_ftdi(ev: dict) -> str:
+    """FTDI's own vendor requests to the table's USB chip."""
+    req, val, idx = ev["req"], ev["wValue"], ev["wIndex"]
+    if (ev["rt"] >> 5) & 3 == 0:
+        name = _STANDARD_REQUESTS.get(req, f"standard request {req}")
+        return f"USB {name}"
+    name = _FTDI_REQUESTS.get(req)
+    if name is None:
+        return (f"<-- NEW: vendor request 0x{req:02X} (wValue 0x{val:04X}, "
+                f"wIndex 0x{idx:04X})")
+    if req == 0x00:
+        what = {0: "reset", 1: "empty the receive buffer", 2: "empty the send buffer"}
+        return f"FTDI {what.get(val, f'reset 0x{val:04X}')}"
+    if req == 0x03:
+        div = val & 0x3FFF
+        approx = f", about {3000000 // div:,} baud" if div and not (val >> 14) else ""
+        return f"FTDI set baud rate (divisor {div}{approx})"
+    if req == 0x04:
+        parity = {0: "no parity", 1: "odd parity", 2: "even parity", 3: "mark parity",
+                  4: "space parity"}.get((val >> 8) & 7, "parity ?")
+        stop = {0: "1 stop bit", 1: "1.5 stop bits", 2: "2 stop bits"}.get((val >> 11) & 3, "?")
+        return f"FTDI set data format: {val & 0xFF} data bits, {parity}, {stop}"
+    return f"FTDI {name} (0x{val:04X})"
+
+
+def _io_pro_text(ev: dict) -> str | None:
+    """One line for an event of the i1Pro on the table."""
+    if ev["kind"] == "control":
+        if (ev["rt"] >> 5) & 3 == 0:
+            return None
+        known = I1PRO_REQUESTS.get(ev["req"])
+        if known is None:
+            return f"i1Pro request 0x{ev['req']:02X} {_raw(ev['out'], ev['in'])}"
+        name, _where, decoder, _live = known
+        try:
+            args = decoder(ev["out"], ev["in"])
+        except Exception:                                 # noqa: BLE001
+            args = _raw(ev["out"], ev["in"])
+        if ev["req"] in (0xC4, 0xC3):                    # EEPROM: address only
+            args = _d_eeprom(ev["out"], b"")
+        return f"i1Pro {name}" + (f": {args}" if args else "")
+    if ev["ep"] == 0x84 and ev["dir_in"]:
+        return f"i1Pro BUTTON pressed (interrupt 0x84, value 0x{ev['data'].hex()})"
+    direction = "from" if ev["dir_in"] else "to"
+    return f"i1Pro data {direction} 0x{ev['ep']:02x}: {len(ev['data'])} bytes"
+
+
+def io_steps_from_report(text: str, t0_abs: float) -> dict | None:
+    """The operator's steps from a probe report, as absolute times.
+
+    1.5.4 reports carry "session start (UTC epoch seconds)", so the times
+    are exact. Older reports carry only the local clock time; then the time
+    zone is taken as the whole quarter hour that puts the recording's first
+    packet 0 to 15 minutes after the session start, which is approximate."""
+    m = re.search(r"Stage 2: annotated capture timeline\n=+\n(.*?)(?:\n=====|\Z)", text, re.S)
+    if not m:
+        return None
+    body = m.group(1)
+    exact = re.search(r"session start \(UTC epoch seconds\): ([\d.]+)", body)
+    if exact:
+        start = float(exact.group(1))
+    else:
+        iso = re.search(r"session start \(monotonic zero\): (\S+)", body)
+        if not iso:
+            return None
+        try:
+            naive = datetime.datetime.fromisoformat(iso.group(1)).replace(
+                tzinfo=datetime.timezone.utc).timestamp()
+        except ValueError:
+            return None
+        diff = t0_abs - naive
+        start = naive + round((diff - 450) / 900) * 900
+    steps, marks = [], []
+    for line in body.splitlines():
+        sm = re.match(r"^(\S[^:\n]*?): t=\s*(-?[\d.]+)s \.\.\s*(-?[\d.]+)s", line)
+        if sm:
+            steps.append({"name": sm.group(1), "start": start + float(sm.group(2)),
+                          "end": start + float(sm.group(3))})
+            continue
+        sk = re.match(r"^(\S[^:\n]*?): SKIPPED", line)
+        if sk:
+            steps.append({"name": sk.group(1), "skipped": True})
+            continue
+        mk = re.match(r"^\s+mark: (.+?) at t=\s*(-?[\d.]+)s", line)
+        if mk:
+            marks.append({"what": mk.group(1), "t": start + float(mk.group(2))})
+    return {"steps": steps, "marks": marks, "exact": bool(exact), "start": start}
+
+
+def io_step_title(name: str) -> str:
+    return re.sub(r"\s*\(take \d+\)$", "", name)
+
+
+def io_step_verdict(commands: int, moving: int, expect: bool = True) -> str:
+    """What the check says about one step. expect: the step is one where
+    i1Profiler must talk to the table (all of the 1.5.4 steps)."""
+    word = "command" if commands == 1 else "commands"
+    if not expect:
+        return f"{commands} {word} to the table"
+    if commands == 0:
+        return "no table command was recorded in this step: please repeat it"
+    if moving == 0:
+        return (f"this step recorded {commands} {word} to the table, but none that moves "
+                "the arm: if the arm moved in this step, please repeat it")
+    return f"this step recorded {commands} {word} to the table: good"
+
+
+def io_count_commands(lines: list, start: float, end: float) -> tuple:
+    """(commands, moving commands) sent to the table between two times."""
+    sent = [l for l in lines if l["who"] == "host" and start <= l["t"] <= end]
+    return len(sent), sum(1 for l in sent if l["line"][1:3] in IO_MOVING)
+
+
+def io_capture(path: str) -> dict | None:
+    """Everything about the table in one recording, or None if there is no
+    table in it."""
+    try:
+        linktype, recs = _read_pcap(path)
+    except (OSError, ValueError):
+        return None
+    if not recs:
+        return None
+    events = capture_events(linktype, recs)
+    devices = device_map(events)
+    table = io_table_keys(events, devices)
+    if not table:
+        return None
+    pro = io_pro_keys(events, devices, table)
+    return {"path": path, "t0": recs[0][0], "events": events, "table": table, "pro": pro,
+            "lines": io_table_lines(events, table), "linktype": linktype}
+
+
+def find_report_for(path: str) -> str | None:
+    """The probe report that names this recording, in the same folder."""
+    folder = os.path.dirname(os.path.abspath(path))
+    name = os.path.basename(path)
+    names = {name, name.replace("-xrite.pcap", "-full.pcap")}
+    for cand in sorted(glob.glob(os.path.join(folder, "chromiq-io-probe-*.txt")), reverse=True):
+        try:
+            with open(cand, encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        if any(n in text for n in names):
+            return cand
+    return None
+
+
+def _report_naming(path: str, reports: list) -> str | None:
+    """Of the reports given after --analyze, the one that names this
+    recording; a single report is taken as it is."""
+    name = os.path.basename(path)
+    for rep in reports:
+        try:
+            with open(rep, encoding="utf-8", errors="replace") as fh:
+                if name in fh.read():
+                    return rep
+        except OSError:
+            continue
+    return reports[0] if len(reports) == 1 else None
+
+
+def io_timeline(cap: dict, steps: dict | None = None) -> list:
+    """The merged, annotated timeline: table lines in both directions, the
+    FTDI requests, the i1Pro's requests and data, and the operator's steps
+    and marks. Seconds from the recording's first packet."""
+    t0 = cap["t0"]
+    items = []
+    for ev in cap["events"]:
+        key = (ev["bus"], ev["dev"])
+        if ev["kind"] == "control" and key in cap["table"]:
+            items.append((ev["t"], 1, "TABLE", io_describe_ftdi(ev)))
+        elif key in cap["pro"]:
+            text = _io_pro_text(ev)
+            if text:
+                items.append((ev["t"], 2, "i1PRO", text))
+    pending = {}
+    u8_addr = None
+    for l in cap["lines"]:
+        line = l["line"]
+        flag = "" if l["ok"] else ("  <-- line cut off by the end of the recording"
+                                   if l.get("unfinished") else "  <-- CHECKSUM WRONG")
+        if l["who"] == "host":
+            cid = line[1:3]
+            pending[cid] = l["t"]
+            if cid == "u8" and len(line) == 17:
+                try:
+                    u8_addr = int(line[3:11], 16)
+                except ValueError:
+                    u8_addr = None
+            text = io_describe_command(line) if line.startswith(";") else "not a command line"
+            items.append((l["t"], 1, "HOST ", f"{line:<22} {text}{flag}"))
+        elif line.startswith(":!"):
+            items.append((l["t_end"], 1, "TABLE", f"{line:<22} accepted{flag}"))
+        elif line.startswith(":$"):
+            cid = line[2:4]
+            shown = io_redact(line, u8_addr)
+            took = pending.pop(cid, None)
+            took = f"  (took {l['t_end'] - took:.3f}s)" if took is not None else ""
+            items.append((l["t_end"], 1, "TABLE",
+                          f"{shown:<22} {io_describe_reply(line)}{took}{flag}"))
+        else:
+            items.append((l["t_end"], 1, "TABLE", f"{line:<22} (not a known reply){flag}"))
+    if steps:
+        for s in steps["steps"]:
+            if s.get("skipped"):
+                continue
+            items.append((s["start"], 0, "", f">>> STEP: {s['name']} "
+                                             f"(until {s['end'] - t0:.1f}s)"))
+            items.append((s["end"], 3, "", f">>> end of step: {s['name']}"))
+        for mk in steps["marks"]:
+            items.append((mk["t"], 0, "", f">>> OPERATOR: {mk['what']}"))
+    items.sort(key=lambda x: (x[0], x[1]))
+    # Runs of i1Pro data on one endpoint become one line.
+    out = []
+    run = None
+    for t, _order, who, text in items:
+        m = re.match(r"(i1Pro data (?:from|to) 0x[0-9a-f]{2}): (\d+) bytes$", text)
+        if m and run and run[1] == m.group(1):
+            run[2] += 1
+            run[3] += int(m.group(2))
+            run[4] = t
+            continue
+        if run:
+            out.append(_io_run_line(run, t0))
+            run = None
+        if m:
+            run = [t, m.group(1), 1, int(m.group(2)), t]
+            continue
+        out.append(f"{t - t0:9.3f}  {who:5}  {text}")
+    if run:
+        out.append(_io_run_line(run, t0))
+    return out
+
+
+def _io_run_line(run: list, t0: float) -> str:
+    start, label, count, total, last = run
+    if count == 1:
+        return f"{start - t0:9.3f}  i1PRO  {label}: {total} bytes"
+    return (f"{start - t0:9.3f}  i1PRO  {label}: {total:,} bytes in {count} transfers "
+            f"(until {last - t0:.3f}s)")
+
+
+def summarize_io(paths: list, reports: list | None = None) -> str | None:
+    """The i1iO analysis for --analyze, or None when no file holds a table."""
+    caps = [c for c in (io_capture(p) for p in paths) if c]
+    if not caps:
+        return None
+    out = ["=" * 68, "  THE i1iO TABLE: WHAT THE PROGRAM AND THE TABLE SAID", "=" * 68, "",
+           "  Reads the recording only. It sends nothing to any device.",
+           "  How sure we are is said with three words: certain, likely, guess.",
+           "  Anything without one of them is a plain count from the recording.",
+           "  The table's serial number is hidden" + (" (shown: --no-redact)."
+                                                       if not REDACT else ".")]
+    from collections import Counter                       # noqa: PLC0415
+    for cap in caps:
+        lines = cap["lines"]
+        host = [l for l in lines if l["who"] == "host"]
+        good = sum(1 for l in lines if l["ok"])
+        out += ["", "  " + os.path.basename(cap["path"]),
+                f"    table: 0971:2004 (\"Eye-One iO\"), a USB-to-serial link through an "
+                "FTDI chip (certain)",
+                f"    lines: {len(host)} to the table, {len(lines) - len(host)} from it; "
+                f"checksum right on {good} of {len(lines)}"]
+        if lines and good == len(lines):
+            out.append("      (every line checks out, so the lines were read correctly)")
+        elif lines:
+            out.append("      (a wrong checksum means a line was cut or misread; "
+                       "they are marked in the timeline)")
+        counts = Counter(l["line"][1:3] for l in host if l["line"].startswith(";"))
+        if counts:
+            out.append("    commands to the table: " +
+                       ", ".join(f"{k} x{v}" for k, v in sorted(counts.items())))
+        new = sorted(k for k in counts if k not in IO_COMMANDS)
+        out.append("    commands not seen in the first recordings: " +
+                   (", ".join(new) if new else "none"))
+        odd = Counter((l["line"][2:4], l["line"][4:5]) for l in lines
+                      if l["line"].startswith(":$") and l["line"][4:5] != "0")
+        out.append("    answers with a status other than 0: " +
+                   (", ".join(f"{c} status {s} x{n}" for (c, s), n in sorted(odd.items()))
+                    + " (meaning unknown)" if odd else "none"))
+        presses = sum(1 for ev in cap["events"] if (ev["bus"], ev["dev"]) in cap["pro"]
+                      and ev["kind"] == "data" and ev["ep"] == 0x84 and ev["dir_in"])
+        out.append(f"    i1Pro button presses: {presses}")
+        report = _report_naming(cap["path"], reports or []) or find_report_for(cap["path"])
+        steps = None
+        if report:
+            try:
+                with open(report, encoding="utf-8", errors="replace") as fh:
+                    steps = io_steps_from_report(fh.read(), cap["t0"])
+            except OSError:
+                steps = None
+        if steps and steps["steps"]:
+            how = "exact times" if steps["exact"] else (
+                "times approximate: worked out from the report's local clock")
+            out.append(f"    steps, from {os.path.basename(report)} ({how}):")
+            known = {s["title"] for s in IO_STEPS}
+            for s in steps["steps"]:
+                if s.get("skipped"):
+                    out.append(f"      {s['name']}: skipped")
+                    continue
+                n, moving = io_count_commands(lines, s["start"], s["end"])
+                verdict = io_step_verdict(n, moving, io_step_title(s["name"]) in known)
+                out.append(f"      {s['name']}: {verdict}")
+        else:
+            out.append("    steps: no probe report found for this recording (put the "
+                       "chromiq-io-probe report next to it, or name it after --analyze)")
+        out += ["", "    TIMELINE (seconds from the first packet in the file)"]
+        out += ["    " + line for line in io_timeline(cap, steps)]
+    out.append("=" * 68)
+    return "\n".join(out)
+
+
+# --------------------------------------------------------------------------
 # the recording step, per platform
 # --------------------------------------------------------------------------
 
@@ -3546,16 +4480,7 @@ def macos_recording_step(direct: bool) -> None:
     print("  hardware sniffer), this tool can still time the i1Profiler steps")
     print("  for you, which makes that recording much easier to read.")
     if said_yes(ask("  Time the steps for you? (yes / no): ")):
-        t0 = time.time()
-        log = [f"session start (monotonic zero): {datetime.datetime.now().isoformat()}"]
-        try:
-            log += run_walkthrough(CAPTURE_STEPS, t0)
-        except KeyboardInterrupt:
-            log.append("walkthrough ended early with Ctrl-C")
-        notes = ask("Anything odd happen? (free text, Enter to skip): ")
-        if notes:
-            log.append(f"operator notes: {notes}")
-        section("Stage 2: annotated capture timeline", "\n".join(log))
+        io_timed_steps()
     else:
         section("Stage 2: recording",
                 "[not possible on this Mac: " + " ".join(readiness["reasons"]) + "]")
@@ -3847,11 +4772,29 @@ def windows_release_check(build, display, arm: bool, profile: str | None = None,
     is not this PC's state, and saying [PLEASE READ] next to "[OK] X-Rite's
     driver" only confused the second user; it is useful evidence instead."""
     if arm:
+        # 1.5.4: 1.5.3 said as fact that the vendor program cannot talk to any
+        # instrument here. For the i1Pro 3 that is not known: its firmware
+        # asks for Microsoft's own WinUSB driver (seen in a user's report),
+        # and nobody has tried i1Profiler with it on ARM. "Problem" stays,
+        # because there is no recorder for ARM either way.
+        if profile == "i1pro3":
+            return {"level": "problem", "text": (
+                "This Windows runs on an ARM processor. The i1Pro 3 asks Windows for "
+                "Microsoft's own USB driver, so Windows may recognise it here without "
+                "an X-Rite driver. Whether i1Profiler can measure with it on an ARM "
+                "processor is not known: X-Rite does not say, and we have no report "
+                "either way. The recorder this tool uses (USBPcap) does not exist for "
+                "ARM processors, so a recording cannot be made on this PC. Please use "
+                "a Windows PC with an Intel or AMD processor for the recording. If you "
+                "try i1Profiler here, please tell us whether it finds the i1Pro 3: "
+                "that is useful to know.")}
         return {"level": "problem", "text": (
-            "This Windows runs on an ARM processor. X-Rite has no driver for these "
-            "instruments on Windows on ARM (that includes a Windows virtual machine on "
-            "an Apple Silicon Mac), so the vendor program cannot talk to the "
-            "instrument here.")}
+            "This Windows runs on an ARM processor. We know of no X-Rite driver for "
+            "the i1Pro 2, the i1iO or the ColorMunki on Windows on ARM (that includes "
+            "a Windows virtual machine on an Apple Silicon Mac), so the vendor program "
+            "most likely cannot talk to the instrument here. The recorder this tool "
+            "uses (USBPcap) does not exist for ARM processors either. Please use a "
+            "Windows PC with an Intel or AMD processor for the recording.")}
     if not build:
         return {"level": "unknown", "text": "The Windows version could not be read."}
     name = "Windows 11" if build >= WIN11_FIRST_BUILD else "Windows 10"
@@ -4052,8 +4995,9 @@ USBPCAP_INSTALL_TEXT = """\
 # through libwdi. X-Rite's programs cannot open an instrument bound to it.
 # X-Rite's own driver for the i1Pro and i1Pro 2 has the device class
 # "XRiteDevices"; the i1Pro 3 asks Windows for the standard WinUSB driver
-# itself (compatible ID USB\MS_COMP_WINUSB), and X-Rite's i1Pro 3 driver is a
-# WinUSB driver named "X-Rite i1Pro3".
+# itself (compatible ID USB\MS_COMP_WINUSB). One report showed a WinUSB entry
+# named "X-Rite i1Pro3" from a libwdi INF; whether that is X-Rite's own name
+# is not verified (1.5.4: the help text no longer names it).
 _DRIVER_PS = (
     "Get-PnpDevice -PresentOnly | Where-Object { ($_.InstanceId -like '*VID_0971*' "
     "-or $_.InstanceId -like '*VID_0765*') } | ForEach-Object { "
@@ -4155,13 +5099,15 @@ DRIVER_HELP_TEXT = """\
        "libusb-win32 devices". Right-click it and choose "Update driver".
     3. Choose "Browse my computer for drivers", then "Let me pick from a
        list of available drivers on my computer".
-    4. Pick X-Rite's own entry: "X-Rite i1Pro3" for an i1Pro 3, or
-       "i1 Pro" for an i1Pro or i1Pro 2. Not an entry with "(Argyll)" in
-       its name, and not "X-Rite i1 Pro 3 / i1 Pro 3+" or "GretagMacbeth
-       i1 Pro / i1 Pro 2" (those are the ArgyllCMS driver as ChromIQ
-       installs it). Click Next. If X-Rite's entry is not in the list,
-       reinstall (or repair) the vendor program: its installer brings
-       X-Rite's driver.
+    4. Pick X-Rite's own entry, the one that came with the vendor program
+       (for an i1Pro or i1Pro 2 it has been seen as "i1 Pro"). Not an
+       entry with "(Argyll)" in its name, and not
+       "X-Rite i1 Pro 3 / i1 Pro 3+" or "GretagMacbeth i1 Pro / i1 Pro 2"
+       (those are the ArgyllCMS driver as ChromIQ installs it). Click
+       Next. If you are not sure which entry is X-Rite's, or it is not in
+       the list, reinstall (or repair) the vendor program: its installer
+       brings X-Rite's driver. If the list looks different, tell us what
+       it shows.
     5. Unplug the instrument, plug it in again, and check that the vendor
        program finds it. Then run this tool again.
   Windows keeps a separate entry for every USB socket, so the instrument
@@ -5105,7 +6051,22 @@ def analyze_paths(paths: list) -> str:
     """--analyze: the instrument analysis when it fits, else 1.4's summary."""
     if any(os.path.isdir(p) or p.endswith(".json") for p in paths):
         return summarize_session(paths)
+    # 1.5.4: a probe report named next to the recordings gives the i1iO
+    # analysis the operator's steps; it is not a recording itself.
+    reports = [p for p in paths if p.lower().endswith(".txt")]
+    paths = [p for p in paths if p not in reports]
+    if not paths:
+        return ("A probe report on its own holds no recording. Name the recording too:\n"
+                "    --analyze io-capture-....pcap chromiq-io-probe-....txt")
     text = summarize_captures(paths)
+    try:
+        table = summarize_io(paths, reports)
+    except Exception as exc:                              # noqa: BLE001
+        table = f"  The i1iO analysis failed ({exc}); the recording itself is fine."
+    if table:
+        # The i1Pro on the arm would otherwise get the handheld analysis,
+        # which asks about rulers and dual scans that do not apply here.
+        return text + "\n\n" + table
     try:
         steps, devinfo, _checks, _s = session_steps(paths)
     except Exception:                                     # noqa: BLE001
@@ -5143,6 +6104,9 @@ def main(argv: list | None = None) -> int:
                         help="read a USB recording (.pcap/.pcapng) and print a plain "
                              "verdict + command timeline; with no path, finds "
                              "the newest recording next to the tool")
+    parser.add_argument("--rehearse", action="store_true",
+                        help="walk through the i1iO recording steps without recording "
+                             "anything, to see them before the real recording")
     parser.add_argument("-o", "--output", default=None, help="output file path")
     parser.add_argument("--pause", action="store_true",
                         help='always end with "Press Enter to close this window."')
@@ -5181,6 +6145,9 @@ def main(argv: list | None = None) -> int:
             print()
             print(SIP_OFF_REMINDER)
         return 0
+
+    if args.rehearse:
+        return rehearse_io()
 
     if args.analyze is not None:
         paths = args.analyze or find_session_folders() or find_captures()
@@ -5532,9 +6499,7 @@ def finish_report(args, system: str, instrument: bool = False,
     if show_i1profiler_warning(instrument, outcome):
         print()
         print(I1PROFILER_WARNING)
-    if system == "Darwin" and _READINESS.get("sip") in ("off", "partly"):
-        print()
-        print(SIP_OFF_REMINDER)
+    sip_off = system == "Darwin" and _READINESS.get("sip") in ("off", "partly")
     print()
     if instrument and not recorded:
         # Last on the screen on purpose: what to do next.
@@ -5545,9 +6510,15 @@ def finish_report(args, system: str, instrument: bool = False,
     elif mode == "report":
         print("  That's everything. Thank you for helping!")
     else:
-        print("  That's everything. Thank you for helping: this is the single")
-        print("  thing standing between the project and i1iO support.")
+        print("  That's everything. Thank you for helping!")
     print()
+    if sip_off:
+        # 1.5.4: the last thing on the screen, after the step table.
+        if _IO_SUMMARY:
+            print("\n".join("  " + l for l in _IO_SUMMARY))
+            print()
+        print(sip_back_on_box(bool((_READINESS.get("cpu") or {}).get("apple_silicon"))))
+        print()
     return 0
 
 

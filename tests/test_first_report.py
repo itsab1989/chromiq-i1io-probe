@@ -150,7 +150,9 @@ class DriverCheck(unittest.TestCase):
         self.assertIn("Device Manager", text)
         self.assertIn('"Update driver"', text)
         self.assertIn('"Let me pick from a', text)
-        self.assertIn('"X-Rite i1Pro3"', text)
+        # 1.5.4: X-Rite's i1Pro 3 entry name was never verified; not named.
+        self.assertNotIn("X-Rite i1Pro3", text)
+        self.assertIn("If you are not sure which entry is X-Rite's", text)
         self.assertIn("THE WAY BACK", text)
         self.assertIn('"Instrument drivers..."', text)
         self.assertIn('"Install Driver"', text)
@@ -368,7 +370,7 @@ class TheI1Pro2Path(unittest.TestCase):
         self.assertIn("[OK] Windows 11 version 24H2 (build 26100)", screen)
         self.assertIn("[OK] 3.8.6.16077", screen)
         self.assertIn("[PROBLEM] Eye-One Pro (Argyll): on the ArgyllCMS driver", screen)
-        self.assertIn('"i1 Pro" for an i1Pro or i1Pro 2', screen)
+        self.assertIn('for an i1Pro or i1Pro 2 it has been seen as "i1 Pro"', screen)
         self.assertIn("THE WAY BACK", screen)
         self.assertEqual(outcome["help"], [probe.USBPCAP_INSTALL_TEXT, probe.DRIVER_HELP_TEXT])
 

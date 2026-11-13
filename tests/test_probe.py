@@ -392,7 +392,9 @@ class RecordingTests(unittest.TestCase):
         return buf.getvalue()
 
     def test_full_recording_with_real_data(self):
-        answers = ["yes", "", "", "", "", "", "no", "", "yes"]
+        # yes to start; per step: start, stop, arm, go on (x3); notes; delete
+        # the full recordings; the five questions (1.5.4)
+        answers = ["yes"] + [""] * 12 + [""] + ["yes"] + [""] * 5
         screen = self.run_recording(answers, io_records(), keyboard_only_records())
         log = self.fake_log()
         for iface in ("XHC0", "XHC2"):
@@ -413,7 +415,7 @@ class RecordingTests(unittest.TestCase):
         self.assertTrue(left[0].endswith("-XHC2-xrite.pcap"))
 
     def test_all_zero_recording_is_reported_plainly(self):
-        answers = ["yes", "", "", "", "", "", "no", "", "no"]
+        answers = ["yes"] + [""] * 12 + [""] + ["no"] + [""] * 5
         self.run_recording(answers, io_records(zero=True), keyboard_only_records())
         result = dict(probe._SECTIONS)["Stage 2: macOS recording result"]
         self.assertIn("ALL-ZERO", result)
@@ -476,7 +478,7 @@ class TextRules(unittest.TestCase):
             self.assertEqual(count, 0, f"{name} has {count} em dash(es)")
 
     def test_version(self):
-        self.assertEqual(probe.PROBE_VERSION, "1.5.3")
+        self.assertEqual(probe.PROBE_VERSION, "1.5.4")
 
 
 @unittest.skipUnless(platform.system() == "Darwin", "macOS only")
