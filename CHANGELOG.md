@@ -21,13 +21,14 @@ older.**
   when it travels on an endpoint the instrument does not have (the case in
   that recording), when it is another kind of device's traffic (disk
   commands with their data and status; disk, keyboard, mouse and hub
-  requests; other devices' USB descriptions; a keyboard on the instrument's
-  own button endpoint), and when the address belonged to another device at
+  requests; other devices' USB descriptions; a keyboard's typed keys on
+  the instrument's own button or event endpoint), and when the address belonged to another device at
   that time. No session keeps a monitor calibrator (such as an i1Display)
   any more. When that traffic is fully explained as one USB disk on
   two endpoints the instrument does not have (the case in that
-  recording), the analysis shows the instrument's step as usual, with a
-  note that another device's traffic was removed. When another device's
+  recording), the analysis shows the instrument's step with its decoded
+  values (readings, ruler, lights, counts, sizes, times) but no raw bytes,
+  and says that another device's traffic was removed. When another device's
   traffic was also seen on one of the instrument's own endpoints, or could
   not be placed, the analysis shows no contents of that step, only counts
   and sizes, marks it as "not shown" in every comparison, and the step's
@@ -38,8 +39,9 @@ older.**
   the recording exactly like the instrument, and its traffic can still end
   up in the recording files, for example a USB 3 "UAS" disk, a printer, a
   phone or a USB-serial adapter, and so can another device's vendor
-  requests and a keyboard's reports on a ColorMunki's event endpoint (their
-  bytes are not shown). If the tool sees nothing else of that device, the analysis can
+  requests. On a ColorMunki's or i1Studio's event endpoint an empty or
+  modifier-only keyboard report (no key pressed) cannot be told apart; it
+  carries no typed key. If the tool sees nothing else of that device, the analysis can
   show some of it too.
 - **What to do:** update to 1.6.2. Clean what you already made with
   `--clean SEND-THIS-....zip` (or the session folder), or delete the old

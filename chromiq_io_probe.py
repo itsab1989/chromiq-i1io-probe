@@ -3026,7 +3026,7 @@ def summarize_captures(paths):
             out.append("")
             continue
         devices, cmds, timeline, bulk, descriptors = _analyze_darwin(recs)
-        if hide_contents(check.get("left_out"), check.get("explained", False)):
+        if foreign_seen(check.get("left_out")):
             timeline = []                  # 1.6.2: no contents (WITHHELD_TEXT)
             out.append("     " + _wrap(WITHHELD_TEXT, 62, "     "))
         if devices:
@@ -3409,7 +3409,12 @@ BUTTON_ENDPOINTS = {
     "i1pro3": (0x83, lambda d: len(d) == 1),
     # (an unknown code is kept: ArgyllCMS itself has an "Unknown" branch, and
     # the analysis names it "unknown event code")
-    "munki": (0x83, lambda d: len(d) == 8),
+    # bytes 2 and 3 are the high half of the little-endian code (buf2int,
+    # munki_imp.c:455), 0 for every known code and for small unknown ones; a
+    # keyboard's report puts its first key there, so a report with a key
+    # pressed is told apart. An empty or modifier-only report is not, and
+    # carries no key.
+    "munki": (0x83, lambda d: len(d) == 8 and d[2] == 0 and d[3] == 0),
 }
 
 _DESC_TYPES = {0: "control", 1: "isochronous", 2: "bulk", 3: "interrupt"}
@@ -3928,9 +3933,8 @@ PROVEN_FOREIGN = frozenset({"storage", "hid", "hub", "description", "endpoint",
 SHARED_ENDPOINT_KINDS = frozenset({"shared-endpoint", "button"})
 
 REMOVED_TEXT = ("Another USB device's traffic at this instrument's address was removed "
-                "from this step (it used endpoints the instrument does not have, or was a "
-                "disk's, keyboard's or hub's own kind of traffic). What is shown is the "
-                "instrument's.")
+                "from this step (a USB disk on endpoints the instrument does not have), so "
+                "raw contents are not shown: decoded values only.")
 HIDDEN_CELL = "contents not shown (another device shared this address)"
 
 WITHHELD_TEXT = ("Another USB device shared this instrument's address in this recording, "
@@ -4021,13 +4025,22 @@ def _short_hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()[:8]
 
 
+# 1.6.2: False while a step is analysed whose recording had another device's
+# traffic removed from it (decoded values only, never raw bytes).
+_RAW_OK = [True]
+
+
 def _raw(out, inn):
     parts = []
     if out:
-        parts.append(f"out={out.hex()}")
+        parts.append(f"out={out.hex()}" if _RAW_OK[0] else f"out=<{len(out)} bytes>")
     if inn:
-        parts.append(f"in={inn.hex()}")
+        parts.append(f"in={inn.hex()}" if _RAW_OK[0] else f"in=<{len(inn)} bytes>")
     return " ".join(parts)
+
+
+def _hex_or_size(blob: bytes) -> str:
+    return blob.hex() if _RAW_OK[0] else f"<{len(blob)} bytes, not shown>"
 
 
 # ---- i1Pro (Rev A to D) and i1Pro 2 (Rev E) ------------------------------
@@ -4202,7 +4215,7 @@ def decode_led_sequence(blob: bytes) -> dict:
     nblocks = _be(blob, 0, 4)
     if nblocks is None or nblocks > 64:
         return {"ok": False, "blocks": [], "colours": [],
-                "text": f"undecodable: {blob[:48].hex()}"}
+                "text": f"undecodable: {_hex_or_size(blob[:48])}"}
     off = 4
     blocks = []
     for _ in range(nblocks):
@@ -4210,7 +4223,8 @@ def decode_led_sequence(blob: bytes) -> dict:
         reps = _be(blob, off + 4, 4)
         if blen is None or reps is None or blen < 4 or off + 4 + blen > len(blob):
             return {"ok": False, "blocks": blocks, "colours": [],
-                    "text": f"undecodable after {len(blocks)} block(s): {blob[:48].hex()}"}
+                    "text": f"undecodable after {len(blocks)} block(s): "
+                            f"{_hex_or_size(blob[:48])}"}
         codes = []
         pos = off + 8
         while pos + 3 <= off + 4 + blen:
@@ -4659,8 +4673,17 @@ def _ep_key(ev) -> str:
     return f"0x{ev['ep']:02x} {ev['type']} {'IN' if ev['dir_in'] else 'OUT'}"
 
 
-def analyze_step(events: list, family: str = "i1pro2") -> dict:
-    """Everything the report needs about one step's events."""
+def analyze_step(events: list, family: str = "i1pro2", show_raw: bool = True) -> dict:
+    """Everything the report needs about one step's events. show_raw False
+    (1.6.2): decoded values only, never raw bytes."""
+    _RAW_OK[0] = show_raw
+    try:
+        return _analyze_step(events, family, show_raw)
+    finally:
+        _RAW_OK[0] = True
+
+
+def _analyze_step(events: list, family: str, show_raw: bool) -> dict:
     fam = FAMILIES.get(family, FAMILIES["generic"])
     table = fam["requests"]
     t0 = events[0]["t"] if events else 0.0
@@ -4696,12 +4719,13 @@ def analyze_step(events: list, family: str = "i1pro2") -> dict:
             if known is None:
                 kind = "class" if rtype == 1 else "vendor"
                 answer = ev['in'].hex() or '-'
-                if hide_answers and ev["in"]:
+                if (hide_answers or not show_raw) and ev["in"]:
                     answer = f"<{len(ev['in'])} bytes, not shown>"
                 text = (f"UNKNOWN {kind} request 0x{req:02X} "
                         f"{'IN' if rt & 0x80 else 'OUT'} bmRequestType=0x{rt:02x} "
                         f"wValue=0x{ev['wValue']:04x} wIndex=0x{ev['wIndex']:04x} "
-                        f"wLength={ev['wLength']} out={ev['out'].hex() or '-'} "
+                        f"wLength={ev['wLength']} "
+                        f"out={(_hex_or_size(ev['out']) if ev['out'] else '-')} "
                         f"in={answer}")
                 result["unknown"].append((rel, text))
                 result["timeline"].append((rel, text))
@@ -4808,6 +4832,10 @@ def analyze_step(events: list, family: str = "i1pro2") -> dict:
         if hide_answers and ev["dir_in"]:
             result["timeline"].append((rel, f"data on {key}: {size} bytes "
                                             "(from the device, not shown)"))
+            continue
+        if not show_raw:
+            result["timeline"].append((rel, f"data on {key}: {size} bytes "
+                                            f"(raw bytes not shown){flag}"))
             continue
         result["timeline"].append((rel, f"data on {key}: {size} bytes: "
                                         f"{ev['data'][:24].hex()}{flag}"))
@@ -5341,7 +5369,7 @@ def summarize_session(paths: list) -> str:
 
     results = []
     for name, events, notes, control, key in steps:
-        res = analyze_step(events, family)
+        res = analyze_step(events, family, show_raw=not notes.get("removed"))
         # 1.5.5: a step started and stopped at once holds only the USB
         # description; it must not count as "a no-ruler control" and so on.
         if not step_has_data(res):
@@ -5380,7 +5408,7 @@ def summarize_session(paths: list) -> str:
                f"{'ruler':>5} {'other ep B':>10} {'lights':>6}")
     for name, res, _notes, _control, _key in results:
         if name in hidden:
-            out.append(f"  {name[:32]:32} {HIDDEN_CELL}")
+            out.append(f"  {name[:20]:20} {HIDDEN_CELL}")
             continue
         ms = res["measurements"]
         reads = sum(m["readings"] for m in ms)
@@ -5413,8 +5441,8 @@ def summarize_session(paths: list) -> str:
     controls = [r for r in full if r[3]]
     shown_controls = [r for r in controls if r[0] not in hidden]
     if controls and not shown_controls:
-        out.append("  ONLY WITH THE RULER: not compared, because the no-ruler control step is "
-                   "not shown.")
+        out.append("  " + _wrap("ONLY WITH THE RULER: not compared, because the no-ruler "
+                                "control step is not shown.", 74, "  "))
     if shown_controls:
         base = set().union(*(r[1]["features"] for r in shown_controls))
         out.append("  ONLY WITH THE RULER (seen in a ruler step, never in the no-ruler control):")
@@ -5423,7 +5451,8 @@ def summarize_session(paths: list) -> str:
             if control or "scan" not in key:
                 continue
             if name in hidden:
-                out.append(f"    {name}: not compared ({HIDDEN_CELL})")
+                out.append("    " + _wrap(f"{name}: not compared ({HIDDEN_CELL})", 72,
+                                          "      "))
                 continue
             extra = sorted(f for f in res["features"] - base if not f.startswith("light "))
             if extra:
@@ -5442,7 +5471,8 @@ def summarize_session(paths: list) -> str:
             for name, res, _n, control, key in results:
                 st = res.get("motion")
                 if name in hidden and ("scan" in key or control):
-                    out.append(f"    {name}{'  [CONTROL]' if control else ''}: {HIDDEN_CELL}")
+                    out.append("    " + _wrap(f"{name}{'  [CONTROL]' if control else ''}: "
+                                              f"{HIDDEN_CELL}", 72, "      "))
                 elif st:
                     out.append(f"    {name}{'  [CONTROL]' if control else ''}: "
                                f"{motion_text(st)}")
@@ -5457,9 +5487,10 @@ def summarize_session(paths: list) -> str:
     fast = [r for r in full if "fast" in r[4]]
     slow = [r for r in full if "slow" in r[4]]
     if fast and slow and (fast[-1][0] in hidden or slow[-1][0] in hidden):
-        out.append("  FAST AGAINST SLOW SWIPE: not compared, because the "
-                   + " and the ".join(n for n in (fast[-1][0], slow[-1][0]) if n in hidden)
-                   + " step's contents are not shown.")
+        out.append("  " + _wrap(
+            "FAST AGAINST SLOW SWIPE: not compared, because the "
+            + " and the ".join(n for n in (fast[-1][0], slow[-1][0]) if n in hidden)
+            + " step's contents are not shown.", 74, "  "))
         out.append("")
     elif fast and slow:
         def stats(r):
@@ -5522,8 +5553,9 @@ def summarize_session(paths: list) -> str:
     any_led = False
     for name, res, notes, _c, _k in results:
         if name in hidden:
-            out.append(f"    {name}: {HIDDEN_CELL}"
-                       + (f"; operator saw: {notes['lights']}" if notes.get("lights") else ""))
+            out.append("    " + _wrap(f"{name}: {HIDDEN_CELL}"
+                                      + (f"; operator saw: {notes['lights']}"
+                                         if notes.get("lights") else ""), 72, "      "))
             continue
         if res["leds"]:
             any_led = True
@@ -5688,7 +5720,8 @@ def summarize_isis(results: list, steps: list, checks: list, session, xr: dict) 
                                 64, "  "))
         out.append("")
     # 1.6.2: nothing of a step in which another device shared the address
-    events = [e for _n, evs, notes, *_ in steps if not notes.get("withheld") for e in evs]
+    events = [e for _n, evs, notes, *_ in steps
+              if not notes.get("withheld") and not notes.get("removed") for e in evs]
     ftdi = looks_like_ftdi(events)
     out_bytes = b"".join(e["data"] for e in events if e["kind"] == "data" and not e["dir_in"])
     in_bytes = b"".join(e["data"] for e in events if e["kind"] == "data" and e["dir_in"])
@@ -6134,7 +6167,9 @@ def io_capture(path: str) -> dict | None:
                 for key, info in devices.items() if key in table) or any(
         (ev.get("vid"), ev.get("pid")) == (XRITE_VID, IO_TABLE_PID) for ev in events)
     return {"path": path, "t0": t0, "events": events, "table": table, "pro": pro,
-            "foreign": hide_contents(att["left_out"], att.get("explained", False)),
+            # the table's lines are its raw text: none of them once another
+            # device was seen at its address
+            "foreign": foreign_seen(att["left_out"]),
             "lines": io_table_lines(events, table), "linktype": linktype, "by_id": by_id}
 
 

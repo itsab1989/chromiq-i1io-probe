@@ -803,14 +803,18 @@ when:
    we saw;
 3. it is another kind of device's traffic: disk commands with their data and
    status, requests of a disk, keyboard, mouse or hub, another device's USB
-   description, or a keyboard on the instrument's own button endpoint.
+   description, or a keyboard's typed keys on the instrument's own button or
+   event endpoint (on a ColorMunki or i1Studio an empty or modifier-only
+   keyboard report, with no key pressed, cannot be told apart; it carries no
+   typed key).
 
 No session keeps a monitor calibrator (such as an i1Display) either. The
 step's check says what was left out, how much and what kind of device it
 looked like, never what it was. When all of that traffic is explained as one
 USB disk on two endpoints the instrument does not have (as in the recording
-we saw), the analysis shows the step as usual, with a note that another
-device's traffic was removed. When another device's traffic was also seen on
+we saw), the analysis shows the step's decoded values (readings, ruler, lights,
+counts, sizes, times) but no raw bytes, and says that another device's
+traffic was removed. When another device's traffic was also seen on
 one of the instrument's own endpoints, or could not be placed, the analysis
 shows no contents of that step, only counts and sizes, marks it as "not
 shown" in every comparison, and asks you to record it again with the other

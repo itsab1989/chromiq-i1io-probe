@@ -163,7 +163,7 @@ class RecordingOne(unittest.TestCase):
         self.assertIn("step 5: scan-fast: contents not shown", lights)
         self.assertNotIn("step 5: scan-fast: no light command", lights)
         ruler = text.split("THE RULER'S POSITION, STEP BY STEP:")[1].split("FAST AGAINST")[0]
-        self.assertIn("step 9: noruler  [CONTROL]: contents not shown", ruler)
+        self.assertIn("step 9: noruler [CONTROL]: contents not shown", ruler)
         self.assertIn("2 steps below are not shown", flat)
 
 
