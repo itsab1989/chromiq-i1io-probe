@@ -400,6 +400,12 @@ if os.environ.get("FAKE_REJECT_INJECT") and "--inject-descriptors" in args:
     sys.stderr.write("unknown option\n")
     sys.exit(2)
 out = args[args.index("-o") + 1]
+# As the real USBPcapCMD 1.5.4.0 run as administrator: the output file is
+# opened with CREATE_NEW, so an existing file makes it stop at once
+# (cmd.c start_capture; thread.c "Thread started with invalid write handle!").
+if os.path.exists(out):
+    sys.stderr.write("Thread started with invalid write handle!\n")
+    sys.exit(0)
 for f in glob.glob(os.path.join(os.environ["FAKE_PCAPS"], "*.pcap")):
     key = os.path.basename(f)[:-5]
     if "-" + key + "-take" in out:
@@ -534,7 +540,8 @@ class SessionTests(TempDirCase):
         finally:
             del os.environ["FAKE_FAIL"]
         self.assertEqual(session["ended"], "the recording program stopped at once")
-        self.assertIn("access denied", screen)
+        self.assertIn("Windows refused USBPcap access", screen)
+        self.assertIn("access", screen)
         self.assertEqual(self.saved()["steps"], [])
 
     def test_retry_without_inject_option(self):

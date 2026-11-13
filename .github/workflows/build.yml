@@ -231,6 +231,12 @@ jobs:
               SIP back on (and `csrutil status` to check) comes last.
             - **`--rehearse`** shows every step without recording anything.
               On a Mac: `./chromiq-io-probe-macos --rehearse` in the Terminal.
+            - **Fixed on Windows: the recording stopped at once** whenever
+              USBPcap was installed (found in a real report): the tool made
+              the recording file before USBPcap could, and USBPcap refuses to
+              write into a file that already exists. If the start fails
+              anyway, the report now holds everything needed to see why, and
+              the tool offers to record by hand with Wireshark instead.
             - **Fixed:** on a Mac, `--analyze` left out everything the program
               sent to a device (it sits in a different part of a macOS
               recording). Found in the first real recording.

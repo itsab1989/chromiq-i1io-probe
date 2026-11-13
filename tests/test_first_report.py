@@ -131,8 +131,18 @@ class DriverCheck(unittest.TestCase):
         checks = {c["name"]: c for c in probe.instrument_driver_checks(devices)}
         # a colorimeter is not a session instrument: not judged at all
         self.assertNotIn("i1Display", checks)
-        self.assertEqual(checks["i1Pro3"]["level"], "ok")
+        # 1.5.4: WinUSB from a libwdi-based tool is not called X-Rite's driver
+        self.assertEqual(checks["i1Pro3"]["level"], "warning")
+        self.assertFalse(checks["i1Pro3"]["help"])
         self.assertIn("WinUSB", checks["i1Pro3"]["text"])
+        self.assertIn('"libwdi"', checks["i1Pro3"]["text"])
+        self.assertIn("is not known", checks["i1Pro3"]["text"])
+        self.assertNotIn("X-Rite's driver", checks["i1Pro3"]["text"])
+        ms = probe.instrument_driver_checks([{"vid": 0x0765, "pid": 0x6009, "name": "i1Pro3",
+                                              "class": "USBDevice", "service": "WinUSB",
+                                              "provider": "Microsoft", "status": "OK"}])
+        self.assertEqual(ms[0]["level"], "ok")
+        self.assertIn("provider: Microsoft", ms[0]["text"])
         self.assertEqual(checks["i1 Pro"]["level"], "ok")
         self.assertIn("X-Rite's driver", checks["i1 Pro"]["text"])
         # WinUSB on the old X-Rite ID is not X-Rite's driver

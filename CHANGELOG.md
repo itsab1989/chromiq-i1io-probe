@@ -10,6 +10,24 @@ passed the check number we worked out, so we very likely read the format
 correctly. Much is still unknown, and nothing is promised: ChromIQ cannot
 drive the table. There is still no recording from a handheld instrument.
 
+- **Fixed: on Windows the recording stopped at once (found in a real report
+  from 1.5.3).** Run as administrator, USBPcap's recording program opens its
+  output file in a way that fails when the file already exists (USBPcapCMD
+  1.5.4.0, `cmd.c`), and then ends at once. 1.5.3 created that file just
+  before starting it, so every recording on a Windows PC with USBPcap
+  ended this way, and the simpler second try too. The file is now left for
+  USBPcap to create. A fake USBPcapCMD in the tests now behaves the same way.
+- **When the recorder does not start, the report says why:** the exact
+  command, the exit code, everything the program printed, whether the
+  retry ran, whether a file was created and how big, which USBPcap root
+  hub was recorded and why, every root hub with the devices behind it,
+  USBPcapCMD's path and version, and whether the tool ran as
+  administrator (now stated in every Windows report). On the screen it
+  says in plain words what happened, and offers the way by hand at once:
+  record with Wireshark while the tool walks the same steps.
+- **An i1Pro 3 on WinUSB from a libwdi-based tool** is no longer called
+  X-Rite's driver because of its name: the tool says who provided it and
+  that whether i1Profiler opens it like this is not known.
 - **Fixed: `--analyze` never showed what the program sent on a Mac.** In
   macOS recordings the data going to a device sits in the completion record,
   not in the request; 1.5.3 read it only from the request, so every command

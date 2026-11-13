@@ -5385,11 +5385,25 @@ def instrument_driver_checks(devices: list) -> list:
                 f"{label}: on the ArgyllCMS driver ({drv}), which ChromIQ and "
                 "ArgyllCMS use. The vendor program cannot see the instrument "
                 "like this (see below what to do).")})
+        elif state == "winusb" and dev["vid"] == 0x0765 and \
+                "libwdi" in dev.get("provider", "").lower():
+            # 1.5.4: a real report: WinUSB, provider "libwdi", an INF named
+            # "X-Rite i1Pro3". libwdi is a library that tools such as Zadig
+            # use to bind WinUSB; X-Rite's own package would hardly name it as
+            # provider. So the name alone says nothing about who installed it.
+            checks.append({"name": label, "level": "warning", "help": False, "text": (
+                f"{label}: Windows' standard USB driver (WinUSB), installed by a tool "
+                "built on libwdi (the driver's provider says \"libwdi\"), probably "
+                "not by X-Rite's own installer, even if its name sounds like X-Rite. "
+                "The i1Pro 3 asks for WinUSB anyway, so this may well work; whether "
+                "i1Profiler opens it like this is not known. If i1Profiler does not "
+                "find the instrument, reinstall (or repair) i1Profiler.")})
         elif state == "winusb" and dev["vid"] == 0x0765:
             checks.append({"name": label, "level": "ok", "help": False, "text": (
                 f"{label}: Windows' standard USB driver (WinUSB), which the "
-                "instrument itself asks for. The vendor program normally finds "
-                "it like this.")})
+                "instrument itself asks for"
+                + (f" (provider: {dev['provider']})" if dev.get("provider") else "")
+                + ". The vendor program normally finds it like this.")})
         elif state == "winusb":
             checks.append({"name": label, "level": "problem", "help": True, "text": (
                 f"{label}: on a general-purpose driver (WinUSB), not on X-Rite's. "
@@ -5447,6 +5461,46 @@ DRIVER_HELP_TEXT = """\
   one ChromIQ installed, named as in step 4). Or let ChromIQ do it: in
   ChromIQ's Preferences, open "Instrument drivers..." and click
   "Install Driver". Nothing here needs any security setting switched off."""
+
+
+def usbpcap_version(cmd) -> str:
+    """'1.5.4.0' from USBPcapCMD --extcap-version, or ''."""
+    if not cmd:
+        return ""
+    m = re.search(r"\{version=([^}]*)\}", run([cmd, "--extcap-version"], timeout=20))
+    return m.group(1) if m else ""
+
+
+def usbpcap_diagnosis(c: dict) -> str:
+    """1.5.4: everything about the recorder, for the report (a real report
+    from 1.5.3 said only "the recording program stopped at once")."""
+    admin = c.get("admin")
+    cmd = c.get("usbpcapcmd")
+    lines = ["THE RECORDER, IN DETAIL",
+             "  administrator: " + ("yes" if admin else "no" if admin is False else "not known"),
+             f"  USBPcap service: installed {c['service'].get('installed')}, running "
+             f"{c['service'].get('running')}",
+             f"  USBPcapCMD: {cmd or 'not found'}"
+             + (f", version {usbpcap_version(cmd) or 'not reported'}" if cmd else "")]
+    hubs = c.get("hubs") or []
+    chosen = [h for h in hubs if h["instrument"]]
+    if chosen:
+        why = "the instrument's name was found among the devices on " + ("this root hub"
+                                                                        if len(chosen) == 1
+                                                                        else "these root hubs")
+    else:
+        chosen = hubs
+        why = "the instrument was not found by name on any root hub, so all are recorded"
+    lines.append(f"  USBPcap root hubs found: {len(hubs)}")
+    for h in hubs:
+        mark = "  <-- recorded" if h in chosen else ""
+        lines.append(f"    {h['path']} ({h['display']}){mark}")
+        for addr, name in h.get("devices") or []:
+            lines.append(f"      device {addr}: {name}")
+        if not h.get("devices"):
+            lines.append("      (USBPcapCMD listed no devices here)")
+    lines.append(f"  why: {why}" if hubs else "  (none: nothing to record on)")
+    return "\n".join(lines)
 
 
 def windows_driver_devices() -> list:
@@ -5579,16 +5633,25 @@ class RecorderError(Exception):
 
 
 class _ProcRecorder:
-    """Shared start/stop logic: one recording process per interface per step."""
+    """Shared start/stop logic: one recording process per interface per step.
+
+    1.5.4: every start is written down in self.diag (command, exit code, the
+    program's own output, the file it made), so a failure can be read in the
+    report, not only on the screen."""
 
     label = "recorder"
+    # tcpdump: the file is created by us first, so it stays ours (not root's).
+    # USBPcapCMD must NOT find it there (see UsbPcapRecorder).
+    precreate = True
 
     def __init__(self, interfaces: list, outdir: str):
         self.interfaces = list(interfaces)
         self.outdir = outdir
         self.procs: dict = {}
         self.files: dict = {}
+        self.logs: list = []
         self.notes: list = []
+        self.diag: list = []
 
     def command(self, iface, path) -> list:
         raise NotImplementedError
@@ -5602,50 +5665,97 @@ class _ProcRecorder:
     def session_end(self) -> None:
         pass
 
-    def _popen(self, cmd):
-        kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
-                  "stderr": subprocess.PIPE}
+    def _popen(self, cmd, log_path=None):
+        """stdout and stderr go into a small log file next to the recording
+        (a pipe nobody reads could block a program that writes a lot)."""
+        log = open(log_path, "wb") if log_path else subprocess.DEVNULL
+        kwargs = {"stdin": subprocess.DEVNULL, "stdout": log, "stderr": subprocess.STDOUT
+                  if log_path else subprocess.DEVNULL}
         if os.name == "nt":
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        return subprocess.Popen(cmd, **kwargs)
+        try:
+            return subprocess.Popen(cmd, **kwargs)
+        finally:
+            if log_path:
+                log.close()
+
+    @staticmethod
+    def _read_log(path) -> str:
+        try:
+            with open(path, "rb") as fh:
+                return fh.read(4000).decode("utf-8", "replace").strip()
+        except OSError:
+            return ""
+
+    def _prepare(self, path) -> None:
+        if os.path.exists(path):
+            os.remove(path)           # a leftover from an earlier try
+        if self.precreate:
+            open(path, "wb").close()
+
+    def _launch(self, iface, cmd, path, attempt: str) -> dict:
+        entry = {"interface": str(iface), "attempt": attempt, "command": " ".join(cmd),
+                 "file": os.path.basename(path)}
+        self.diag.append(entry)
+        log_path = path + "." + attempt.split()[0] + ".log"
+        try:
+            self._prepare(path)
+            self.procs[iface] = self._popen(cmd, log_path)
+        except OSError as exc:
+            entry["result"] = f"could not be started: {exc}"
+            self.notes.append(f"{iface}: could not start ({exc})")
+            return entry
+        self.logs.append(log_path)
+        time.sleep(RECORDER_STARTUP_WAIT)
+        proc = self.procs[iface]
+        size = os.path.getsize(path) if os.path.exists(path) else None
+        entry["file_after_start"] = ("not created" if size is None else f"{size} bytes")
+        if proc.poll() is None:
+            entry["result"] = "running"
+            return entry
+        out = self._read_log(log_path)
+        entry["result"] = f"stopped at once, exit code {proc.returncode}"
+        entry["output"] = out or "(nothing)"
+        self.notes.append(f"{iface}: stopped at once (exit code {proc.returncode})"
+                          + (": " + " ".join(out.split())[:200] if out else ""))
+        return entry
 
     def start(self, stem: str) -> list:
         """Start recording; returns the interfaces that really record."""
-        self.procs, self.files = {}, {}
+        self.procs, self.files, self.logs = {}, {}, []
+        live = []
         for iface in self.interfaces:
             path = os.path.join(self.outdir, f"{stem}-{self.iface_label(iface)}-full.pcap")
-            try:
-                open(path, "wb").close()
-                self.procs[iface] = self._popen(self.command(iface, path))
-            except OSError as exc:
-                self.notes.append(f"{iface}: could not start ({exc})")
-                continue
             self.files[iface] = path
-        time.sleep(RECORDER_STARTUP_WAIT)
-        live = []
-        for iface, proc in list(self.procs.items()):
-            if proc.poll() is None:
+            entry = self._launch(iface, self.command(iface, path), path, "first try")
+            if entry.get("result") == "running":
                 live.append(iface)
                 continue
-            err = (proc.stderr.read() if proc.stderr else b"").decode("utf-8", "replace")
-            if proc.stderr:
-                proc.stderr.close()
-            self.notes.append(f"{iface}: stopped at once: " +
-                              (" ".join(err.split())[:200] or f"exit code {proc.returncode}"))
-            retry = self.retry_command(iface, self.files[iface], err)
+            retry = self.retry_command(iface, path, entry.get("output", ""))
             if retry:
-                try:
-                    self.procs[iface] = self._popen(retry)
-                    time.sleep(RECORDER_STARTUP_WAIT)
-                    if self.procs[iface].poll() is None:
-                        live.append(iface)
-                        self.notes.append(f"{iface}: recording with simpler options")
-                except OSError:
-                    pass
+                entry = self._launch(iface, retry, path, "retry (simpler options)")
+                if entry.get("result") == "running":
+                    live.append(iface)
+                    self.notes.append(f"{iface}: recording with simpler options")
+        for iface in list(self.files):
+            if iface not in self.procs:
+                self.files.pop(iface)
         return live
 
     def retry_command(self, iface, path, err):
         return None
+
+    def diag_text(self) -> str:
+        lines = []
+        for e in self.diag:
+            lines.append(f"{e['interface']} ({e['attempt']}): {e.get('result', '?')}")
+            lines.append(f"    command: {e['command']}")
+            if "file_after_start" in e:
+                lines.append(f"    output file {e['file']}: {e['file_after_start']}")
+            if "output" in e:
+                lines.append("    what the program said: "
+                             + " | ".join(l.strip() for l in e["output"].splitlines() if l.strip()))
+        return "\n".join(lines)
 
     def stop(self) -> list:
         """Stop every recorder; returns the files that exist."""
@@ -5671,12 +5781,11 @@ class _ProcRecorder:
                     pass
             except OSError:
                 pass
-        for proc in self.procs.values():
-            if proc.stderr:
-                try:
-                    proc.stderr.close()
-                except OSError:
-                    pass
+        for path in self.logs:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
         files = []
         for path in self.files.values():
             if not os.path.exists(path):
@@ -5688,14 +5797,23 @@ class _ProcRecorder:
                     pass
                 continue
             files.append(path)
-        self.procs, self.files = {}, {}
+        self.procs, self.files, self.logs = {}, {}, []
         return files
 
 
 class UsbPcapRecorder(_ProcRecorder):
-    """Windows: USBPcapCMD, one per root hub, with the device descriptions."""
+    """Windows: USBPcapCMD, one per root hub, with the device descriptions.
+
+    1.5.4: run as administrator, USBPcapCMD opens its output file with
+    CREATE_NEW (USBPcapCMD/cmd.c, start_capture, in 1.5.4.0 and on master),
+    which FAILS when the file already exists; its read thread then says
+    "Thread started with invalid write handle!" and the program ends at once
+    (thread.c). 1.5.3 created the file first, as for tcpdump on a Mac, so
+    every start on a real Windows with USBPcap ended at once, and the retry
+    did the same. Here the file is left for USBPcapCMD to create."""
 
     label = "USBPcap (USBPcapCMD)"
+    precreate = False
 
     def __init__(self, exe: str, interfaces: list, outdir: str):
         super().__init__(interfaces, outdir)
@@ -5953,14 +6071,15 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                 if not live:
                     recording = False
                     recorder.stop()
-                    print("\n  The recording did not start:")
-                    for note in recorder.notes[-3:]:
-                        print("    " + note)
-                    print("  If it mentions access or permission, close this window and start")
-                    print("  the tool again as administrator (right-click it, then \"Run as")
-                    print("  administrator\"). Otherwise you can record with Wireshark by hand")
-                    print("  (see the README) while the tool times the steps.")
+                    diag = recorder.diag_text() if hasattr(recorder, "diag_text") else ""
+                    session["recorder_failure"] = diag
+                    print("\n  THE RECORDING DID NOT START")
+                    print("  " + _wrap(recorder_failure_words(diag), 66, "  "))
+                    print("  What the recording program said:")
+                    for note in recorder.notes[-4:]:
+                        print("    " + _wrap(note, 64, "      "))
                     session["ended"] = "the recording program stopped at once"
+                    _write_session(session, folder)
                     break
             entry["start_epoch"] = time.time()
             where = ", ".join(recorder.iface_label(x) if recorder else str(x) for x in live)
@@ -6049,6 +6168,24 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                 pass
         _write_session(session, folder)
     return session
+
+
+def recorder_failure_words(diag: str) -> str:
+    """1.5.4: what a failed recorder start means, in plain words."""
+    low = (diag or "").lower()
+    if "invalid write handle" in low or "file_exists" in low:
+        return ("USBPcap could not create its recording file. That was most likely "
+                "this tool's own mistake in version 1.5.3 (it made the file first, and "
+                "USBPcap refuses to write into a file that already exists); this "
+                "version no longer does that.")
+    if "access" in low and "denied" in low:
+        return ("Windows refused USBPcap access. Please start this tool as "
+                "administrator (right-click it, then \"Run as administrator\").")
+    if "couldn't open device" in low:
+        return ("USBPcap could not open its recording device. It may not be running "
+                "yet: restart Windows once after installing it.")
+    return ("The recording program ended at once, and this tool does not know why. "
+            "Everything it said is in the report.")
 
 
 def finish_session(session: dict, folder: str) -> tuple:
@@ -6142,10 +6279,13 @@ def session_send_text(folder: str) -> str:
   Do NOT send the folder ending in -FULL-do-not-send."""
 
 
-def manual_recording_text(folder: str) -> str:
+def manual_recording_text(folder: str, after_failure: bool = False) -> str:
+    why = ("  The tool's own start of the recording did not work (twice), so here\n"
+           "  is the way by hand. " if after_failure else
+           "  This tool could not start the recording itself, but ")
     return f"""\
   RECORDING WITH WIRESHARK BY HAND
-  This tool could not start the recording itself, but you can record the
+{why}you can record the
   whole session with Wireshark while the tool notes the time of every
   step. The analysis can then cut your recording into the steps.
     1. Start Wireshark. Its list shows entries named USBPcap1, USBPcap2
@@ -6237,6 +6377,7 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
                     ("[USBPcap was installed during this run; Windows needs a restart]\n"
                      if offer == "installed" else "[USBPcap is not installed]\n")
                     + windows_checks_text(checks)
+                    + "\n\n" + usbpcap_diagnosis(checks)
                     + "\n\nThe offer to fetch and start USBPcap's installer: " + offer
                     + "\n\n" + "\n\n".join(outcome["help"]))
             return outcome
@@ -6249,8 +6390,10 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
                                  "administrators.")
             section("Instrument recording session",
                     "[not running as administrator]\n" + windows_checks_text(checks)
+                    + "\n\n" + usbpcap_diagnosis(checks)
                     + "\n\n" + "\n\n".join(outcome["help"]))
             return outcome
+        win_diag = usbpcap_diagnosis(checks)
         if windows_can_record(checks):
             hubs = [h["path"] for h in checks["hubs"] if h["instrument"]] or \
                 [h["path"] for h in checks["hubs"]]
@@ -6313,6 +6456,26 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
             section("Instrument recording session", "[no recording running]")
             return outcome
     session = run_instrument_session(recorder, folder, profile, program, version, context)
+    failed_start = recorder is not None and session.get("ended") == \
+        "the recording program stopped at once"
+    if failed_start:
+        # 1.5.4: the tool's own start failed (also after the simpler retry):
+        # offer the by-hand way at once, with the same steps and notes.
+        print()
+        print(manual_recording_text(folder, after_failure=True))
+        if said_yes(ask("\n  Record by hand with Wireshark now, while this tool walks you "
+                        "through\n  the steps? (yes / no): ")):
+            first = session
+            folder = folder + "-by-hand"
+            os.makedirs(folder, exist_ok=True)
+            print(f"\n  The new session folder is  {os.path.basename(folder)}")
+            if said_yes(ask("  Is Wireshark recording now? (yes / no): ")):
+                manual = True
+                session = run_instrument_session(None, folder, profile, program, version,
+                                                 context)
+                session["first_try"] = {"ended": first.get("ended"),
+                                        "recorder_failure": first.get("recorder_failure")}
+                _write_session(session, folder)
     if manual:
         print("\n  Now stop Wireshark and save the recording into the folder")
         print(f"  {os.path.basename(folder)}  as  whole-session.pcapng  (File, then Save As).")
@@ -6331,6 +6494,13 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
         print()
         print(SIP_OFF_REMINDER)
     body = "\n".join(lines)
+    if system == "Windows":
+        body += "\n\n" + windows_checks_text(checks) + "\n\n" + win_diag
+    failure = session.get("recorder_failure") or (session.get("first_try") or {}).get(
+        "recorder_failure")
+    if failure:
+        body += ("\n\nTHE RECORDING PROGRAM DID NOT START\n"
+                 + recorder_failure_words(failure) + "\n" + failure)
     if analysis:
         body += "\n\n" + analysis
     section("Instrument recording session", body)
@@ -6526,6 +6696,11 @@ def main(argv: list | None = None) -> int:
         "python": sys.version.split()[0],
         "redacted": REDACT,
     }
+    if system == "Windows":
+        # 1.5.4: stated in every report, not only in a recording session.
+        admin = windows_is_admin()
+        hardware["administrator"] = ("yes" if admin else "no" if admin is False
+                                     else "not known")
     if system == "Darwin":
         cpu = macos_cpu()
         hardware["cpu"] = ("Apple Silicon" if cpu["apple_silicon"] else "Intel") + \
