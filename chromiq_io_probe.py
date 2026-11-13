@@ -8024,17 +8024,25 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                 break
             example = ('"page 1, measured", or "refused: barcode not found"'
                        if profile == "isis" else '"strip A, accepted", or "refused: too fast"')
+            # 1.6.2: said first, so a stop key typed once too often is not
+            # taken as the notes (a real tester's notes for one take were "e")
+            print("\n  The recording of this step has stopped. A few questions:")
             entry["notes"] = _session_ask(
                 "\n  In one line: what did you do, and what did the program show?\n"
                 f"  (for example: {example})\n  > ")
+            if is_stop_word(entry["notes"]):
+                entry["notes"] = _session_ask(
+                    "  That looks like a key for stopping, not a description. Please say in "
+                    "one line\n  what you did and what the program showed (or press Enter "
+                    "to leave it empty):\n  > ")
             if step.get("setting"):
-                entry["setting"] = _session_ask(f"  {step['setting']}\n  > ")
+                entry["setting"] = _session_ask(f"  {_question(step['setting'])}\n  > ")
             if step.get("page"):
-                entry["page"] = _session_ask(f"  {step['page']}\n  > ")
+                entry["page"] = _session_ask(f"  {_question(step['page'])}\n  > ")
             if lights:
                 entry["lights"] = _session_ask(
-                    f"  {step['lights']}\n  (colours, blinking, when; Enter if you did not "
-                    "notice)\n  > ")
+                    f"  {_question(step['lights'])}\n  (colours, blinking, when; Enter if you "
+                    "did not notice)\n  > ")
             _write_session(session, folder)
             if stop_after:
                 session["ended"] = "stopped by the operator"
@@ -8076,6 +8084,19 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
 
 
 SHORT_STEP_SECONDS = 2.0
+
+# 1.6.2: a notes answer that is only one of these was most likely a stop
+# key typed once too often (or an Enter); the question is asked once more.
+STOP_WORDS = ("", "e", "end", "done", "q", "quit", "stop", "s", "r")
+
+
+def is_stop_word(answer: str) -> bool:
+    return answer.strip().lower() in STOP_WORDS
+
+
+def _question(text: str) -> str:
+    """A step question, wrapped to fit an 80-column console."""
+    return _wrap(" ".join(text.split()), 74, "  ")
 
 
 def handheld_step_verdict(entry: dict, activity: int, empty: bool, zero: bool = False) -> str:
@@ -8549,6 +8570,25 @@ def left_out_kinds_words(left: dict) -> str:
     return "; ".join(parts)
 
 
+# 1.6.2: a zip member, and all of one zip together, may not unpack to more
+# than this (a real SEND-THIS zip is a few MB; a crafted one could be huge).
+CLEAN_MEMBER_LIMIT = 200 * 1024 * 1024
+CLEAN_TOTAL_LIMIT = 1024 * 1024 * 1024
+
+
+def _copy_limited(src, dst, limit: int):
+    """Copy at most `limit` bytes; the count, or None if there was more."""
+    total = 0
+    while True:
+        chunk = src.read(1 << 20)
+        if not chunk:
+            return total
+        total += len(chunk)
+        if total > limit:
+            return None
+        dst.write(chunk)
+
+
 def clean_paths(paths: list) -> tuple:
     """--clean: (text to print, exit code). Never changes the originals."""
     import zipfile                                        # noqa: PLC0415
@@ -8590,6 +8630,7 @@ def clean_paths(paths: list) -> tuple:
                 os.makedirs(src_root)
                 os.makedirs(out_root)
                 folders, reports = set(), []
+                unpacked = 0
                 with zf:
                     for info in zf.infolist():
                         parts = [p for p in info.filename.replace("\\", "/").split("/") if p]
@@ -8601,15 +8642,26 @@ def clean_paths(paths: list) -> tuple:
                             continue
                         sub = parts[0] if len(parts) == 2 else ""
                         target_dir = os.path.join(src_root, sub) if sub else src_root
+                        if info.file_size > CLEAN_MEMBER_LIMIT or \
+                                unpacked + info.file_size > CLEAN_TOTAL_LIMIT:
+                            lines.append(f"    {name}: far larger than any recording this "
+                                         "tool makes, so it was not unpacked (left out)")
+                            continue
                         try:
                             os.makedirs(target_dir, exist_ok=True)
                             with zf.open(info) as fh, \
                                     open(os.path.join(target_dir, name), "wb") as out:
-                                shutil.copyfileobj(fh, out)
+                                got = _copy_limited(fh, out, CLEAN_MEMBER_LIMIT)
                         except OSError:
                             lines.append(f"    {name}: could not be read from the zip, "
                                          "left out")
                             continue
+                        if got is None:
+                            os.remove(os.path.join(target_dir, name))
+                            lines.append(f"    {name}: far larger than any recording this "
+                                         "tool makes, so it was not unpacked (left out)")
+                            continue
+                        unpacked += got
                         if sub:
                             folders.add(sub)
                         elif name.lower().endswith(".txt"):
@@ -8661,8 +8713,11 @@ def clean_paths(paths: list) -> tuple:
             dst = _unique_path(stem + "-cleaned.pcap")
             res = clean_recording(path, dst, _clean_profile(os.path.basename(path), None))
             what = left_out_kinds_words(res["left_out"])
-            lines.append(f"  {given}: kept {res['kept']:,} of {res['records']:,} records"
-                         + (f"; removed {what}" if what else ""))
+            lines.append(f"  {given}: " + (
+                f"nothing to remove ({res['kept']:,} records kept)"
+                if res["kept"] == res["records"] else
+                f"kept {res['kept']:,} of {res['records']:,} records"
+                + (f"; removed {what}" if what else "")))
             lines += [f"  -> the cleaned copy: {dst}" if res["kept"] else
                       "  -> nothing in it could be attributed to the instrument, so no "
                       "cleaned copy was written", ""]

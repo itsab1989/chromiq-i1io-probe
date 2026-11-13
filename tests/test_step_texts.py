@@ -101,6 +101,25 @@ class OneActionPerLine(unittest.TestCase):
             step = [s for s in probe.steps_for("i1pro2") if s["key"] == key][0]
             self.assertIn("M0, M1", step["setting"])
 
+    def test_no_question_or_box_line_is_wider_than_79_columns(self):
+        for profile in ("i1pro2", "i1pro", "i1pro3", "munki", "generic", "isis"):
+            for step in probe.steps_for(profile):
+                shown = [probe.step_box(step["during"], step.get("box", "Then do this in the "
+                                                                         "measuring program: "))]
+                for key in ("lights", "setting", "page"):
+                    if step.get(key):
+                        shown.append("  " + probe._question(step[key]))
+                for text in shown:
+                    for line in text.splitlines():
+                        with self.subTest(step=f"{profile}/{step['key']}"):
+                            self.assertLessEqual(len(line), 79, line)
+
+    def test_a_stop_key_is_not_taken_as_the_notes(self):
+        for word in ("e", " E ", "end", "done", "q", ""):
+            self.assertTrue(probe.is_stop_word(word), word)
+        for word in ("strip A, accepted", "ok", "e-mail"):
+            self.assertFalse(probe.is_stop_word(word), word)
+
     def test_no_em_dash(self):
         for name, text in all_texts():
             self.assertNotIn(chr(0x2014), text, name)

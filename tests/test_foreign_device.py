@@ -534,7 +534,7 @@ class AFullSessionWritesNothingForeign(_Base):
                 synth.i1pro2_scan(w, ruler=True, flags=0x0105)
             w.save(os.path.join(self.pcaps, step["key"] + ".pcap"))
 
-    def run_one(self, profile):
+    def run_one(self, profile, notes=""):
         self.make_steps(profile)
         folder = os.path.join(self.out, f"instrument-session-{profile}")
 
@@ -545,6 +545,10 @@ class AFullSessionWritesNothingForeign(_Base):
                 return "e"
             if "Delete the full recordings" in prompt:
                 return "yes"
+            if "In one line: what did you do" in prompt:
+                return notes
+            if "looks like a key for stopping" in prompt:
+                return "scanned the strip, accepted"
             return ""
         recorder = probe.UsbPcapRecorder(self.exe, ["\\\\.\\USBPcap1"], "")
         buf = io.StringIO()
@@ -576,6 +580,14 @@ class AFullSessionWritesNothingForeign(_Base):
                                        encoding="utf-8"))
                 kept = [s for s in saved["steps"] if s.get("files_xrite")]
                 self.assertEqual(len(kept), len(probe.steps_for(profile)))
+
+    def test_a_stop_key_as_the_notes_is_asked_again(self):
+        folder, screen, _analysis, _zipped = self.run_one("i1pro2", notes="e")
+        self.assertIn("The recording of this step has stopped. A few questions:", screen)
+        with open(os.path.join(folder, "session.json"), encoding="utf-8") as fh:
+            steps = json.load(fh)["steps"]
+        self.assertTrue(steps)
+        self.assertTrue(all(s["notes"] == "scanned the strip, accepted" for s in steps))
 
     def test_the_table_session_finish(self):
         w = usbpcap_table_disk()
@@ -673,6 +685,30 @@ class CleanOldFiles(_Base):
         self.assertIn("cleaned copy", buf.getvalue())
         with redirect_stdout(io.StringIO()):
             self.assertEqual(probe.main(["--clean", os.path.join(self.dir, "nothing.zip")]), 1)
+
+    def test_a_huge_zip_member_is_not_unpacked(self):
+        big = os.path.join(self.dir, "SEND-THIS-big.zip")
+        with zipfile.ZipFile(big, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("x/step1-instrument.pcap", b"\0" * (probe.CLEAN_MEMBER_LIMIT + 1))
+        text, _code = probe.clean_paths([big])
+        self.assertIn("far larger than any recording this tool makes", text)
+
+    def test_cleaning_a_clean_file_says_nothing_to_remove(self):
+        _zipped, folder = self.old_send_zip()
+        one = os.path.join(folder, "step3-scan-single-take1-USBPcap1-instrument.pcap")
+        probe.clean_paths([one])
+        text, _code = probe.clean_paths([one[:-5] + "-cleaned.pcap"])
+        self.assertIn("nothing to remove", text)
+
+    def test_the_cleaned_session_knows_what_was_left_out(self):
+        _zipped, folder = self.old_send_zip()
+        probe.clean_paths([folder])
+        with open(os.path.join(folder + "-cleaned", "session.json"), encoding="utf-8") as fh:
+            step = json.load(fh)["steps"][0]
+        self.assertTrue(probe.foreign_seen(step["left_out"]))
+        self.assertTrue(step["check"][0].startswith("cleaned by version"))
+        with open(os.path.join(folder + "-cleaned", "analysis.txt"), encoding="utf-8") as fh:
+            self.assertIn("so the contents are not shown", " ".join(fh.read().split()))
 
     def test_a_zip_cannot_write_outside_its_folder(self):
         evil = os.path.join(self.dir, "SEND-THIS-evil.zip")
