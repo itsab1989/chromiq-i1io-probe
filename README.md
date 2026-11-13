@@ -224,7 +224,7 @@ alignment of the corners and the row scans. These steps ask for what is
 missing, the most useful first, so stopping after one or two still helps:
 
 1. **One row in your usual setting, watching closely.** With the calibration.
-   You type a letter the moment you see something: `a` when the arm starts
+   You type a letter (and Enter) the moment you see something: `a` when the arm starts
    along the row, `l` when the instrument's lamp lights up, `d` and `u` when
    the head goes down and up. Then Cancel during the second row. The first
    recordings suggest that the table waits for the instrument before it
@@ -242,8 +242,9 @@ missing, the most useful first, so stopping after one or two still helps:
 Then a few questions with no recording running: the chart file, the paper
 size, a ruler measurement of the first row (this proves the unit of length),
 the i1Profiler settings, and whether i1Profiler can lower or lift the head on
-its own. Each step can be skipped or done again; steps 2 and 4 only make sense if
-i1Profiler offers them.
+its own. A step starts with Enter and ends when you type `e` and Enter, so a stray key
+cannot cut it short. Each step can be skipped or done again; steps 2 and 4
+only make sense if i1Profiler offers them.
 
 Left out on purpose: provoking an error by holding the arm back or removing
 the instrument, or trying whether the table moves without the instrument

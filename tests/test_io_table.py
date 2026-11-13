@@ -28,6 +28,7 @@ def scripted(answers):
         try:
             value = next(it)
         except StopIteration:
+            probe._INPUT_ENDED[:] = [True]          # like a closed stdin
             return ""
         if isinstance(value, BaseException):
             raise value
@@ -41,6 +42,8 @@ class TmpCase(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         probe._SECTIONS.clear()
         probe.REDACT = True
+        probe._INPUT_ENDED.clear()
+        self.addCleanup(probe._INPUT_ENDED.clear)
 
     def path(self, name):
         return os.path.join(self.tmp.name, name)
@@ -212,7 +215,7 @@ class TableAnalysis(TmpCase):
         self.assertIn("every line checks out", text)
         self.assertIn("FTDI set baud rate (divisor 52, about 57,692 baud)", text)
         self.assertIn("FTDI set data format: 8 data bits, no parity, 1 stop bit", text)
-        self.assertIn("c3, sent as each scan starts (guess: head down, or telling the table", text)
+        self.assertIn("c3, sent as each scan starts (guess: head down)", text)
         self.assertIn("home / reference run", text)
         self.assertIn("(likely)", text)
         self.assertIn("i1Pro BUTTON pressed", text)
@@ -342,11 +345,11 @@ class Steps(TmpCase):
 
     def test_walk_marks_skip_repeat_and_check(self):
         log, record = [], []
-        answers = ["", "d", "u", "looked odd", "", "down on each patch", "r",   # step 1
-                   "", "a", "l", "", "", "",                                    # again
-                   "s",                                                          # step 2
-                   "", "", "", "",                                              # step 3
-                   "", "", "", ""]                                              # step 4
+        answers = ["", "d", "", "u", "looked odd", "e", "down on each patch", "r",  # step 1
+                   "", "a", "l", "e", "", "",                                   # again
+                   "x", "s",                                                     # step 2
+                   "", "e", "", "",                                             # step 3
+                   "", "e", "", ""]                                             # step 4
         checks = []
         with mock.patch.object(probe, "ask", scripted(answers)), redirect_stdout(io.StringIO()) as out:
             how = probe.run_io_steps(probe.IO_STEPS, time.time(), log, record=record,
@@ -377,11 +380,16 @@ class Steps(TmpCase):
 
     def test_ctrl_c_keeps_the_finished_steps(self):
         log = []
-        answers = ["", "", "", "", KeyboardInterrupt()]
+        answers = ["", "e", "", "", "", "d", KeyboardInterrupt()]
         with mock.patch.object(probe, "ask", scripted(answers)), redirect_stdout(io.StringIO()):
             with self.assertRaises(KeyboardInterrupt):
                 probe.run_io_steps(probe.IO_STEPS, time.time(), log)
-        self.assertTrue(any(l.startswith("One row in your usual setting, watching closely: t=") for l in log))
+        self.assertTrue(any(l.startswith("One row in your usual setting, watching closely: t=")
+                            for l in log))
+        cut = [l for l in log if l.endswith("(interrupted)")]
+        self.assertEqual(len(cut), 1)
+        self.assertTrue(cut[0].startswith("A few patches in spot mode"))
+        self.assertIn("  mark: head down at t=", "\n".join(log))
 
     def test_quit(self):
         log = []
@@ -390,7 +398,7 @@ class Steps(TmpCase):
                              "stopped by the operator")
 
     def test_timed_steps_write_the_log_and_the_answers(self):
-        answers = [""] * 16 + ["nothing odd", "small.pxf", "A4", "190 mm, 20 patches",
+        answers = ["", "e", "", ""] * 4 + ["nothing odd", "small.pxf", "A4", "190 mm, 20 patches",
                                "M2, scan", "no"]
         with mock.patch.object(probe, "ask", scripted(answers)), redirect_stdout(io.StringIO()):
             record = probe.io_timed_steps()
@@ -405,7 +413,8 @@ class Steps(TmpCase):
 
     def test_rehearse_records_nothing(self):
         before = set(os.listdir(os.getcwd()))
-        with mock.patch.object(probe, "ask", scripted([])), redirect_stdout(io.StringIO()) as out:
+        with mock.patch.object(probe, "ask", scripted(["", "e", "", ""])), \
+                redirect_stdout(io.StringIO()) as out:
             code = probe.main(["--rehearse"])
         self.assertEqual(code, 0)
         screen = out.getvalue()
@@ -425,13 +434,28 @@ class Steps(TmpCase):
         text = "\n".join(probe.io_summary_table(rows))
         self.assertIn("step", text)
         self.assertIn("recorded", text)
-        self.assertIn("table commands seen", text)
-        self.assertIn("<-- please repeat", text)
+        self.assertIn("table commands", text)
+        self.assertIn("<-- no table command: please repeat", text)
         self.assertIn("Still missing: A small chart to the end, fastest setting.", text)
         self.assertIn("(fine if i1Profiler does not offer it)", text)
         self.assertNotIn("dual scan (M1 or M2);", text)
         full = [(s["title"], True, 9, 2) for s in probe.IO_STEPS]
         self.assertIn("Nothing important is missing", "\n".join(probe.io_summary_table(full)))
+
+    def test_takes_stay_apart_in_the_table(self):
+        title = probe.IO_STEPS[0]["title"]
+        text = "\n".join(probe.io_summary_table([(title, True, 0, 0),
+                                                 (title + " (take 2)", True, 9, 2)]))
+        self.assertIn("1. One row", text)
+        self.assertIn("1. (take 2) One row", text)
+
+    def test_cut_off_line_is_not_described_and_control_chars_are_hidden(self):
+        w = sio.DarwinWriter()
+        w.bulk_out(sio.TABLE, sio.TABLE_PID, 0x02, b";m0\x1b[2J00")
+        cap = probe.io_capture(w.save(self.path("cut.pcap")))
+        text = "\n".join(probe.io_timeline(cap))
+        self.assertIn("(cut off, not described)", text)
+        self.assertNotIn("\x1b", text)
 
     def test_a_repeat_that_worked_counts(self):
         rows = [("One row in your usual setting, watching closely", True, 0, 0),
@@ -446,7 +470,45 @@ class Steps(TmpCase):
         path = w.save(self.path("live-full.pcap"))
         self.assertIn(": good", probe.io_live_check([path], start, w.t))
         self.assertIn("please repeat it", probe.io_live_check([path], w.t + 10, w.t + 20))
-        self.assertIn("please repeat it", probe.io_live_check([self.path("none")], 0, 1))
+        self.assertIn("could not be read just now", probe.io_live_check([self.path("none")], 0, 1))
+
+    def test_live_reader_reads_only_what_was_added_and_names_a_dead_recorder(self):
+        w = sio.DarwinWriter(t0=1000.0)
+        w.simple("s0")
+        path = self.path("grow-full.pcap")
+        blob = w.pcap()
+        # half a record at the end, as when tcpdump is in the middle of writing
+        with open(path, "wb") as fh:
+            fh.write(blob[:-5])
+        proc = mock.Mock()
+        proc.poll.return_value = None
+        reader = probe.IoLiveReader({"XHC2": path}, {"XHC2": proc})
+        self.assertIn("none that moves the arm", reader.check(0, 2000))
+        first = len(reader.state["XHC2"]["recs"])
+        with open(path, "ab") as fh:
+            fh.write(blob[-5:])
+            w2 = sio.DarwinWriter(t0=1001.0)
+            w2.move("m0", 10, 10, 300)
+            fh.write(w2.pcap()[24:])
+        self.assertIn(": good", reader.check(0, 2000))
+        self.assertEqual(len(reader.state["XHC2"]["recs"]),
+                         first + 1 + len(w2.records))
+        proc.poll.return_value = 0
+        self.assertIn("the recording on XHC2 has stopped", reader.check(0, 2000))
+
+    def test_stray_keys_neither_start_nor_end_a_step(self):
+        log, record = [], []
+        answers = ["x", "", "", "", "e", "", "", "z", "q"]
+        with mock.patch.object(probe, "ask", scripted(answers)), redirect_stdout(io.StringIO()) as out:
+            probe.run_io_steps(probe.IO_STEPS, time.time(), log, record=record)
+        self.assertEqual(len(record), 1)
+        self.assertIn("not one of the choices", out.getvalue())
+        self.assertIn("still running", out.getvalue())
+
+    def test_closed_input_ends_the_walk(self):
+        with mock.patch.object(probe, "ask", scripted([])), redirect_stdout(io.StringIO()):
+            self.assertEqual(probe.run_io_steps(probe.IO_STEPS, 0.0, []),
+                             "stopped by the operator")
 
 
 # --------------------------------------------------------------------------
@@ -491,25 +553,56 @@ class Texts(unittest.TestCase):
             self.assertEqual(len(widths), 1, "box lines are not all the same width")
             self.assertLessEqual(widths.pop(), 80)
 
-    def test_sip_box_is_the_last_thing_after_a_mac_run(self):
+    def _finish(self, sip_box):
         ns = mock.Mock(output=os.path.join(tempfile.gettempdir(), "x-probe-test.txt"))
         probe._READINESS.clear()
         probe._READINESS.update({"sip": "off", "cpu": {"apple_silicon": True}})
+        probe._END.clear()
+        if sip_box:
+            probe._END["sip_box"] = True
         probe._IO_SUMMARY[:] = ["THE STEPS AT A GLANCE", "Nothing important is missing."]
         self.addCleanup(probe._READINESS.clear)
         self.addCleanup(probe._IO_SUMMARY.clear)
+        self.addCleanup(probe._END.clear)
         try:
             with redirect_stdout(io.StringIO()) as out:
                 probe.finish_report(ns, "Darwin")
+                print("\n".join(probe.end_of_run_lines()))
         finally:
             if os.path.exists(ns.output):
                 os.remove(ns.output)
-        screen = out.getvalue().rstrip()
+        return out.getvalue().rstrip()
+
+    def test_sip_box_is_the_last_thing_after_a_mac_recording(self):
+        screen = self._finish(sip_box=True)
         self.assertTrue(screen.endswith("+"), screen[-200:])
+        self.assertLess(screen.index("That's everything"), screen.index("THE STEPS AT A GLANCE"))
         self.assertLess(screen.index("THE STEPS AT A GLANCE"),
                         screen.index("PLEASE SWITCH SIP BACK ON"))
-        self.assertLess(screen.index("That's everything"),
-                        screen.index("PLEASE SWITCH SIP BACK ON"))
+
+    def test_no_big_box_when_nothing_was_recorded(self):
+        screen = self._finish(sip_box=False)
+        self.assertNotIn("PLEASE SWITCH SIP BACK ON", screen)
+        self.assertIn("REMINDER: System Integrity Protection (SIP) is switched OFF", screen)
+
+    def test_the_box_comes_after_what_to_do_now(self):
+        probe._READINESS.clear()
+        probe._READINESS.update({"sip": "off", "cpu": {"apple_silicon": False}})
+        self.addCleanup(probe._READINESS.clear)
+
+        def fake_main(_argv):
+            probe._END["sip_box"] = True
+            probe._CAUSES[:] = ["no_instrument"]
+            return 0
+        with mock.patch.object(probe, "main", fake_main), \
+                mock.patch.object(probe, "should_pause", lambda _a: False), \
+                redirect_stdout(io.StringIO()) as out:
+            probe.console_main(["--no-pause"])
+        probe._CAUSES.clear()
+        probe._END.clear()
+        screen = out.getvalue()
+        self.assertLess(screen.index("WHAT TO DO NOW"), screen.index("PLEASE SWITCH SIP BACK ON"))
+        self.assertIn("Command and R", screen)
 
     def test_no_em_dash_in_the_new_files(self):
         for name in ("test_io_table.py", "synth_io.py"):

@@ -128,6 +128,16 @@ jobs:
           grep -q "0xD7 sent" smoke/analysis.txt
           grep -q "NOT USED BY THE OPEN DRIVER" smoke/analysis.txt
 
+      # 1.5.4: the tool says it needs Python 3.8 or newer; prove it.
+      - uses: actions/setup-python@v5
+        if: matrix.os == 'ubuntu-22.04'
+        id: py38
+        with:
+          python-version: "3.8"
+      - name: Run the tests on Python 3.8
+        if: matrix.os == 'ubuntu-22.04'
+        run: ${{ steps.py38.outputs.python-path }} -m unittest discover -s tests
+
       # 1.5.4: and a (synthetic) i1iO table recording made on a Mac.
       - name: Smoke-test the i1iO analysis in the binary
         shell: bash
@@ -227,6 +237,18 @@ jobs:
             - Windows on ARM and the driver help are worded only as far as
               the evidence goes (nothing is claimed about the i1Pro 3 on ARM
               that nobody has tried; no unverified Device Manager names).
+            - An independent review before the release found, and this
+              release fixes: stray keys could end or start a step, a second
+              Ctrl-C at the end could lose the step log, a stopped recorder
+              was reported as "please repeat", and the SIP box also came when
+              nothing was recorded.
+
+            Tested: on a Mac with SIP on (recording not possible, as it
+            should be), the timed steps, the rehearsal and the analysis, in a
+            terminal of 80 columns; the analysis against the two real i1iO
+            recordings (the same 1,125 and 1,350 lines as our separate
+            decoder, every check number right). Not tested: a recording with
+            SIP off, and a real table (we have none).
 
             ### What's new in 1.5.3
 

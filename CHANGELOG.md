@@ -15,8 +15,10 @@ drive the table. There is still no recording from a handheld instrument.
   not in the request; 1.5.3 read it only from the request, so every command
   i1Profiler sent to the table (and the i1Pro's trigger parameters and light
   sequences) was missing. Found in the first real recording. The Windows
-  (USBPcap) and Linux (usbmon) readers were checked for the same mistake and
-  do not have it; tests now feed the same conversation through all three.
+  (USBPcap) and Linux (usbmon) readers were checked against those formats'
+  documentation and do not have this mistake; tests feed the same
+  conversation through all three, but neither has been tried on a real
+  recording of the table yet.
 - **`--analyze` understands the i1iO table:** it recognises 0971:2004 as a
   USB-to-serial link, removes the chip's 2 status bytes from every USB packet,
   puts the lines back together, checks every line's check number, and prints
@@ -41,8 +43,10 @@ drive the table. There is still no recording from a handheld instrument.
   apart. Then a few questions with no recording running: the
   chart file, the paper size, a ruler measurement, the i1Profiler settings,
   and whether i1Profiler can lower or lift the head on its own. Each step:
-  what to get ready, Enter to start and stop, one line on what the arm did,
-  skip or do it again; finished steps are kept, also after Ctrl-C. Left out
+  what to get ready, Enter to start, `e` and Enter to end it (a stray key or
+  a second Enter can neither end a step nor start the next one), one line on
+  what the arm did, skip or do it again; finished steps are kept, also after
+  Ctrl-C or a closed window. Left out
   on purpose: provoking an error by holding the arm back or removing the
   instrument (we cannot know that it is harmless), and switching the table
   off with the arm out (the first recordings already show that start-up),
@@ -71,7 +75,14 @@ drive the table. There is still no recording from a handheld instrument.
 - **Driver help:** no longer names X-Rite's Device Manager entry for the
   i1Pro 3 as "X-Rite i1Pro3", which was never verified; it says how to
   recognise X-Rite's entry and what to do if unsure.
-- An independent review before the release; see the release notes.
+- **An independent review before the release** found, and this release
+  fixes: a stray key or a double Enter could end a step or start the next
+  one while the arm moved; a second Ctrl-C or a closed window at the end
+  could lose the step log; the check said "please repeat" when the recorder
+  itself had stopped, and re-read the whole recording after every step; the
+  big SIP box also appeared when nothing had been recorded; letters could
+  land in i1Profiler (the steps now say to click into the tool's window
+  first); a few meanings were worded more firmly than our notes allow.
 
 ## v1.5.3
 

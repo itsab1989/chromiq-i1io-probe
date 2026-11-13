@@ -395,7 +395,7 @@ class RecordingTests(unittest.TestCase):
     def test_full_recording_with_real_data(self):
         # yes to start; per step: start, stop, arm, go on (x4); notes; delete
         # the full recordings; the five questions (1.5.4)
-        answers = ["yes"] + [""] * 16 + [""] + ["yes"] + [""] * 5
+        answers = ["yes"] + ["", "e", "", ""] * 4 + [""] + ["yes"] + [""] * 5
         screen = self.run_recording(answers, io_records(), keyboard_only_records())
         log = self.fake_log()
         for iface in ("XHC0", "XHC2"):
@@ -435,9 +435,9 @@ class RecordingTests(unittest.TestCase):
                     fh.write(w.pcap()[24:])
                 appended.append(w.t)
                 time.sleep(max(0.0, w.t - time.time()) + 0.05)
-                return ""
+                return "e"
             return answers.pop(0) if answers else ""
-        answers = ["yes"] + [""] * 15 + [""] + ["yes"] + [""] * 5
+        answers = ["yes", ""] + ["", ""] + ["", "e", "", ""] * 3 + [""] + ["yes"] + [""] * 5
         with open(os.path.join(self.pcaps, "XHC2.pcap"), "wb") as fh:
             fh.write(pcap_bytes(io_records()))
         readiness = probe.macos_recording_readiness([{"location": 0x02210000}])
@@ -459,7 +459,7 @@ class RecordingTests(unittest.TestCase):
         self.assertIn("session start (UTC epoch seconds):", timeline)
 
     def test_all_zero_recording_is_reported_plainly(self):
-        answers = ["yes"] + [""] * 16 + [""] + ["no"] + [""] * 5
+        answers = ["yes"] + ["", "e", "", ""] * 4 + [""] + ["no"] + [""] * 5
         self.run_recording(answers, io_records(zero=True), keyboard_only_records())
         result = dict(probe._SECTIONS)["Stage 2: macOS recording result"]
         self.assertIn("ALL-ZERO", result)

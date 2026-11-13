@@ -242,11 +242,41 @@ def section(title: str, body: str) -> None:
     _SECTIONS.append((title, scrub(body if body is not None else "")))
 
 
+def set_section(title: str, body: str) -> None:
+    """1.5.4: like section(), but replaces a section of the same title, so a
+    long session can keep its report section up to date as it goes."""
+    for i, (old, _body) in enumerate(_SECTIONS):
+        if old == title:
+            _SECTIONS[i] = (title, scrub(body if body is not None else ""))
+            return
+    section(title, body)
+
+
+# 1.5.4: what the very end of the run must still show (the SIP box after a
+# Mac recording), whatever way the run ends.
+_END: dict = {}
+
+
+def _say(text: str = "") -> None:
+    """print() that never fails: after the window was closed, printing can
+    raise, and that must not stop the recording from being cleaned up."""
+    try:
+        print(text)
+    except (OSError, ValueError):
+        pass
+
+
+# 1.5.4: set once input has ended (stdin closed or piped and used up), so
+# loops that wait for a particular answer can stop instead of spinning.
+_INPUT_ENDED: list = []
+
+
 def ask(prompt: str, interruptible: bool = False) -> str:
     try:
         return input(prompt).strip()
     except EOFError:
         print()
+        _INPUT_ENDED[:] = [True]
         return ""
     except KeyboardInterrupt:
         print()
@@ -868,7 +898,8 @@ def sip_back_on_box(apple_silicon: bool) -> str:
              "Please switch it back on now, it only takes a few minutes:", ""]
             + start
             + ["4. In the menu bar choose Utilities > Terminal.",
-               "5. Type   csrutil enable   and press Return. Answer y if asked.",
+               "5. Type   csrutil enable   and press Return. If asked, answer y",
+               "   and type your user name and password.",
                "6. Choose Apple menu > Restart. The Mac starts up normally.", "",
                "To check it worked: open the Terminal app, type",
                "   csrutil status",
@@ -1515,19 +1546,30 @@ def io_summary_table(rows: list) -> list:
     """rows: (step title, recorded: bool or None for skipped, commands, moving).
     The end-of-session table and one plain line on what is missing."""
     out = ["THE STEPS AT A GLANCE",
-           f"  {'step':38} {'recorded':9} {'table commands seen'}"]
+           f"  {'step':40} {'recorded':9} {'table commands'}"]
     missing = []
     seen_titles = {}
+    numbers = {s["title"]: i for i, s in enumerate(IO_STEPS, 1)}
     for title, recorded, n, moving in rows:
         base = io_step_title(title)
+        take = re.search(r"\(take (\d+)\)$", title)
+        label = (f"{numbers.get(base, '?')}. " + (f"(take {take.group(1)}) " if take else "")
+                 + base)
+        if len(label) > 40:
+            label = label[:39] + "."
         if recorded is None:
             optional = any(s["title"] == base and s.get("optional") for s in IO_STEPS)
-            out.append(f"  {title[:38]:38} {'skipped':9} -"
-                       + ("  (fine if i1Profiler does not offer it)" if optional else ""))
+            out.append(f"  {label:40} {'skipped':9} -")
+            if optional:
+                out.append("     (fine if i1Profiler does not offer it)")
             seen_titles.setdefault(base, False)
             continue
         ok = n > 0 and moving > 0
-        out.append(f"  {title[:38]:38} {'yes':9} {n}" + ("" if ok else "  <-- please repeat"))
+        out.append(f"  {label:40} {'yes':9} {n}")
+        if n == 0:
+            out.append("     <-- no table command: please repeat")
+        elif moving == 0:
+            out.append("     <-- none that moves the arm: if the arm moved, please repeat")
         seen_titles[base] = seen_titles.get(base, False) or ok
     for step in IO_STEPS:
         if not seen_titles.get(step["title"]) and not step.get("optional"):
@@ -1553,22 +1595,47 @@ def _io_step_header(number: int, total: int, title: str) -> None:
     print("-" * 68)
 
 
+def _ask_choice(prompt: str, allowed: tuple, on_end: str = "") -> str:
+    """ask() until the answer is one of the allowed ones ("" = Enter).
+    1.5.4 review: a stray letter or a second Enter must never start or end
+    a step while the arm is moving."""
+    while True:
+        answer = ask(prompt, interruptible=True).strip().lower()
+        if not answer and _INPUT_ENDED:
+            return on_end               # no more input: stop instead of asking for ever
+        for choice in allowed:
+            if answer == choice or (choice and answer == choice[0]):
+                return choice
+        print("    (not one of the choices; please type it again)")
+
+
+IO_END_WORDS = ("e", "end", "done")
+
+
 def run_io_steps(steps: list, t0: float, log: list, check=None,
-                 record: list | None = None, rehearse: bool = False) -> str:
+                 record: list | None = None, rehearse: bool = False,
+                 on_change=None) -> str:
     """Walk the i1iO steps, one at a time.
 
-    Each step: what to prepare, Enter to start, what to do, Enter to stop
-    (with  d  /  u  marks for the head on the way), one line on what the arm
-    did, then the check, and the choice to do it again. The recording itself
-    runs for the whole session (the table and i1Profiler keep talking
-    between steps, and a line cut in two is unreadable), so a step is a pair
-    of time marks in it.
+    Each step: what to prepare, Enter to start, what to do, then  e  and
+    Enter to end it (with letter marks on the way: a, l, d, u), one line on
+    what the arm did, then the check, and the choice to do it again. The
+    recording itself runs for the whole session (the table and i1Profiler
+    keep talking between steps, and a line cut in two is unreadable), so a
+    step is a pair of time marks in it.
 
-    log: the report lines, appended to as each step finishes, so a Ctrl-C or
-    a closed window keeps every finished step. check(start, end): what the
+    A step ends only with  e  (a plain Enter does nothing), and a step starts
+    only with Enter, so a stray key or a double Enter cannot cut a step short
+    or start the next one while the arm still moves.
+
+    log: the report lines, appended to as each step finishes; on_change() is
+    called after every change, so the caller can keep the report up to date
+    and a Ctrl-C or a closed window keeps every finished step (a step cut
+    short by Ctrl-C is logged as interrupted). check(start, end): what the
     recording shows for the step, or None. record: gets one dict per step.
     Returns how the walk ended."""
     record = [] if record is None else record
+    changed = on_change or (lambda: None)
     total = len(steps)
     index, take = 0, 1
     while index < total:
@@ -1580,14 +1647,17 @@ def run_io_steps(steps: list, t0: float, log: list, check=None,
         print()
         print("  THEN:")
         print(step["do"])
-        answer = ask("\n  Press Enter to START this step, or type  s  to skip it,\n"
-                     "  or  q  to stop here: ", interruptible=True).strip().lower()
-        if answer.startswith("q"):
+        answer = _ask_choice("\n  Press Enter to START this step, or type  s  to skip it,\n"
+                             "  or  q  to stop here: ", ("", "skip", "quit"),
+                             on_end="quit")
+        if answer == "quit":
             log.append(f"stopped by the operator before: {step['title']}")
+            changed()
             return "stopped by the operator"
-        if answer.startswith("s"):
+        if answer == "skip":
             log.append(f"{title}: SKIPPED")
             record.append({"title": title, "skipped": True})
+            changed()
             print("  Skipped.")
             index += 1
             take = 1
@@ -1598,17 +1668,34 @@ def run_io_steps(steps: list, t0: float, log: list, check=None,
         if step.get("marks"):
             print("  Letters: a = arm starts moving, l = lamp lights up, d = head down,")
             print("  u = head lifts; anything else you type is kept as a note.")
-        print("  Press Enter on its own when the step is finished.")
+            print("  After clicking in i1Profiler, click once into this window again")
+            print("  before you type, so the letters land here and not in i1Profiler.")
+        print("  When the step is finished, type  e  and press Enter.")
         marks = []
-        while True:
-            typed = ask("  > ", interruptible=True).strip()
+        try:
+            while True:
+                typed = ask("  > ", interruptible=True).strip()
+                now = time.time()
+                if not typed:
+                    if _INPUT_ENDED:
+                        break
+                    print("    (still running: type  e  and Enter when the step is finished)")
+                    continue
+                low = typed.lower()
+                if low in IO_END_WORDS:
+                    break
+                what = IO_MARK_KEYS.get(low, f"note: {typed}")
+                marks.append((what, now))
+                print(f"    noted at {now - start:.1f} s: {what}")
+        except KeyboardInterrupt:
             now = time.time()
-            if not typed:
-                break
-            low = typed.lower()
-            what = IO_MARK_KEYS.get(low, f"note: {typed}")
-            marks.append((what, now))
-            print(f"    noted at {now - start:.1f} s: {what}")
+            log.append(f"{title}: t={start - t0:8.3f}s .. {now - t0:8.3f}s   (interrupted)")
+            for what, when in marks:
+                log.append(f"  mark: {what} at t={when - t0:8.3f}s")
+            record.append({"title": title, "start": start, "end": now, "marks": marks,
+                           "interrupted": True})
+            changed()
+            raise
         end = time.time()
         flat = " ".join(step["do"].split())
         log.append(f"{title}: t={start - t0:8.3f}s .. {end - t0:8.3f}s   ({flat})")
@@ -1616,12 +1703,14 @@ def run_io_steps(steps: list, t0: float, log: list, check=None,
             log.append(f"  mark: {what} at t={when - t0:8.3f}s")
         entry = {"title": title, "start": start, "end": end, "marks": marks}
         record.append(entry)
+        changed()
         arm = ask("\n  " + _wrap(f"In one line: {step['arm']}", 66, "  ")
                   + "\n  (Enter to skip)\n  > ",
                   interruptible=True).strip()
         if arm:
             log.append(f"  arm: {arm}")
             entry["arm"] = arm
+            changed()
         verdict = None
         if rehearse:
             print("\n  (Rehearsal: nothing was recorded, so there is nothing to check.)")
@@ -1632,13 +1721,14 @@ def run_io_steps(steps: list, t0: float, log: list, check=None,
                 verdict = None
                 log.append(f"  check: could not be made ({exc})")
             if verdict:
-                print(f"\n  CHECK: {verdict}.")
+                print("\n  CHECK: " + _wrap(verdict + ".", 64, "  "))
                 log.append(f"  check: {verdict}")
                 entry["check"] = verdict
-        again = ask("\n  Press Enter to go on, or type  r  to do this step again"
-                    + ("" if rehearse else "\n  (the recording keeps both tries)")
-                    + ": ", interruptible=True).strip().lower()
-        if again.startswith("r"):
+            changed()
+        again = _ask_choice("\n  Press Enter to go on, or type  r  to do this step again"
+                            + ("" if rehearse else "\n  (the recording keeps both tries)")
+                            + ": ", ("", "repeat"))
+        if again == "repeat":
             take += 1
             continue
         index += 1
@@ -1697,30 +1787,84 @@ def rehearse_io() -> int:
     return 0
 
 
-def io_live_check(paths, start: float, end: float) -> str | None:
+class IoLiveReader:
     """While the recording runs: what the recording so far shows for one
-    step. Reads the growing recording files (tcpdump writes every packet at
-    once with -U); never touches a device."""
-    lines = []
-    found = False
-    for path in paths:
-        try:
-            linktype, recs = _read_pcap(path)
-        except (OSError, ValueError):
-            continue
-        if linktype == LINKTYPE_USB_DARWIN:
-            recs = [r for r in recs if _darwin_vid(r[1]) in XRITE_VIDS]
-        if not recs:
-            continue
-        events = capture_events(linktype, recs)
-        keys = io_table_keys(events, device_map(events))
-        if keys:
-            found = True
-            lines += io_table_lines(events, keys)
-    if not found:
-        return "no table command was recorded in this step: please repeat it"
-    n, moving = io_count_commands(lines, start, end)
-    return io_step_verdict(n, moving)
+    step. Reads only what tcpdump appended since the last look (tcpdump
+    writes every packet at once with -U), keeps only the X-Rite records, and
+    never touches a device. 1.5.4 review: reading every full file again
+    after each step could need gigabytes on a busy USB bus; and a recorder
+    that has died must be named, not reported as "please repeat"."""
+
+    def __init__(self, files: dict, procs: dict | None = None):
+        self.files = dict(files)            # name -> path
+        self.procs = dict(procs or {})      # name -> Popen (or anything with poll())
+        self.state = {name: {"off": 0, "endian": None, "link": None, "nano": False,
+                             "recs": []} for name in self.files}
+
+    def _read_new(self, name: str) -> None:
+        st = self.state[name]
+        with open(self.files[name], "rb") as fh:
+            if st["endian"] is None:
+                head = fh.read(24)
+                if len(head) < 24:
+                    return
+                magic = head[:4]
+                if magic in (b"\xd4\xc3\xb2\xa1", b"\x4d\x3c\xb2\xa1"):
+                    st["endian"] = "<"
+                elif magic in (b"\xa1\xb2\xc3\xd4", b"\xa1\xb2\x3c\x4d"):
+                    st["endian"] = ">"
+                else:
+                    raise ValueError("not a pcap file")
+                st["nano"] = magic in (b"\x4d\x3c\xb2\xa1", b"\xa1\xb2\x3c\x4d")
+                st["link"] = struct.unpack(st["endian"] + "I", head[20:24])[0]
+                st["off"] = 24
+            fh.seek(st["off"])
+            blob = fh.read()
+        e, off = st["endian"], 0
+        while off + 16 <= len(blob):
+            ts_s, ts_u, incl, _orig = struct.unpack(e + "IIII", blob[off:off + 16])
+            if off + 16 + incl > len(blob):
+                break                                    # still being written
+            data = blob[off + 16:off + 16 + incl]
+            if st["link"] != LINKTYPE_USB_DARWIN or _darwin_vid(data) in XRITE_VIDS:
+                st["recs"].append((ts_s + ts_u / (1e9 if st["nano"] else 1e6), data))
+            off += 16 + incl
+        st["off"] += off
+
+    def check(self, start: float, end: float) -> str | None:
+        lines, table_on, unreadable = [], [], []
+        for name in self.files:
+            try:
+                self._read_new(name)
+            except (OSError, ValueError, struct.error):
+                unreadable.append(name)
+                continue
+            st = self.state[name]
+            if not st["recs"]:
+                continue
+            events = capture_events(st["link"], st["recs"])
+            keys = io_table_keys(events, device_map(events))
+            if keys:
+                table_on.append(name)
+                lines += io_table_lines(events, keys)
+        dead = [n for n, p in self.procs.items() if p is not None and p.poll() is not None]
+        watch = [n for n in (table_on or list(self.files)) if n in dead]
+        if watch:
+            return (f"the recording on {', '.join(watch)} has stopped, so nothing more is "
+                    "being recorded. Please type  q  at the next step, and start the tool "
+                    "again for a new recording")
+        if not table_on and unreadable:
+            return ("the recording could not be read just now, so this step was not checked "
+                    "(the recording itself goes on)")
+        if not table_on:
+            return "no table command was recorded in this step: please repeat it"
+        n, moving = io_count_commands(lines, start, end)
+        return io_step_verdict(n, moving)
+
+
+def io_live_check(paths, start: float, end: float) -> str | None:
+    """One look at recording files, without a recorder to watch."""
+    return IoLiveReader({p: p for p in paths}).check(start, end)
 
 
 
@@ -1952,16 +2096,25 @@ def macos_guided_recording(readiness: dict) -> None:
             print("=" * 68)
             t0 = time.time()
             log += io_log_header(t0)
-            recorded = [files[i] for i in live]
+            _END["sip_box"] = True          # SIP was switched off for this
+            reader = IoLiveReader({i: files[i] for i in live}, {i: procs[i] for i in live})
+            keep = lambda: set_section("Stage 2: annotated capture timeline",  # noqa: E731
+                                       "\n".join(log))
+            keep()
             log.append("walk: " + run_io_steps(
-                IO_STEPS, t0, log, record=record,
-                check=lambda a, b: io_live_check(recorded, a, b)))
+                IO_STEPS, t0, log, record=record, check=reader.check, on_change=keep))
     except KeyboardInterrupt:
         ended_early = "Ctrl-C"
     except _Hangup:
         ended_early = "window closed or stop signal"
     finally:
-        print("\n  Stopping the recording...")
+        # A second Ctrl-C must not cut the clean-up short (tcpdump left
+        # running, interfaces left on): ignored until the files are safe.
+        try:
+            old_int = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        except (ValueError, OSError):
+            old_int = None
+        _say("\n  Stopping the recording...")
         for iface, proc in procs.items():
             if proc.poll() is not None:
                 continue
@@ -1996,37 +2149,46 @@ def macos_guided_recording(readiness: dict) -> None:
                 pass
         if brought_up:
             if still_up:
-                print(f"  Could not switch {', '.join(still_up)} off again. They switch off")
-                print("  by themselves when you restart the Mac.")
+                _say(f"  Could not switch {', '.join(still_up)} off again. They switch off")
+                _say("  by themselves when you restart the Mac.")
             else:
-                print(f"  Switched {', '.join(brought_up)} off again.")
+                _say(f"  Switched {', '.join(brought_up)} off again.")
     if ended_early:
         log.append(f"recording ended early: {ended_early}")
-
-    notes = ask("\nAnything odd happen? (free text, Enter to skip): ")
-    if notes:
-        log.append(f"operator notes: {notes}")
-    section("Stage 2: annotated capture timeline", "\n".join(log))
-
-    result_lines = finish_recordings(files, record)
-    section("Stage 2: macOS recording result", "\n".join(result_lines))
-    print("\n" + "\n".join("  " + l for l in result_lines))
-    if record and not ended_early:
-        answers: list = []
-        ask_io_questions(answers)
-        section("Stage 2: answers about the chart and the settings", "\n".join(answers))
-    if _IO_SUMMARY:
-        section("Stage 2: the steps at a glance", "\n".join(_IO_SUMMARY))
-        print("\n" + "\n".join("  " + l for l in _IO_SUMMARY))
-    print()
-    print(SIP_OFF_REMINDER)
-    print()
+    set_section("Stage 2: annotated capture timeline", "\n".join(log))
+    try:
+        hung_up = ended_early == "window closed or stop signal"
+        if not hung_up:
+            notes = ask("\nAnything odd happen? (free text, Enter to skip): ")
+            if notes:
+                log.append(f"operator notes: {notes}")
+                set_section("Stage 2: annotated capture timeline", "\n".join(log))
+        result_lines = finish_recordings(files, record, ask_delete=not hung_up)
+        set_section("Stage 2: macOS recording result", "\n".join(result_lines))
+        _say("\n" + "\n".join("  " + l for l in result_lines))
+        if record and not hung_up:
+            answers: list = []
+            ask_io_questions(answers)
+            set_section("Stage 2: answers about the chart and the settings",
+                        "\n".join(answers))
+        if _IO_SUMMARY:
+            set_section("Stage 2: the steps at a glance", "\n".join(_IO_SUMMARY))
+            _say("\n" + "\n".join("  " + l for l in _IO_SUMMARY))
+        _say()
+        _say(SIP_OFF_REMINDER)
+        _say()
+    finally:
+        if old_int is not None:
+            try:
+                signal.signal(signal.SIGINT, old_int)
+            except (ValueError, OSError):
+                pass
 
 
 _IO_SUMMARY: list = []          # 1.5.4: the step table, repeated at the very end
 
 
-def finish_recordings(files: dict, record: list | None = None) -> list:
+def finish_recordings(files: dict, record: list | None = None, ask_delete: bool = True) -> list:
     """Check each recording, make the X-Rite-only copies, offer to delete the
     rest. 1.5.4: record (the steps) adds the per-step check of the table's
     commands."""
@@ -2073,7 +2235,10 @@ def finish_recordings(files: dict, record: list | None = None) -> list:
     else:
         lines.append("No X-Rite traffic was found in any recording, so there is nothing "
                      "useful to send. The report on its own still helps.")
-    if full:
+    if full and not ask_delete:
+        lines.append("The full recordings were kept (the window was closed). Please do not "
+                     "send them; delete them when you no longer need them.")
+    elif full:
         print("\n  The full recordings (the files ending in -full.pcap) hold everything")
         print("  that happened on those USB buses, possibly including what you typed")
         print("  on a USB keyboard. They are not needed: the X-Rite-only copies have")
@@ -4017,15 +4182,14 @@ IO_COMMANDS = {
     "p1": "where is the point under the alignment sight? read after a button "
           "press (likely)",
     "m0": "travel move (certain)",
-    "m1": "move out to the hand-alignment start (how it differs from m0: "
-          "meaning unknown)",
+    "m1": "move out to the hand-alignment start (seen so far; how it differs "
+          "from m0: meaning unknown)",
     "m2": "scan move along a row while the i1Pro measures (certain)",
     "a3": "ask for the profile of the running move (likely)",
-    "c3": "c3, sent as each scan starts (guess: head down, or telling the table "
-          "to start with the instrument)",
+    "c3": "c3, sent as each scan starts (guess: head down)",
     "c4": "c4, sent before every travel to a new row (guess: head up)",
     "d1": "d1, sent before every scan (guess: a start delay in milliseconds)",
-    "f0": "end hand-alignment mode, motors take over again (likely)",
+    "f0": "leave hand-alignment mode, sent at the very end (likely)",
     "f1": "free the arm, so it can be pushed by hand for alignment (likely)",
     "f3": "f3 (meaning unknown)",
     "f4": "is the arm free? 00 = motors in control, 01 = free (likely)",
@@ -4327,8 +4491,11 @@ def io_capture(path: str) -> dict | None:
     if not table:
         return None
     pro = io_pro_keys(events, devices, table)
+    by_id = any((info.get("vid"), info.get("pid")) == (XRITE_VID, IO_TABLE_PID)
+                for key, info in devices.items() if key in table) or any(
+        (ev.get("vid"), ev.get("pid")) == (XRITE_VID, IO_TABLE_PID) for ev in events)
     return {"path": path, "t0": recs[0][0], "events": events, "table": table, "pro": pro,
-            "lines": io_table_lines(events, table), "linktype": linktype}
+            "lines": io_table_lines(events, table), "linktype": linktype, "by_id": by_id}
 
 
 def find_report_for(path: str) -> str | None:
@@ -4378,7 +4545,9 @@ def io_timeline(cap: dict, steps: dict | None = None) -> list:
     pending = {}
     u8_addr = None
     for l in cap["lines"]:
-        line = l["line"]
+        # Printable characters only: a damaged recording must not be able to
+        # send control characters to the terminal.
+        line = "".join(c if 32 <= ord(c) < 127 else "." for c in l["line"])
         flag = "" if l["ok"] else ("  <-- line cut off by the end of the recording"
                                    if l.get("unfinished") else "  <-- CHECKSUM WRONG")
         if l["who"] == "host":
@@ -4389,7 +4558,8 @@ def io_timeline(cap: dict, steps: dict | None = None) -> list:
                     u8_addr = int(line[3:11], 16)
                 except ValueError:
                     u8_addr = None
-            text = io_describe_command(line) if line.startswith(";") else "not a command line"
+            text = ("(cut off, not described)" if l.get("unfinished") else
+                    io_describe_command(line) if line.startswith(";") else "not a command line")
             items.append((l["t"], 1, "HOST ", f"{line:<22} {text}{flag}"))
         elif line.startswith(":!"):
             items.append((l["t_end"], 1, "TABLE", f"{line:<22} accepted{flag}"))
@@ -4452,15 +4622,19 @@ def summarize_io(paths: list, reports: list | None = None) -> str | None:
            "  How sure we are is said with three words: certain, likely, guess.",
            "  Anything without one of them is a plain count from the recording.",
            "  The table's serial number is hidden" + (" (shown: --no-redact)."
-                                                       if not REDACT else ".")]
+                                                       if not REDACT else ".")
+           + " The rest of the table's memory",
+           "  is shown as read (it holds the white tile's values and a date).",]
     from collections import Counter                       # noqa: PLC0415
     for cap in caps:
         lines = cap["lines"]
         host = [l for l in lines if l["who"] == "host"]
         good = sum(1 for l in lines if l["ok"])
         out += ["", "  " + os.path.basename(cap["path"]),
-                f"    table: 0971:2004 (\"Eye-One iO\"), a USB-to-serial link through an "
-                "FTDI chip (certain)",
+                ("    table: 0971:2004 (\"Eye-One iO\") by its USB IDs" if cap["by_id"] else
+                 "    table: found by its command lines (the recording holds no USB "
+                 "description)"),
+                "    a USB-to-serial link through an FTDI chip (certain for the i1iO 2)",
                 f"    lines: {len(host)} to the table, {len(lines) - len(host)} from it; "
                 f"checksum right on {good} of {len(lines)}"]
         if lines and good == len(lines):
@@ -4493,7 +4667,8 @@ def summarize_io(paths: list, reports: list | None = None) -> str | None:
                 steps = None
         if steps and steps["steps"]:
             how = "exact times" if steps["exact"] else (
-                "times approximate: worked out from the report's local clock")
+                "times approximate: worked out from the report's local clock, assuming "
+                "the recording started within 15 minutes after the session")
             out.append(f"    steps, from {os.path.basename(report)} ({how}):")
             known = {s["title"] for s in IO_STEPS}
             for s in steps["steps"]:
@@ -6175,6 +6350,9 @@ def main(argv: list | None = None) -> int:
                              "piped or redirected runs never wait anyway)")
     args = parser.parse_args(argv)
     REDACT = not args.no_redact
+    _END.clear()
+    _IO_SUMMARY.clear()
+    _INPUT_ENDED.clear()
     _RUN.clear()
     _RUN.update(output=args.output, no_redact=args.no_redact, relaunched=args.relaunched,
                 no_pause=args.no_pause)
@@ -6558,6 +6736,13 @@ def finish_report(args, system: str, instrument: bool = False,
         print()
         print(I1PROFILER_WARNING)
     sip_off = system == "Darwin" and _READINESS.get("sip") in ("off", "partly")
+    if instrument and recorded and sip_off:
+        _END["sip_box"] = True
+    if sip_off and not _END.get("sip_box"):
+        # Nothing was recorded: keep the short reminder here, and "what to do
+        # next" last (1.5.4 review: the big box is for after a recording).
+        print()
+        print(SIP_OFF_REMINDER)
     print()
     if instrument and not recorded:
         # Last on the screen on purpose: what to do next.
@@ -6570,14 +6755,20 @@ def finish_report(args, system: str, instrument: bool = False,
     else:
         print("  That's everything. Thank you for helping!")
     print()
-    if sip_off:
-        # 1.5.4: the last thing on the screen, after the step table.
-        if _IO_SUMMARY:
-            print("\n".join("  " + l for l in _IO_SUMMARY))
-            print()
-        print(sip_back_on_box(bool((_READINESS.get("cpu") or {}).get("apple_silicon"))))
-        print()
     return 0
+
+
+def end_of_run_lines() -> list:
+    """1.5.4: after a Mac recording with SIP off, the step table and the box
+    with the steps to switch SIP back on are the very last thing on screen,
+    after everything else (also after WHAT TO DO NOW, a Ctrl-C or an error)."""
+    if not _END.get("sip_box") or _READINESS.get("sip") not in ("off", "partly"):
+        return []
+    lines = [""]
+    if _IO_SUMMARY:
+        lines += ["  " + l for l in _IO_SUMMARY] + [""]
+    lines += [sip_back_on_box(bool((_READINESS.get("cpu") or {}).get("apple_silicon"))), ""]
+    return lines
 
 
 def candidate_dirs() -> list:
@@ -7177,6 +7368,15 @@ def console_main(argv: list | None = None) -> int:
         print("\n\n  Stopped (Ctrl-C). Nothing more was done; anything already saved"
               "\n  is kept.")
         code = 130
+        # 1.5.4 review: a session that ran must not lose its step log.
+        if _SECTIONS and not _LAST_REPORT.get("path") and _END.get("sip_box"):
+            try:
+                saved = write_report(report_text(), _RUN.get("output"))
+            except Exception:                             # noqa: BLE001
+                saved = None
+            if saved:
+                _LAST_REPORT["path"] = saved
+                print(f"  What was collected so far was saved here:\n      {saved}")
     except SystemExit as exc:                             # argparse: --help, bad option
         code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 2)
     except Exception:                                     # noqa: BLE001
@@ -7196,6 +7396,12 @@ def console_main(argv: list | None = None) -> int:
         if _CAUSES:
             print("\n".join(what_to_do_lines(_CAUSES, _LAST_REPORT.get("path"))))
             offer_download_page(_isatty(sys.stdin))
+    except Exception:                                     # noqa: BLE001
+        pass
+    try:
+        tail = end_of_run_lines()
+        if tail:
+            print("\n".join(tail))
     except Exception:                                     # noqa: BLE001
         pass
     if pause:
