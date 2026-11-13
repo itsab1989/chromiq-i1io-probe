@@ -1052,6 +1052,8 @@ class ReadOnlyPromise(_IsisSessionBase):
             if name in POSIX_ONLY:
                 mod_name, attr = POSIX_ONLY[name]
                 if not hasattr(__import__(mod_name), attr):
+                    # only Windows lacks them; anywhere else this mutant must run
+                    self.assertEqual(os.name, "nt", f"{mod_name}.{attr} is missing")
                     continue
             with self.subTest(mutation=name):
                 path = os.path.join(self.dir, f"mutant_{name}.py")
