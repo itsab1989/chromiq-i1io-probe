@@ -197,7 +197,7 @@ class OtherFamilyTests(TempDirCase):
         self.assertIn("requests the open driver never sends: 0x3B (set scan-start "
                       "indicator timing)", report)
         self.assertIn("2-bit samples packed four to a byte", report)
-        self.assertIn("green pulse (timing 0x14, count 2)", report)
+        self.assertIn("green pulse (likely, from a real recording), timing 0x14, 2 times", report)
         self.assertIn("100 readings", report)                # 564 bytes each
         self.assertIn("event on 0x83: button pressed", report)
         self.assertIn("firmware 1.23 '1.23x'", report)

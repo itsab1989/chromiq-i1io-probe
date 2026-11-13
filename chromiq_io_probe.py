@@ -78,7 +78,7 @@ import tempfile
 import threading
 import time
 
-PROBE_VERSION = "1.5.4"
+PROBE_VERSION = "1.5.5"
 
 ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/129"   # the i1iO only
 NEW_ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/new"
@@ -3440,19 +3440,32 @@ I1PRO3_REQUESTS = {          # i1pro3_imp.h:1206-1220
     0x2C: ("get board temperature", "i1pro3_imp.c:5292", _raw, True),
     0x2D: ("set LED currents", "i1pro3_imp.c:5217", _d3_ledcur, True),
     0x38: ("get adapter type", "i1pro3_imp.c:5253", _raw, True),
-    # Defined in Argyll but never called (i1pro3_imp.c:5380, :5317).
-    0x3A: ("set tint multiplier", "i1pro3_imp.c:5398", _raw, False),
+    # 1.5.5: 0x3A IS used, by every reflective measurement
+    # (i1pro3_do_measure, i1pro3_imp.c:12773); 1.5.4 listed it as unused.
+    0x3A: ("set tint multiplier", "i1pro3_imp.c:5398", _raw, True),
+    # Defined in Argyll but never called (i1pro3_imp.c:5317).
     0x3B: ("set scan-start indicator timing", "i1pro3_imp.c:5343", _d3_scanind, False),
     0x66: ("start event reports on 0x83", "i1pro3_imp.c:5881", _raw, True),
 }
 
 
-def decode_i1pro3_led(blob: bytes) -> dict:
-    """i1Pro 3 light sequence: groups of 3 bytes (i1pro3_imp.c:6074-6141).
+# 1.5.5: the first byte of each group, as far as the first real i1Pro 3
+# recording (with the tester's notes on what the lights did) shows it. Each
+# name says how sure we are; Argyll's own bit notes (i1pro3_imp.c ~6080-6138)
+# get 0x06 wrong (1.5.4 called it "off"), so they are no longer used to name
+# a colour on their own.
+I1PRO3_LIGHT_CODES = {
+    0x00: "off",
+    0x12: "white pulse (likely, from a real recording)",
+    0x0A: "green pulse (likely, from a real recording)",
+    0x06: "red pulse (likely, from a real recording)",
+    0x01: "meaning unknown (guess, from Argyll's note: a white blink)",
+}
 
-    Argyll's notes on the first byte are partly guesses; only the colour
-    bits and blink/pulse it lists are decoded, the rest is shown raw.
-    """
+
+def decode_i1pro3_led(blob: bytes) -> dict:
+    """i1Pro 3 light sequence: groups of 3 bytes (light code, timing, count;
+    count 0 = for ever), per Argyll's notes (i1pro3_imp.c:6074-6141)."""
     groups = [blob[i:i + 3] for i in range(0, len(blob) - len(blob) % 3, 3)]
     if not groups:
         return {"ok": True, "text": "off" if len(blob) < 3 else blob.hex(), "colours": []}
@@ -3460,20 +3473,12 @@ def decode_i1pro3_led(blob: bytes) -> dict:
     colours = set()
     for g in groups:
         b0, b1, b2 = g[0], g[1], g[2]
-        if b0 & 0x80:
-            colour = "unknown (top bit set)"
-        elif b0 & 0x10 and not b0 & 0x08:
-            colour = "white"
-        elif b0 & 0x0C == 0x0C:
-            colour = "red"
-        elif b0 & 0x0C == 0x08:
-            colour = "green"
-        else:
-            colour = "off"
-        style = "blink once" if b0 & 0x01 else "pulse"
-        if colour != "off":
-            colours.add(colour)
-        parts.append(f"{colour} {style} (timing 0x{b1:02x}, count {b2}) [{g.hex()}]")
+        name = I1PRO3_LIGHT_CODES.get(b0, f"code 0x{b0:02x}, meaning unknown")
+        for colour in ("white", "green", "red"):
+            if name.startswith(colour):
+                colours.add(colour)
+        times = "for ever" if b2 == 0 else f"{b2} time" + ("" if b2 == 1 else "s")
+        parts.append(f"{name}, timing 0x{b1:02x}, {times} [{g.hex()}]")
     return {"ok": True, "text": "; ".join(parts), "colours": sorted(colours)}
 
 
@@ -3867,11 +3872,15 @@ def _collapse_timeline(timeline: list, limit: int = 300) -> list:
 def format_step(name: str, res: dict, notes: dict | None = None) -> list:
     fam = FAMILIES.get(res["family"], FAMILIES["generic"])
     out = [f"--- {name} ---"]
+    if res.get("empty"):
+        out.append("  EMPTY: nothing was recorded in this step, please repeat it.")
     notes = notes or {}
     if notes.get("did"):
         out.append(f"  operator, what happened: {notes['did']}")
     if notes.get("lights"):
         out.append(f"  operator, the lights: {notes['lights']}")
+    if notes.get("setting"):
+        out.append(f"  operator, the program's setting: {notes['setting']}")
     out.append(f"  length: {res['last_t'] - res['first_t']:.1f} s")
     if res["requests"]:
         out.append("  commands:")
@@ -4014,7 +4023,8 @@ def session_steps(paths: list) -> tuple:
             if step.get("take", 1) > 1:
                 title += f" (take {step['take']})"
             steps.append((title, events, {"did": step.get("notes", ""),
-                                          "lights": step.get("lights", "")},
+                                          "lights": step.get("lights", ""),
+                                          "setting": step.get("setting", "")},
                           bool(step.get("control")), step.get("key", "")))
         return steps, devinfo, checks, session
     for f in whole:
@@ -4063,6 +4073,12 @@ SESSION_PURPOSE_ANALYSIS = {
 }
 
 
+def step_has_data(res: dict) -> bool:
+    """The instrument's own requests or data on its endpoints, not only the
+    USB description that every start of a recording fetches."""
+    return bool(res["codes"] or res["endpoints"])
+
+
 def summarize_session(paths: list) -> str:
     steps, devinfo, checks, session = session_steps(paths)
     family = session_family(devinfo, steps, session)
@@ -4106,12 +4122,21 @@ def summarize_session(paths: list) -> str:
     results = []
     for name, events, notes, control, key in steps:
         res = analyze_step(events, family)
+        # 1.5.5: a step started and stopped at once holds only the USB
+        # description; it must not count as "a no-ruler control" and so on.
+        if not step_has_data(res):
+            res["empty"] = True
         results.append((name, res, notes, control, key))
         out.extend(format_step(name + ("  [CONTROL: no ruler]" if control else ""),
                                res, notes))
         out.append("")
+    full = [r for r in results if not r[1].get("empty")]
 
     out.append("-" * 68)
+    empties = [r[0] for r in results if r[1].get("empty")]
+    if empties:
+        out.append("  EMPTY STEPS (nothing recorded, please repeat them): " + "; ".join(empties))
+        out.append("")
     out.append("  STEPS SIDE BY SIDE")
     out.append(f"  {'step':32} {'meas':>4} {'readings':>8} {'secs':>6} {'rd/s':>5} "
                f"{'ruler':>5} {'other ep B':>10} {'lights':>6}")
@@ -4142,7 +4167,7 @@ def summarize_session(paths: list) -> str:
                    (", ".join(f"0x{c:02X}" for c in unused) or "none"))
         out.append("")
 
-    controls = [r for r in results if r[3]]
+    controls = [r for r in full if r[3]]
     if controls:
         base = set().union(*(r[1]["features"] for r in controls))
         out.append("  ONLY WITH THE RULER (seen in a ruler step, never in the no-ruler control):")
@@ -4159,8 +4184,8 @@ def summarize_session(paths: list) -> str:
                        "the control.")
         out.append("")
 
-    fast = [r for r in results if "fast" in r[4]]
-    slow = [r for r in results if "slow" in r[4]]
+    fast = [r for r in full if "fast" in r[4]]
+    slow = [r for r in full if "slow" in r[4]]
     if fast and slow:
         def stats(r):
             ms = [m for m in r[1]["measurements"] if m["readings"]]
@@ -4209,7 +4234,7 @@ def summarize_session(paths: list) -> str:
     out.append(f"    a fast and a slow swipe .............. {yes[bool(fast and slow)]}")
     if family in ("i1pro2", "i1pro3"):
         out.append(f"    a dual-scan step ..................... "
-                   f"{yes[any('dual' in r[4] for r in results)]}")
+                   f"{yes[any('dual' in r[4] for r in full)]}")
         out.append(f"    a no-ruler control ................... {yes[bool(controls)]}")
     if family in ("i1pro2", "i1pro3", "munki"):
         out.append(f"    light commands ....................... {yes[any_led]}")
@@ -6522,6 +6547,7 @@ def finish_session(session: dict, folder: str) -> tuple:
         state = "skipped" if s.get("skipped") else (
             ", ".join(s.get("files_xrite") or [])
             or ("cut from whole-session-instrument.pcap" if s.get("cut_from_whole_recording")
+                else "EMPTY: nothing recorded, please repeat this step" if s.get("empty")
                 else "no instrument traffic"))
         lines.append(f"  step {s['number']} {s['title']} (take {s.get('take', 1)}): {state}")
     analysis = None
@@ -6641,7 +6667,26 @@ def manual_recording_text(folder: str, after_failure: bool = False) -> str:
     5. Then run this tool with   --analyze {os.path.basename(folder)}"""
 
 
-def instrument_session_step(pids: list, direct: bool) -> dict:
+def earlier_session_here() -> bool:
+    """An instrument-session folder from an earlier run next to the tool."""
+    try:
+        base = _writable_dir()
+        return any(n.startswith("instrument-session-") and not n.endswith("-FULL-do-not-send")
+                   and os.path.isdir(os.path.join(base, n)) for n in os.listdir(base))
+    except OSError:
+        return False
+
+
+def parse_step_numbers(text: str, total: int) -> list:
+    """'7,9' or '7 9' -> [7, 9]; numbers outside 1..total are dropped."""
+    out = []
+    for part in re.split(r"[\s,;]+", text or ""):
+        if part.isdigit() and 1 <= int(part) <= total and int(part) not in out:
+            out.append(int(part))
+    return sorted(out)
+
+
+def instrument_session_step(pids: list, direct: bool, only: list | None = None) -> dict:
     """The i1Pro / ColorMunki recording, from start to end, any platform.
 
     Returns what happened, for the closing words: {"profile", "recorded",
@@ -6665,8 +6710,26 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
     print()
     print(PROMISE_TEXT)
     steps = steps_for(profile)
-    print(f"\n  WHAT YOU WILL DO ({len(steps)} short steps, about 15 minutes)")
-    for i, s in enumerate(steps, 1):
+    if only is None and earlier_session_here():
+        # 1.5.5: a tester whose session had two empty steps had to do all
+        # nine again; now he can do just those. Asked only when an earlier
+        # session folder lies next to the tool.
+        try:
+            answer = _session_ask("\n  Do you want to repeat only some steps of an earlier "
+                                  "session? Type their\n  numbers (for example  7,9 ), or "
+                                  "just press Enter for all steps: ")
+        except _StopSession:
+            section("Instrument recording session", "[ended before it started]")
+            return outcome
+        only = parse_step_numbers(answer, len(steps))
+    only = parse_step_numbers(",".join(str(n) for n in only or []), len(steps))
+    shown = [(i, st) for i, st in enumerate(steps, 1) if not only or i in only]
+    if only:
+        print(f"\n  WHAT YOU WILL DO (only step{'s' if len(only) > 1 else ''} "
+              f"{', '.join(str(n) for n in only)} of {len(steps)})")
+    else:
+        print(f"\n  WHAT YOU WILL DO ({len(steps)} short steps, about 15 minutes)")
+    for i, s in shown:
         print(f"    {i}. {s['title']}")
     print("  IMPORTANT: use the measuring program for a step only AFTER you have")
     print("  pressed Enter here to start that step. Before that, nothing is recorded.")
@@ -6801,7 +6864,8 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
         if not said_yes(ask("\n  Is Wireshark recording now? (yes / no): ")):
             section("Instrument recording session", "[no recording running]")
             return outcome
-    session = run_instrument_session(recorder, folder, profile, program, version, context)
+    session = run_instrument_session(recorder, folder, profile, program, version, context,
+                                     only=only)
     failed_start = recorder is not None and session.get("ended") == \
         "the recording program stopped at once"
     if failed_start:
@@ -6819,7 +6883,7 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
             print(f"  (save the recording there as  whole-session.pcapng)")
             manual = True
             session = run_instrument_session(None, folder, profile, program, version,
-                                             context)
+                                             context, only=only)
             session["first_try"] = {"ended": first.get("ended"),
                                     "recorder_failure": first.get("recorder_failure")}
             _write_session(session, folder)
@@ -6960,6 +7024,9 @@ def main(argv: list | None = None) -> int:
                         help="read a USB recording (.pcap/.pcapng) and print a plain "
                              "verdict + command timeline; with no path, finds "
                              "the newest recording next to the tool")
+    parser.add_argument("--steps", default=None, metavar="LIST",
+                        help="handheld session: record only these steps, for example "
+                             "--steps 7,9 (to repeat steps of an earlier session)")
     parser.add_argument("--rehearse", action="store_true",
                         help="walk through the i1iO recording steps without recording "
                              "anything, to see them before the real recording")
@@ -7106,7 +7173,10 @@ def main(argv: list | None = None) -> int:
             print("  through the start of the session: it shows what this computer offers")
             print("  for a recording and says what is missing. For the recording itself,")
             print("  the instrument has to be plugged in.")
-        outcome = instrument_session_step(ids, direct=True)
+        only = None
+        if args.steps:
+            only = parse_step_numbers(args.steps, 99)
+        outcome = instrument_session_step(ids, direct=True, only=only)
         return finish_report(args, system, instrument=True, outcome=outcome)
 
     print("-" * 68)
@@ -7241,7 +7311,7 @@ def what_to_do_question(sug: dict, known: bool, here: list, drivers: dict) -> li
 
 def choose_what_to_do(args, summary: str) -> tuple:
     """(choice, summary). The command line options decide without asking."""
-    if args.instrument:
+    if args.instrument or isinstance(getattr(args, "steps", None), str):
         return 2, summary
     if args.io or args.annotate or args.skip_annotate:
         return 1, summary
