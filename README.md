@@ -600,7 +600,13 @@ nothing and asks you to repeat the step.
 There is no decoder for the i1iSis: its protocol is not known. A plain
 recording given to `--analyze` is read as an i1iSis recording when it shows an
 i1iSis and no instrument the tool has a decoder for (an i1Pro, ColorMunki,
-i1Studio or i1iO table); otherwise it is read as before 1.6. `--analyze`
+i1Studio or i1iO table); otherwise it is read as before 1.6. (Known limit: when
+two plain files given to `--analyze` together hold devices at the same USB
+address, for example an i1Pro 2 in one file and an i1iSis in the other, the
+analysis can be named after the wrong instrument family, and what the program
+sent to the other instrument can then appear among the lines sent to the
+i1iSis. The devices' answers stay hidden. Analysing one recording set, such as
+one session folder, at a time avoids it; a later version fixes it.) `--analyze`
 (and `analysis.txt` in the zip) lists each step's traffic, puts the steps side
 by side (how long, how many bytes each way), says whether the i1iSis seems to
 talk through a USB-to-serial chip like the i1iO table does, and, if the
@@ -621,7 +627,9 @@ It fails if the tool opens a device, writes outside its own folders, or starts
 a program other than the ones it names, each command line with the arguments
 the tool really builds (each PowerShell command is compared with the exact
 scripts the tool holds). A check of the source bans those functions outright
-and allows `ctypes` only for the Windows calls the tool names. A test cannot
+(and `_ctypes`, `dlsym`, `CFUNCTYPE`, `ctypes.CDLL`, `pythonapi`,
+`multiprocessing` and `_posixsubprocess`) and allows `ctypes` only through
+Windows' kernel32 and shell32, for the Windows calls the tool names. A test cannot
 prove that nothing could slip through some other way, which is why the code is
 kept plain to read.
 

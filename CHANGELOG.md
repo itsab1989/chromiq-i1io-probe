@@ -41,13 +41,24 @@ The i1iSis chart readers (i1iSis, i1iSis XL, i1iSis 2, i1iSis 2 XL).
   writes outside its own folders, or starts a program other than the ones
   it names, each command line with the arguments the tool really builds
   (each PowerShell command is compared with the exact scripts the tool
-  holds). Sixteen deliberately broken copies of the tool are run through
+  holds). Eighteen deliberately broken copies of the tool are run through
   it, and every one is caught. A check of the source bans those functions
-  and allows `ctypes` only for the Windows calls the tool names. A test
+  (and `_ctypes`, `dlsym`, `CFUNCTYPE`, `ctypes.CDLL`, `pythonapi`,
+  `multiprocessing` and `_posixsubprocess`) and allows `ctypes` only
+  through Windows' kernel32 and shell32, for the Windows calls the tool
+  names. A test
   cannot prove that nothing could ever slip through another way; the
   tool's code is plain to read for that reason.
 - **Not yet tried with a real i1iSis.** Everything above was tested with
   invented recordings only.
+- **Known limits:** when two plain files given to `--analyze` together
+  hold devices at the same USB address (for example an i1Pro 2 in one
+  file and an i1iSis in the other), the analysis can be named after the
+  wrong instrument family, and what the program sent to the other
+  instrument can then appear among the lines sent to the i1iSis. The
+  devices' answers stay hidden, and the copies to send are not affected.
+  Analysing one recording set (one session folder) at a time avoids it; a
+  later version fixes it.
 
 An independent review before the release found, and this release fixes:
 
@@ -94,7 +105,8 @@ A second review found, and this release fixes:
 - `--analyze` reads plain recordings as an i1iSis recording only when they
   show an i1iSis and no instrument with a decoder (third review: a monitor
   calibrator beside the i1iSis no longer turns the analysis into a mix of
-  both; the family and the devices listed now come from one decision).
+  both; the family and the devices listed now come from one decision,
+  with the known limit for several plain files named below).
 - An i1iSis step where the i1iSis has no USB description says NOTHING KEPT
   with the unplug-and-plug-back hint, also when another X-Rite device is
   described.

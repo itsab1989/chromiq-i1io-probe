@@ -256,12 +256,21 @@ jobs:
               usual ways of opening files and starting programs (`open`,
               `io.open`, `os.open`, `pathlib`, `subprocess`, `os.system`,
               `os.popen`, `os.posix_spawn`, `os.spawn*`, `os.exec*`,
-              `os.fork`, `os.forkpty`, the `pty` module, and `ctypes`). It
-              fails if the tool opens a device, writes outside its folders,
-              or starts a program other than the ones it names with the
-              arguments it really builds (PowerShell: the exact scripts);
-              sixteen deliberately broken copies are all caught. A test
-              cannot prove that nothing could slip through some other way.
+              `os.fork`, `os.forkpty`, the `pty` module, `multiprocessing`,
+              and `ctypes`, which the tool may use only through Windows'
+              kernel32 and shell32). It fails if the tool opens a device,
+              writes outside its folders, or starts a program other than the
+              ones it names with the arguments it really builds
+              (PowerShell: the exact scripts); eighteen deliberately broken
+              copies are all caught. A test cannot prove that nothing could
+              slip through some other way.
+            - **Known limit:** two plain files given to `--analyze`
+              together that hold devices at the same USB address can be
+              named after the wrong instrument family, and what the program
+              sent to the other instrument can then appear among the lines
+              sent to the i1iSis (the devices' answers stay hidden; the
+              copies to send are not affected). Analyse one session folder
+              at a time; a later version fixes it.
             - An independent review before the release found, and this
               release fixes: a device guessed from i1Pro commands could end
               up in the i1iSis copy when the recording had no USB
