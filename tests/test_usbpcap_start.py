@@ -145,7 +145,7 @@ class TheWindowsSessionReport(Base):
         self.assertIn("RECORDING WITH WIRESHARK BY HAND", screen)
         self.assertIn("did not work (twice)", screen)
         for want in ("THE RECORDER, IN DETAIL", "administrator: yes",
-                     "USBPcapCMD: " + self.exe, "version 1.5.4.0",
+                     "USBPcapCMD: " + probe.scrub(self.exe), "version 1.5.4.0",
                      "\\\\.\\USBPcap2 (USBPcap2)  <-- recorded", "device 3: [3] i1Pro3",
                      "\\\\.\\USBPcap1 (USBPcap1)", "device 1: [1] USB Composite Device",
                      "the instrument's name was found",
@@ -154,6 +154,8 @@ class TheWindowsSessionReport(Base):
                      "retry (simpler options)", "exit code 0"):
             self.assertIn(want, report, want)
         self.assertNotIn("\\\\.\\USBPcap1 (USBPcap1)  <-- recorded", report)
+        # the report shows paths with the user's folder hidden, on every platform
+        self.assertNotIn(os.path.expanduser("~"), report)
         self.assertNotIn("were kept in the -FULL-do-not-send folder", report)
 
     def test_the_way_by_hand_runs_the_steps_without_a_recorder(self):
