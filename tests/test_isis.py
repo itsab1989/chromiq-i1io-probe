@@ -754,13 +754,13 @@ class DeviceWatch:
         text = os.fspath(path)
         if isinstance(text, bytes):
             text = text.decode("utf-8", "replace")
-        real = os.path.realpath(text)
         self.opened += 1
+        if from_subprocess and text == os.devnull:
+            return    # subprocess opens /dev/null (Windows: nul) for unused input
+        real = os.path.realpath(text)
         device = (real.startswith("/dev/") or text.startswith("/dev/")
                   or text.startswith("\\\\.\\") or text.startswith("//./"))
         if device:
-            if from_subprocess and text == os.devnull:
-                return             # subprocess opens /dev/null for unused input
             self._refuse(f"opened a device: {text}")
         if writing and not real.startswith(self.base):
             self._refuse(f"wrote outside its folders: {text}")
