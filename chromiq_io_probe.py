@@ -129,6 +129,17 @@ OTHER_INSTRUMENT_IDS = frozenset({
 })
 
 
+# 1.6.2: the X-Rite monitor calibrators (ArgyllCMS 3.5.0 insttypes.c:439-495:
+# i1 Display 2, Huey, HueyL, i1Display Pro / ColorMunki Display, ColorMunki
+# Smile, DTP92, DTP94; i1Display 3L from ArgyllCMS's usb/55-Argyll.rules).
+# No session records one, so no copy keeps one.
+CALIBRATOR_IDS = frozenset({
+    (0x0971, 0x2003), (0x0971, 0x2005), (0x0765, 0x5001), (0x0765, 0x5010),
+    (0x0765, 0x5020), (0x0765, 0x6003), (0x0765, 0x600A), (0x0765, 0xD092),
+    (0x0765, 0xD094),
+})
+
+
 def instrument_selection(devices: dict, profile: str | None = None,
                          undescribed: bool = False) -> tuple:
     """1.6: which devices of a recording an instrument-only copy keeps.
@@ -153,8 +164,12 @@ def instrument_selection(devices: dict, profile: str | None = None,
     the same bus must keep the table). A plain file in --analyze becomes
     "isis" only through plain_file_profile()."""
     if profile != "isis":
+        # 1.6.2: never a monitor calibrator (an i1Display beside an i1Pro is
+        # common, and it is not the instrument being recorded).
         return ([k for k, v in devices.items()
-                 if v.get("vid") in XRITE_VIDS or (not v.get("vid") and v.get("guess_family"))],
+                 if (v.get("vid") in XRITE_VIDS
+                     and (v["vid"], v.get("pid")) not in CALIBRATOR_IDS)
+                 or (not v.get("vid") and v.get("guess_family"))],
                 "xrite")
     isis = [k for k, v in devices.items() if (v.get("vid"), v.get("pid")) in ISIS_IDS]
     if isis:
@@ -3369,11 +3384,13 @@ def xrite_devices(devices: dict, profile: str | None = None) -> list:
 # of the i1iO table (bulk 0x81 in, 0x02 out).
 FAMILY_ENDPOINTS = {
     "i1pro2": {0x01: None, 0x82: "bulk", 0x84: "interrupt", 0x03: "bulk", 0x85: "bulk"},
-    "i1pro": {0x01: None, 0x82: None, 0x84: None, 0x03: None},
-    "i1pro3": {0x81: None, 0x83: None, 0x84: None, 0x02: None},
-    "munki": {0x81: None, 0x83: None},
+    "i1pro": {0x01: None, 0x82: "bulk", 0x84: "interrupt", 0x03: None},
+    "i1pro3": {0x81: "bulk", 0x83: "interrupt", 0x84: "bulk", 0x02: "bulk"},
+    "munki": {0x81: "bulk", 0x83: "interrupt"},
     "io": {0x81: "bulk", 0x02: "bulk"},
 }
+# None above: bulk or interrupt, never isochronous (no instrument here uses
+# isochronous transfers; audio and video devices do).
 
 _DESC_TYPES = {0: "control", 1: "isochronous", 2: "bulk", 3: "interrupt"}
 _EP_LINE_RE = re.compile(r"endpoint 0x([0-9a-f]{2}) \((?:IN|OUT)\), (\w+),")
@@ -3381,12 +3398,12 @@ _IF_LINE_RE = re.compile(r"^interface (\d+) alt \d+: \d+ endpoints, class (\d+)"
 
 # What a dropped transfer looked like, in the words the checks print.
 LEFT_OUT_KINDS = {
-    "storage": "a USB disk or memory stick",
-    "hid": "a keyboard, mouse or other input device",
-    "hub": "a USB hub",
+    "storage": "traffic of a USB disk or memory stick",
+    "hid": "traffic of a keyboard, mouse or other input device",
+    "hub": "traffic of a USB hub",
     "description": "another device's USB description",
-    "endpoint": "an endpoint the instrument does not have",
-    "owner": "a time when that address belonged to another device",
+    "endpoint": "traffic on an endpoint the instrument does not have",
+    "owner": "traffic from a time when that address belonged to another device",
     "unattributed": "traffic that could not be attributed with certainty",
 }
 
@@ -3699,7 +3716,9 @@ def attribute_records(linktype: int, recs, profile: str | None = None,
             else:
                 mark(ri, "unattributed")
             continue
-        if ep not in eps or (kind != "info" and eps[ep] is not None and eps[ep] != kind):
+        want = eps.get(ep)
+        if ep not in eps or (kind != "info" and (
+                kind != want if want is not None else kind not in ("bulk", "interrupt"))):
             mark(ri, "endpoint")
             continue
         keep[ri] = True
@@ -3712,6 +3731,24 @@ def attribute_records(linktype: int, recs, profile: str | None = None,
         return seg_of[ri]
 
     mine = [ev for ev in events if seg_for_event(ev) in wanted]
+    # A control record that belongs to no request the recording shows (a
+    # transfer already running when the recording started) cannot be
+    # checked, so it is not kept when it carries data. (macOS: the IDs in
+    # its header already say whose it is.)
+    in_control = {ri for ev in events if ev["kind"] == "control" for ri in ev["_ri"]}
+    for ri, f in enumerate(fields):
+        if darwin:
+            break
+        if f and keep[ri] and f[2] == "control" and f[3] and ri not in in_control:
+            keep[ri] = False
+            mark(ri, "unattributed")
+    # The instrument's own string descriptions: those its device description
+    # names (maker, product, serial) and the language list (index 0).
+    own_strings: dict = {}
+    for ev in mine:
+        if (ev["kind"] == "control" and ev["rt"] == 0x80 and ev["req"] == 6
+                and ev["wValue"] >> 8 == 1 and len(ev["in"]) >= 17 and ev["in"][1] == 1):
+            own_strings.setdefault(seg_for_event(ev), {0}).update(ev["in"][14:17])
     bot_ids, bot_keys = _bot_drops(
         mine, {(ev["bus"], ev["dev"]) for ev in mine})
     conflict = set()                    # owners with another device's traffic in them
@@ -3761,6 +3798,10 @@ def attribute_records(linktype: int, recs, profile: str | None = None,
         if kind is None and s in conflict and ev["kind"] == "control" \
                 and ev["req"] == 6 and ev["rt"] & 0x80 and ev["wValue"] >> 8 not in (1, 2):
             kind = "unattributed"           # a string or other description: whose?
+        if kind is None and ev["kind"] == "control" and ev["rt"] == 0x80 \
+                and ev["req"] == 6 and ev["wValue"] >> 8 == 3 and s in own_strings \
+                and (ev["wValue"] & 0xFF) not in own_strings[s]:
+            kind = "unattributed"           # a string the instrument does not name
         if kind:
             for ri in ev["_ri"]:
                 keep[ri] = False
@@ -3806,8 +3847,8 @@ def left_out_text(left: dict) -> str:
     kinds = [LEFT_OUT_KINDS.get(k, k) for k, _v in sorted(left.items(), key=lambda kv: -kv[1])]
     word = "transfer" if total == 1 else "transfers"
     return (f"Some traffic could not be attributed to the instrument and was left out: "
-            f"{total} {word} at the instrument's USB address that looked like "
-            + "; ".join(kinds) + ". Nothing of it is in any file the tool writes.")
+            f"{total} {word} at the instrument's USB address ("
+            + ", ".join(kinds) + "). None of it is in the files meant to be sent.")
 
 
 def kept_records(linktype: int, recs, profile: str | None = None,
@@ -5255,7 +5296,7 @@ def summarize_session(paths: list) -> str:
                 out.append("    " + _wrap(
                     f"NOTE: the slow swipe ({sm:.2f} s) was not clearly slower than the "
                     f"normal one ({ref:.2f} s). If you can, please repeat the slow step and "
-                    "take about 5 seconds for the strip.", 62, "    "))
+                    "take about twice as long as the normal scan.", 62, "    "))
             if fm is not None and ref and fm > 0.8 * ref:
                 out.append("    " + _wrap(
                     f"NOTE: the fast swipe ({fm:.2f} s) was not clearly faster than the "
@@ -5272,8 +5313,8 @@ def summarize_session(paths: list) -> str:
         elif fpm and spm and spm < 1.5 * fpm:
             out.append(f"    NOTE: a slow swipe took about as many readings as a fast one "
                        f"({spm:.0f} against {fpm:.0f} per swipe), so it was most likely not "
-                       "slower. Please repeat the slow step, taking about 5 seconds for the "
-                       "strip.")
+                       "slower. Please repeat the slow step, taking about twice as long as "
+                       "the normal scan.")
         out.append("")
 
     out.append("  THE LIGHTS' LANGUAGE (light commands per step, in order):")
@@ -6339,17 +6380,18 @@ SESSION_STEPS = [
      "before": """\
   Before you press Enter:
     1. Put the instrument at the start of the same strip.
-    2. Think of how long your normal scan in step 3 took (most people take
-       about 2 seconds).""",
+    2. Think of how long your normal scan in step 3 took (for most people
+       about 2 to 3 seconds).""",
      "during": """\
   When the recording runs:
     1. Press the button on the instrument and keep it pressed.
     2. Wait until the instrument or the program signals that it is ready
        (a sound, a light or a message; about one second).
     3. Move along the strip slowly and steadily, taking about twice as
-       long as in the normal scan of step 3 (about 5 seconds).
-    4. Count the seconds while you move: one thousand, two thousand, three
-       thousand, four thousand, five thousand.
+       long as in the normal scan of step 3 (for most people 4 to 6
+       seconds).
+    4. Count the seconds while you move: one thousand, two thousand, and
+       so on.
     5. Let go of the button at the end of the strip.
     6. Wait until the program accepts or refuses the strip.""",
      "lights": "What did the lights do this time?"},
@@ -8394,7 +8436,7 @@ def left_out_kinds_words(left: dict) -> str:
     parts = []
     for kind, count in sorted(left.items(), key=lambda kv: -kv[1]):
         word = "transfer" if count == 1 else "transfers"
-        parts.append(f"{count:,} {word} that looked like {LEFT_OUT_KINDS.get(kind, kind)}")
+        parts.append(f"{count:,} {word}: {LEFT_OUT_KINDS.get(kind, kind)}")
     return "; ".join(parts)
 
 
@@ -8450,10 +8492,15 @@ def clean_paths(paths: list) -> tuple:
                             continue
                         sub = parts[0] if len(parts) == 2 else ""
                         target_dir = os.path.join(src_root, sub) if sub else src_root
-                        os.makedirs(target_dir, exist_ok=True)
-                        with zf.open(info) as fh, \
-                                open(os.path.join(target_dir, name), "wb") as out:
-                            out.write(fh.read())
+                        try:
+                            os.makedirs(target_dir, exist_ok=True)
+                            with zf.open(info) as fh, \
+                                    open(os.path.join(target_dir, name), "wb") as out:
+                                shutil.copyfileobj(fh, out)
+                        except OSError:
+                            lines.append(f"    {name}: could not be read from the zip, "
+                                         "left out")
+                            continue
                         if sub:
                             folders.add(sub)
                         elif name.lower().endswith(".txt"):

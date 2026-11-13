@@ -236,7 +236,7 @@ class Texts(unittest.TestCase):
     def test_idle_and_slow_steps_say_it_plainly(self):
         steps = {s["key"]: s for s in probe.steps_for("i1pro3")}
         self.assertIn("Do NOT measure or scan", steps["idle"]["during"])
-        self.assertIn("about 5 seconds", " ".join(steps["scan-slow"]["during"].split()))
+        self.assertIn("4 to 6 seconds", " ".join(steps["scan-slow"]["during"].split()))
 
     def test_i1pro3_light_names(self):
         text = probe.decode_i1pro3_led(bytes.fromhex("061402120500"))["text"]

@@ -9,7 +9,9 @@ older.**
   shared the instrument's USB hub in the files meant to hold only the
   instrument's traffic, and in `analysis.txt` and the report. A real Windows
   recording held a USB disk's traffic this way, including the disk's model
-  name, its serial number and its first sectors. The reason: USBPcap writes
+  name, its serial number and its first sectors. The most likely reason
+  (it cannot be proven for that file, whose full recording no longer
+  exists): USBPcap writes
   into each packet a device address it remembered earlier, and after Windows
   gives a device a new address another device can own the remembered one
   (USBPcap issue 105); the tool kept everything at the instrument's address.
@@ -23,7 +25,8 @@ older.**
   instrument at that moment, it travels on one of the instrument's own
   endpoints (of the right kind), and it is not another kind of device's
   traffic (disk commands, their data and status; disk, keyboard, mouse and
-  hub requests). Whatever cannot be attributed with certainty is left out,
+  hub requests). No session keeps a monitor calibrator (an i1Display, for
+  example) any more. Whatever cannot be attributed with certainty is left out,
   and the step's check, `--analyze` and `--clean` say how much and what kind
   of device it looked like, never what it was. The analysis reads only what
   is kept, so it can no longer print another device's bytes or find
@@ -51,8 +54,12 @@ older.**
   address, replugs, the i1Pro 3, the i1iSis and the i1iO table beside a
   disk, for Windows, macOS and Linux; every file the tool writes is scanned
   for marker strings planted in the other device's traffic. What is kept
-  from clean recordings is unchanged against the tagged 1.5.5, except where
-  synthetic data sat on an endpoint the instrument does not have.
+  from clean recordings is unchanged against the tagged 1.5.5, except a
+  monitor calibrator, and synthetic data on an endpoint the instrument does
+  not have. An independent review attacked the first draft; its findings
+  (a monitor calibrator still kept, transfer types not checked without a
+  USB description, control data without its request, another device's
+  string description) are fixed and tested.
 
 ## v1.6.1
 

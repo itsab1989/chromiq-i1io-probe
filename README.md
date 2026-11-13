@@ -394,7 +394,7 @@ measuring program and one printed test chart.
 5. The same strip again, clearly faster (press the button, wait for the
    ready signal, then move).
 6. The same strip again, slowly: about twice as long as the normal scan in
-   step 3 (about 5 seconds, counted).
+   step 3 (for most people 4 to 6 seconds, counted).
 7. Let one scan fail on purpose, for example by lifting the instrument
    halfway (skip it if you would rather not).
 8. Read one single patch, if the program offers it.
@@ -780,7 +780,9 @@ address it writes into each packet is one it remembered when the device was
 started, and after Windows gives a device a new address (for example after
 waking from hibernation) another device can by then own the remembered one
 (USBPcap's own issue 105). The tool used to keep everything at the
-instrument's address, so it kept the disk's traffic too. A Mac recording
+instrument's address, so it kept the disk's traffic too. (That is the most
+likely reason for the recording we saw; the full recording no longer exists,
+so it cannot be proven for that one file.) A Mac recording
 names the device in every packet, and Linux never gives one address to two
 devices at the same time, but an address can come back after a replug.
 
@@ -799,10 +801,12 @@ Since 1.6.2 a packet is kept only when all of this holds:
 Whatever cannot be attributed with certainty is left out, and the step's
 check says so ("some traffic could not be attributed to the instrument and
 was left out"), with how much and what kind of device it looked like, never
-what it was. The analysis reads only what is kept. One limit remains: a
-device that sends nothing recognisable on exactly the instrument's endpoint
-numbers cannot be told apart. If you are unsure, unplug other USB devices
-while you record.
+what it was. The analysis reads only what is kept. Since 1.6.2 no session
+keeps a monitor calibrator (such as an i1Display) either. One limit remains:
+a device that is wrongly labelled with the instrument's address and sends
+nothing recognisable, either on exactly the instrument's endpoint numbers or
+as vendor requests on endpoint 0, cannot be told apart. If you are unsure,
+unplug other USB devices while you record.
 
 ---
 

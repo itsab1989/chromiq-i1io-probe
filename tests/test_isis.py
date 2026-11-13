@@ -89,9 +89,11 @@ class WhichDevicesAreKept(unittest.TestCase):
         self.assertFalse(probe.keeps_device(0x0971, 0x2000, "isis"))     # i1Pro family
         self.assertTrue(probe.keeps_device(0x0971, 0x2099, "isis"))      # not known: kept
         self.assertFalse(probe.keeps_device(0x046D, 0xC31C, "isis"))     # a keyboard
-        # The other sessions keep every X-Rite device, as before 1.6.
-        for profile in (None, "i1pro2", "i1pro3", "munki", "generic"):
-            self.assertTrue(probe.keeps_device(0x0765, 0x5020, profile))
+        # The other sessions keep every X-Rite device, as before 1.6, except
+        # (1.6.2) a monitor calibrator, which no session records.
+        for profile in (None, "i1pro2", "i1pro3", "munki", "generic", "io"):
+            self.assertFalse(probe.keeps_device(0x0765, 0x5020, profile))
+            self.assertTrue(probe.keeps_device(0x0971, 0x2099, profile))
         self.assertNotIn(ISIS, probe.OTHER_INSTRUMENT_IDS)
 
 
@@ -116,14 +118,16 @@ class Filter(test_instrument.TempDirCase):
     def test_other_sessions_keep_every_xrite_device_as_before(self):
         dst = os.path.join(self.dir, "out.pcap")
         self.assertTrue(probe.filter_xrite_capture(self.files["page-single"], dst, "i1pro2"))
-        self.assertEqual(self.keys_in(dst), {(1, synth.ISIS), (1, synth.DISPLAY)})
+        # 1.6.2: every X-Rite device except a monitor calibrator
+        self.assertEqual(self.keys_in(dst), {(1, synth.ISIS)})
 
     def test_check_counts_only_the_isis(self):
         both = probe.check_capture(self.files["page-single"], "i1pro2")
         mine = probe.check_capture(self.files["page-single"], "isis")
         self.assertEqual(mine["code"], "ok")
         self.assertEqual(mine["kept"], "isis")
-        self.assertLess(mine["xrite_packets"], both["xrite_packets"])
+        # 1.6.2: no session keeps the i1Display beside it any more
+        self.assertEqual(mine["xrite_packets"], both["xrite_packets"])
         # Without a session type the check is exactly 1.5.5's (second review).
         self.assertEqual(probe.check_capture(self.files["page-single"])["xrite_packets"],
                          both["xrite_packets"])
@@ -141,8 +145,8 @@ class Filter(test_instrument.TempDirCase):
             blob = fh.read()
         self.assertNotIn(b"DISPLAYSERIAL99", blob)
         self.assertIn(b"INVENTED-HELLO", blob)
-        # A handheld session: the i1Display stays, the keyboard never.
-        self.assertEqual(probe.filter_xrite_capture(src, dst, "i1pro2"), 5)
+        # A handheld session: since 1.6.2 neither the i1Display nor the keyboard.
+        self.assertEqual(probe.filter_xrite_capture(src, dst, "i1pro2"), 4)
 
     def test_a_step_with_only_the_usb_description_is_empty(self):
         w = synth.UsbPcapWriter()

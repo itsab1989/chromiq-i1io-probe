@@ -323,7 +323,32 @@ def usbmon_guessed_disk():
     return u
 
 
+def usbpcap_review_attacks():
+    """The independent review's attacks on 1.6.2's first draft: an
+    i1Display beside the i1Pro 2; a ColorMunki found only by its commands
+    with a keyboard's interrupt and an isochronous stream on its endpoint
+    numbers; a control completion without its request; a string the
+    instrument does not name."""
+    w = synth.UsbPcapWriter()
+    w.describe(synth.I1PRO, 0x0971, 0x2000, synth.I1PRO2_ENDPOINTS)
+    w.describe(4, 0x0765, 0x5020, [(0x81, 3), (0x01, 3)])
+    w.bulk_in(4, 0x81, b"\x00" * 8 + MODEL, xfer=synth.XFER_INT)
+    synth.i1pro2_calibration(w, describe=False)
+    # an orphan completion: data stage of a request whose setup is not there
+    w.irp += 1
+    w._rec(w.irp, synth.I1PRO, 0x80, synth.XFER_CTRL, 1, SERIAL, stage=1)   # noqa: SLF001
+    w._rec(w.irp, synth.I1PRO, 0x80, synth.XFER_CTRL, 1, b"", stage=3)      # noqa: SLF001
+    foreign_string(w, synth.I1PRO, index=7)
+    munki = 6
+    for req in (0x87, 0x81, 0x86):
+        w.vendor_in(munki, req, b"\x01\x00")
+    w.bulk_in(munki, 0x81, KEYS, xfer=synth.XFER_INT)
+    w.bulk_in(munki, 0x83, PAYLOAD * 4, xfer=synth.XFER_ISO)
+    return w
+
+
 SCENARIOS = {
+    "usbpcap-review-attacks": usbpcap_review_attacks,
     "usbpcap-disk-stale": usbpcap_disk_stale,
     "usbpcap-i1pro3-disk-same-endpoints": lambda: usbpcap_disk_stale(i1pro3=True),
     "usbpcap-replug": usbpcap_replug,

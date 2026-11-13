@@ -232,7 +232,8 @@ jobs:
               traffic, and in `analysis.txt` and the report. Now a packet is
               kept only when it belongs to the instrument by its address at
               that moment, its endpoint and its content; whatever cannot be
-              attributed is left out, and the tool says so.
+              attributed is left out, and the tool says so. No session keeps
+              a monitor calibrator (such as an i1Display) any more.
             - **What to do:** update; clean old files with
               `--clean SEND-THIS-....zip` (or delete them); if unsure,
               unplug other USB devices while you record. If you already sent

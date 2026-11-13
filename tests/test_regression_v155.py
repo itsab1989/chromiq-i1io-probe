@@ -31,6 +31,7 @@ with open(os.path.join(HERE, "fixtures", "v155-kept.json"), encoding="utf-8") as
 # before 1.6), the i1iO table, and every handheld profile.
 OLD_TYPES = (None, probe.SESSION_TABLE, "i1pro2", "i1pro", "i1pro3", "munki", "generic")
 # Plain files whose only known X-Rite device is an i1iSis: read as i1iSis.
+CALIBRATORS = {"i1Display", "Display3L"}         # labels in regression_recordings
 ISIS_ONLY = {"B-two-isis-keyboard", "M-isis-with-display", "N-mac-isis-with-display"}
 
 
@@ -50,11 +51,20 @@ class SameAsV155(unittest.TestCase):
         self.assertEqual(set(V155["copies"]), set(rr.CASES))
 
     def test_every_old_session_type_keeps_what_v155_kept(self):
+        # 1.6.2: except a monitor calibrator, which no session keeps any more;
+        # where 1.5.5 kept one, the rest is the same and the counts are lower.
         for name, path in self.files.items():
             for profile in OLD_TYPES:
                 with self.subTest(recording=name, session=profile):
-                    self.assertEqual(rr.outcome(probe, path, self.tmp.name, profile),
-                                     V155["copies"][name])
+                    got = rr.outcome(probe, path, self.tmp.name, profile)
+                    want = dict(V155["copies"][name])
+                    if set(want["kept"]) & CALIBRATORS:
+                        want["kept"] = [k for k in want["kept"] if k not in CALIBRATORS]
+                        self.assertLess(got["records"], want["records"])
+                        for key in ("records", "xrite_packets"):
+                            got.pop(key)
+                            want.pop(key)
+                    self.assertEqual(got, want)
 
     def test_analyze_reads_plain_files_as_v155(self):
         for name, path in self.files.items():
