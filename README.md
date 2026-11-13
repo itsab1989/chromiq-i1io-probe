@@ -538,6 +538,8 @@ Useful options:
 - `--capture-setup` (macOS): say whether this Mac can record USB traffic, and
   how, then exit. Changes nothing.
 - `--i1pro` (or `--instrument`): go straight to the handheld-instrument session.
+- `--steps 7,9`: in the handheld session, record only these steps (to repeat
+  steps of an earlier session; 1.5.5).
 - `--rehearse`: walk through the i1iO recording steps without recording or
   saving anything (1.5.4).
 - `--pause` / `--no-pause`: always, or never, end with "Press Enter to close

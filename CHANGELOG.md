@@ -1,5 +1,44 @@
 # Changelog
 
+## v1.5.5
+
+Fixes from the first real Windows recording session. Version 1.5.4 made a
+recording on Windows possible for the first time: a tester recorded seven of
+nine steps with an i1Pro 3. Thank you! His session showed what still went
+wrong:
+
+- **The Enter key.** After each step the tool went quiet for a few seconds
+  while it stopped and checked the recording. Enter presses made during that
+  time waited in the window and then answered the next questions, so two
+  steps started and stopped at once and recorded nothing. Now keys pressed
+  while the tool is busy are thrown away before every question, the tool
+  says "Key received. Stopping the recording and checking it, please wait",
+  a step stops only with  e  and Enter (a stray Enter cannot end it), and a
+  step shorter than 2 seconds asks whether that was on purpose.
+- **No more drawing over what you type.** 1.5.4 rewrote a status line every
+  second on the line where you type, so typed keys seemed to vanish. The
+  running count is now in the window's title, with a short new line every
+  20 seconds.
+- **Empty steps are called empty.** A step that holds only the USB
+  description is "EMPTY: nothing was recorded in this step, please repeat
+  it", never "OK: real data recorded", in the check after each step, the
+  final list and `--analyze`. Each handheld step now gets a check like the
+  i1iO table steps: "this step recorded N requests and data transfers of the
+  instrument: good". Empty steps no longer count as, for example, "a no-ruler
+  control".
+- **Repeat only some steps:** `--steps 7,9` (or the question at the start,
+  shown when an earlier session folder lies next to the tool) records just
+  those steps, with their usual numbers. The one file to send then holds
+  only them and the report.
+- **Clearer steps:** the idle step says plainly not to measure anything; the
+  slow swipe says "take 3 to 5 seconds for the whole strip"; the dual-scan
+  step asks which setting was on (single or dual, M0, M1 or M2). The
+  analysis notes when a "slow" swipe was not slower than the fast one.
+- **i1Pro 3 lights:** the code 0x06 is a red pulse (likely, from the real
+  recording; 1.5.4 called it "off"); 0x01 is marked as unknown. 0x3A (set
+  tint multiplier) is used by ArgyllCMS after all, and is no longer listed
+  as a command the open driver never sends.
+
 ## v1.5.4
 
 Aimed at the next recording of an i1iO table. The first real recording of an

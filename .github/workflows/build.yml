@@ -202,6 +202,28 @@ jobs:
             recording only listens (on Windows through the free USBPcap, which
             you install yourself if you want to record).
 
+            ### What's new in 1.5.5
+
+            **Fixes from the first real Windows recording.** Version 1.5.4
+            made a recording on Windows possible for the first time: a tester
+            recorded seven of nine steps with an i1Pro 3. Thank you! What his
+            session showed, and what 1.5.5 changes:
+
+            - **The Enter key:** keys pressed while the tool is busy are now
+              thrown away before every question (in 1.5.4 they answered the
+              next questions, so two steps started and stopped at once). The
+              tool says when it has your key and asks you to wait. A step
+              stops only with `e` and Enter, and a step shorter than 2
+              seconds asks whether that was on purpose.
+            - **Nothing is drawn over what you type any more;** the running
+              count is in the window's title.
+            - **Empty steps are called EMPTY** (please repeat), never "OK",
+              and every handheld step gets a short check right after it.
+            - **Repeat only some steps:** `--steps 7,9`, or the question at
+              the start when an earlier session is next to the tool.
+            - Clearer idle, slow-swipe and dual-scan steps; the i1Pro 3's red
+              light is named as red (likely).
+
             ### What's new in 1.5.4
 
             **Aimed at the next recording of an i1iO table.** The first real
