@@ -497,6 +497,11 @@ i1iSis 2 XL, a recording of a few pages helps us learn the basics. As always,
 **nothing is promised**: whether ChromIQ can ever use an i1iSis is a separate
 question, and the answer may be no.
 
+**Please note: this session has not been tried with a real i1iSis yet.** We
+built and tested it with made-up recordings only. So if something in it looks odd or does not fit what your
+i1iSis does, that is not your fault: please tell us, it helps just as much as
+a recording.
+
 The tool offers the session when it sees an i1iSis plugged in (choice 2 at the
 question "What would you like to do?"). You can also start it directly with
 `--isis`. It works exactly like the handheld session above: the same recorders
@@ -600,13 +605,11 @@ nothing and asks you to repeat the step.
 There is no decoder for the i1iSis: its protocol is not known. A plain
 recording given to `--analyze` is read as an i1iSis recording when it shows an
 i1iSis and no instrument the tool has a decoder for (an i1Pro, ColorMunki,
-i1Studio or i1iO table); otherwise it is read as before 1.6. (Known limit: when
-two plain files given to `--analyze` together hold devices at the same USB
-address, for example an i1Pro 2 in one file and an i1iSis in the other, the
-analysis can be named after the wrong instrument family, and what the program
-sent to the other instrument can then appear among the lines sent to the
-i1iSis. The devices' answers stay hidden. Analysing one recording set, such as
-one session folder, at a time avoids it; a later version fixes it.) `--analyze`
+i1Studio or i1iO table); otherwise it is read as before 1.6. When you give
+`--analyze` several plain files that come from different instruments (for
+example an i1Pro 2 recording and an i1iSis recording), it does not mix them:
+it lists which instrument each file shows and asks you to analyse each
+instrument's recordings on their own (since 1.6.1). `--analyze`
 (and `analysis.txt` in the zip) lists each step's traffic, puts the steps side
 by side (how long, how many bytes each way), says whether the i1iSis seems to
 talk through a USB-to-serial chip like the i1iO table does, and, if the
