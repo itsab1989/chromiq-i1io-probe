@@ -559,18 +559,23 @@ the i1iSis off and on during a recording, and the OBC workflow.
 
 ### What is collected
 
-The same as for the handheld session (see above): the USB conversation, which
-includes the i1iSis's **serial number and calibration data**, your notes, and
-the tool's analysis. In addition, for the i1iSis: the **colour values it
-measured from your chart page** (your printer's and paper's colours; they say
-nothing about you) and, if the chart has a barcode, what the barcode holds,
-which may include the chart's name.
+The same as for the handheld session (see above): the USB conversation, your
+notes, and the tool's analysis. The conversation **very likely** includes the
+i1iSis's **serial number and factory calibration data**, as it does for every
+X-Rite instrument we know; for the i1iSis that is not proven yet. In addition,
+for the i1iSis: the **colour values it measured from your chart page** (your
+printer's and paper's colours; they say nothing about you) and, if the chart
+has a barcode, what the barcode holds, which may include the chart's name.
 
-**Only the i1iSis is kept.** The copy that goes into the zip holds the
-i1iSis's traffic and nothing else: not the keyboard, and since 1.6 also no
-other X-Rite instrument the tool knows, such as a monitor calibrator plugged
-in at the same time. (An X-Rite device the tool does not know at all is kept,
-in case an i1iSis model reports an ID nobody has seen yet.)
+**Only the i1iSis is kept.** When a step's recording shows the i1iSis
+(0971:2006), the copy that goes into the zip holds the i1iSis's traffic and
+nothing else: not the keyboard, not a monitor calibrator, no other device at
+all. Only when a step's recording shows **no** i1iSis does the copy keep an
+X-Rite device the tool does not know (in case an i1iSis model reports an ID
+nobody has seen yet), and the tool then says so right after the step. It never
+keeps an X-Rite instrument it knows to be another one. When the recording does
+not show which device is which (no USB description in it), the tool keeps
+nothing and asks you to repeat the step.
 
 ### What the analysis shows
 
@@ -579,10 +584,11 @@ There is no decoder for the i1iSis: its protocol is not known. `--analyze`
 by side (how long, how many bytes each way), says whether the i1iSis seems to
 talk through a USB-to-serial chip like the i1iO table does, and, if the
 program sends readable text, shows the first lines the **program** sent. The
-i1iSis's answers are never shown as text, because they can hold its serial
-number. It ends with a checklist: real traffic, a page measured in single
-scan, a dual-scan page, a page that failed on purpose, and your notes on how
-the page moved.
+i1iSis's answers are never shown in the analysis, only their sizes, because
+they can hold its serial number (the same goes for any X-Rite device the tool
+has no decoder for). It ends with a checklist: real traffic, a page measured
+in single scan, a dual-scan page, a crooked page, a page that failed on
+purpose, and your notes on how the page moved.
 
 **Where the facts come from:** the USB ID 0971:2006 from X-Rite's own i1iSis
 driver file (installed with i1Profiler 3.8.8) and ArgyllCMS's device list; the

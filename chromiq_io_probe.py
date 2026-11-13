@@ -117,28 +117,56 @@ KNOWN_PIDS = {
 # has seen yet), and drops the known others: an i1iSis owner very likely has a
 # monitor calibrator plugged in too, and its traffic and serial number do not
 # belong in the file. Sources: ArgyllCMS 3.5.0 insttypes.c:439-495 and X-Rite's
-# device plug-ins (i1iO 0x2004, i1iO 3 0x30B0, CAPSURE 0x6001).
+# device plug-ins (i1iO 0x2004, i1iO 3 0x30B0, CAPSURE 0x6001), and
+# ArgyllCMS's usb/55-Argyll.rules (i1Display 3L 0x600a).
 ISIS_IDS = ((0x0971, 0x2006),)
 OTHER_INSTRUMENT_IDS = frozenset({
     (0x0971, 0x2000), (0x0971, 0x2001), (0x0971, 0x2003), (0x0971, 0x2004),
     (0x0971, 0x2005), (0x0971, 0x2007),
     (0x0765, 0x5001), (0x0765, 0x5010), (0x0765, 0x5020), (0x0765, 0x6001),
-    (0x0765, 0x6003), (0x0765, 0x6008), (0x0765, 0x6009), (0x0765, 0x30B0),
-    (0x0765, 0xD020), (0x0765, 0xD092), (0x0765, 0xD094),
+    (0x0765, 0x6003), (0x0765, 0x6008), (0x0765, 0x6009), (0x0765, 0x600A),
+    (0x0765, 0x30B0), (0x0765, 0xD020), (0x0765, 0xD092), (0x0765, 0xD094),
 })
 
 
-def keeps_device(vid, pid, profile: str | None = None) -> bool:
-    """1.6: does an instrument-only copy keep this device?
+def instrument_selection(devices: dict, profile: str | None = None) -> tuple:
+    """1.6: which devices of a recording an instrument-only copy keeps.
 
-    Every session: X-Rite vendor IDs only (never a keyboard). An i1iSis
-    session also drops X-Rite devices known to be another instrument. The
-    other sessions keep every X-Rite device, as before 1.6."""
-    if vid not in XRITE_VIDS:
-        return False
-    if profile == "isis" and pid is not None and (vid, pid) in OTHER_INSTRUMENT_IDS:
-        return False
-    return True
+    devices: key -> {"vid", "pid", "guess_family"} (a device_map(), or the
+    IDs of macOS records). Returns (keys, how).
+
+    Every session keeps X-Rite devices only, never a keyboard. The handheld
+    sessions keep every X-Rite device, and a device whose identity the
+    recording does not show but that uses an instrument family's commands
+    (as before 1.6). An i1iSis session (review of 1.6) keeps ONLY the
+    i1iSis (0971:2006) when the recording shows one (how = "isis"); when it
+    shows none, it keeps X-Rite devices the tool does not know, in case an
+    i1iSis model reports an ID nobody has seen yet (how = "unknown"), and
+    never a known other instrument or a device it can only guess at: a guess
+    comes from i1Pro or ColorMunki commands, which is never the i1iSis.
+    A recording without a session (profile None) that shows an i1iSis is
+    read as an i1iSis recording."""
+    if profile is None and any((v.get("vid"), v.get("pid")) in ISIS_IDS
+                               for v in devices.values()):
+        profile = "isis"
+    if profile != "isis":
+        return ([k for k, v in devices.items()
+                 if v.get("vid") in XRITE_VIDS or (not v.get("vid") and v.get("guess_family"))],
+                "xrite")
+    isis = [k for k, v in devices.items() if (v.get("vid"), v.get("pid")) in ISIS_IDS]
+    if isis:
+        return isis, "isis"
+    unknown = [k for k, v in devices.items()
+               if v.get("vid") in XRITE_VIDS and (v["vid"], v.get("pid")) not in OTHER_INSTRUMENT_IDS]
+    return unknown, ("unknown" if unknown else "")
+
+
+def keeps_device(vid, pid, profile: str | None = None) -> bool:
+    """1.6: would a copy keep this one device if it were alone with others of
+    the same kind? Only for simple questions; the copies use
+    instrument_selection(), which also looks at what else is recorded."""
+    keys, _how = instrument_selection({"x": {"vid": vid, "pid": pid}}, profile)
+    return bool(keys)
 
 
 # 1.5: devices under X-Rite's newer vendor ID, named from ArgyllCMS's device
@@ -2523,13 +2551,23 @@ def _darwin_vid(data: bytes):
     return struct.unpack("<H", data[0x24:0x26])[0]
 
 
-def _darwin_keeps(data: bytes, profile: str | None = None) -> bool:
-    """1.6: keeps_device() for one macOS record (vendor and product ID are in
-    every record's header)."""
+def _darwin_ids(data: bytes):
+    """(vendor, product) ID of one macOS record (both are in every record's
+    header), or None."""
     if len(data) < _DARWIN_HDR:
-        return False
-    vid, pid = struct.unpack("<HH", data[0x24:0x28])
-    return keeps_device(vid, pid, profile)
+        return None
+    return struct.unpack("<HH", data[0x24:0x28])
+
+
+def darwin_selection(records, profile: str | None = None) -> tuple:
+    """1.6: instrument_selection() for macOS records: (set of IDs, how)."""
+    devices = {}
+    for data in records:
+        ids = _darwin_ids(data)
+        if ids and (ids[0] or ids[1]):
+            devices[ids] = {"vid": ids[0], "pid": ids[1]}
+    keys, how = instrument_selection(devices, profile)
+    return set(keys), how
 
 
 _EP_TYPES = {0: "control", 1: "isochronous", 2: "bulk", 3: "interrupt"}
@@ -2645,8 +2683,11 @@ def check_capture(path: str, profile: str | None = None) -> dict:
         return {"ok": False, "packets": 0, "xrite_packets": 0, "linktype": None,
                 "code": "unreadable", "verdict": f"not a readable recording: {exc}"}
     identified = True
+    unidentified_isis = False
     if linktype == LINKTYPE_USB_DARWIN:
-        mine_recs = [(ts, d) for ts, d in recs if _darwin_keeps(d, profile)]
+        wanted_ids, how = darwin_selection((d for _ts, d in recs), profile)
+        kept_ids = sorted(wanted_ids)
+        mine_recs = [(ts, d) for ts, d in recs if _darwin_ids(d) in wanted_ids]
         mine = [d for _ts, d in mine_recs]
         xrite = len(mine)
         mine_events = capture_events(linktype, mine_recs)
@@ -2658,13 +2699,23 @@ def check_capture(path: str, profile: str | None = None) -> dict:
         keys = record_device_keys(linktype, recs)
         all_events = capture_events(linktype, recs)
         devices = device_map(all_events)
-        wanted = set(xrite_devices(devices, profile))
+        wanted_keys, how = instrument_selection(devices, profile)
+        wanted = set(wanted_keys)
+        kept_ids = sorted({(devices[k]["vid"], devices[k]["pid"]) for k in wanted
+                           if devices[k].get("vid") is not None})
         if wanted:
             mine = [d for (_ts, d), k in zip(recs, keys) if k in wanted]
             mine_events = [e for e in all_events if (e["bus"], e["dev"]) in wanted]
         elif any(v.get("vid") for v in devices.values()):
             mine = []
             mine_events = []
+        elif profile == "isis":
+            # 1.6 review: no USB description at all, so the i1iSis cannot be
+            # told from any other device. Nothing is kept, and the check says
+            # so instead of "OK" over the keyboard's traffic.
+            mine = []
+            mine_events = []
+            unidentified_isis = bool(recs)
         else:
             mine = [d for _ts, d in recs]
             mine_events = all_events
@@ -2686,6 +2737,11 @@ def check_capture(path: str, profile: str | None = None) -> dict:
         nonzero += len(payload) - payload.count(0)
     if not recs:
         code, verdict = "empty", "EMPTY: nothing at all was recorded on this bus."
+    elif unidentified_isis:
+        code, verdict = "unidentified", (
+            "NOTHING KEPT: this recording does not say which device is the i1iSis "
+            "(it holds no USB description), so the tool kept nothing rather than "
+            "risk keeping another device.")
     elif not xrite and (linktype == LINKTYPE_USB_DARWIN or identified):
         code, verdict = "no-xrite", ("No X-Rite traffic on this bus. That is normal for "
                                      "the buses the instrument is not plugged into.")
@@ -2710,7 +2766,8 @@ def check_capture(path: str, profile: str | None = None) -> dict:
     return {"ok": code == "ok", "packets": len(recs), "xrite_packets": xrite,
             "linktype": linktype, "code": code, "verdict": verdict,
             "payload_bytes": payload_bytes, "nonzero_bytes": nonzero,
-            "identified": identified, "activity": activity}
+            "identified": identified, "activity": activity,
+            "kept": how if xrite else "", "kept_ids": kept_ids if xrite else []}
 
 
 def record_device_keys(linktype: int, recs) -> list:
@@ -2762,7 +2819,8 @@ def filter_xrite_capture(src: str, dst: str, profile: str | None = None) -> int:
     except (OSError, ValueError):
         return 0
     if linktype in (LINKTYPE_USBPCAP, LINKTYPE_USB_LINUX, LINKTYPE_USB_LINUX_MMAPPED):
-        wanted = set(xrite_devices(device_map(capture_events(linktype, recs)), profile))
+        wanted = set(instrument_selection(device_map(capture_events(linktype, recs)),
+                                          profile)[0])
         if not wanted:
             return 0
         keys = record_device_keys(linktype, recs)
@@ -2786,18 +2844,22 @@ def _filter_darwin_capture(src: str, dst: str, profile: str | None = None) -> in
     endian = "<" if blob[:4] in (b"\xd4\xc3\xb2\xa1", b"\x4d\x3c\xb2\xa1") else ">"
     if struct.unpack(endian + "I", blob[20:24])[0] != LINKTYPE_USB_DARWIN:
         return 0
-    out = [blob[:24]]
-    kept = 0
+    spans = []
     off = 24
     while off + 16 <= len(blob):
         incl = struct.unpack(endian + "I", blob[off + 8:off + 12])[0]
         rec_end = off + 16 + incl
         if rec_end > len(blob):
             break
-        if _darwin_keeps(blob[off + 16:rec_end], profile):
-            out.append(blob[off:rec_end])
-            kept += 1
+        spans.append((off, rec_end))
         off = rec_end
+    wanted, _how = darwin_selection((blob[a + 16:b] for a, b in spans), profile)
+    out = [blob[:24]]
+    kept = 0
+    for a, b in spans:
+        if _darwin_ids(blob[a + 16:b]) in wanted:
+            out.append(blob[a:b])
+            kept += 1
     if not kept:
         return 0
     try:
@@ -3147,10 +3209,9 @@ def device_map(events) -> dict:
 
 
 def xrite_devices(devices: dict, profile: str | None = None) -> list:
-    """The X-Rite devices of a device map (see keeps_device for profile)."""
-    return [k for k, v in devices.items()
-            if (v.get("vid") in XRITE_VIDS and keeps_device(v["vid"], v.get("pid"), profile))
-            or (not v.get("vid") and v.get("guess_family"))]
+    """The devices of a device map an instrument-only copy keeps
+    (instrument_selection)."""
+    return instrument_selection(devices, profile)[0]
 
 
 # --------------------------------------------------------------------------
@@ -3775,6 +3836,10 @@ def analyze_step(events: list, family: str = "i1pro2") -> dict:
     context = None
     pending_led = False
     current = None
+    # 1.6 review: for a device without a decoder nobody knows which answers
+    # hold its serial number or calibration, so its answers are never shown,
+    # only their sizes (the recording itself has them).
+    hide_answers = family in NO_OPEN_DRIVER
     for ev in events:
         rel = ev["t"] - t0
         if ev["kind"] == "control":
@@ -3792,11 +3857,14 @@ def analyze_step(events: list, family: str = "i1pro2") -> dict:
             known = table.get(req) if rtype == 2 else None
             if known is None:
                 kind = "class" if rtype == 1 else "vendor"
+                answer = ev['in'].hex() or '-'
+                if hide_answers and ev["in"]:
+                    answer = f"<{len(ev['in'])} bytes, not shown>"
                 text = (f"UNKNOWN {kind} request 0x{req:02X} "
                         f"{'IN' if rt & 0x80 else 'OUT'} bmRequestType=0x{rt:02x} "
                         f"wValue=0x{ev['wValue']:04x} wIndex=0x{ev['wIndex']:04x} "
                         f"wLength={ev['wLength']} out={ev['out'].hex() or '-'} "
-                        f"in={ev['in'].hex() or '-'}")
+                        f"in={answer}")
                 result["unknown"].append((rel, text))
                 result["timeline"].append((rel, text))
                 label = f"UNKNOWN 0x{req:02X}"
@@ -3900,6 +3968,10 @@ def analyze_step(events: list, family: str = "i1pro2") -> dict:
             continue
         flag = "  <-- endpoint the open driver never uses" if foreign and \
             family not in NO_OPEN_DRIVER else ""
+        if hide_answers and ev["dir_in"]:
+            result["timeline"].append((rel, f"data on {key}: {size} bytes "
+                                            "(from the device, not shown)"))
+            continue
         result["timeline"].append((rel, f"data on {key}: {size} bytes: "
                                         f"{ev['data'][:24].hex()}{flag}"))
     for m in result["measurements"]:
@@ -4026,17 +4098,23 @@ def load_session(path: str) -> dict | None:
     return data
 
 
-def _xrite_events(path: str):
-    """(events of the X-Rite devices, device map, check) for one file."""
-    check = check_capture(path)
+def _xrite_events(path: str, profile: str | None = None):
+    """(events of the kept devices, their device map, check) for one file.
+    1.6 review: the same selection as the instrument-only copy, so the
+    analysis never lists another device as the instrument, nor its traffic."""
+    check = check_capture(path, profile)
     if check["code"] == "unreadable":
         return [], {}, check
     linktype, recs = _read_pcap(path)
     events = capture_events(linktype, recs)
     devices = device_map(events)
-    mine = set(xrite_devices(devices))
+    mine, how = instrument_selection(devices, profile)
     if mine:
-        events = [e for e in events if (e["bus"], e["dev"]) in mine]
+        events = [e for e in events if (e["bus"], e["dev"]) in set(mine)]
+        devices = {k: v for k, v in devices.items() if k in set(mine)}
+    elif profile == "isis" or how in ("isis", "unknown") or any(
+            v.get("vid") for v in devices.values()):
+        events, devices = [], {}
     return events, devices, check
 
 
@@ -4063,6 +4141,7 @@ def session_steps(paths: list) -> tuple:
             session = load_session(path)
             continue
         whole.append(path)
+    family = session.get("family") if session else None
     if session:
         base = session["_dir"]
         if not whole and session.get("whole_recording"):
@@ -4078,7 +4157,7 @@ def session_steps(paths: list) -> tuple:
             events = []
             if files:
                 for f in files:
-                    evs, devs, check = _xrite_events(f)
+                    evs, devs, check = _xrite_events(f, family)
                     events += evs
                     devinfo.update(devs)
                     checks.append((os.path.basename(f), check))
@@ -4087,7 +4166,7 @@ def session_steps(paths: list) -> tuple:
                 # cut it at the times the tool noted.
                 for f in whole:
                     if f not in cache:
-                        cache[f] = _xrite_events(f)
+                        cache[f] = _xrite_events(f, family)
                         devinfo.update(cache[f][1])
                         checks.append((os.path.basename(f), cache[f][2]))
                     lo, hi = step["start_epoch"], step.get("end_epoch") or 1e18
@@ -6565,11 +6644,33 @@ def _ask_program(detected: dict) -> tuple:
 
 
 def privacy_text(profile: str) -> str:
-    isis = """
-  - For the i1iSis: the colour values it measured from your chart page
-    (your printer's and paper's colours; they say nothing about you)
-    and, if the chart has a barcode, what the barcode holds, which may
-    include the chart's name.""" if profile == "isis" else ""
+    if profile == "isis":
+        # 1.6 review: worded exactly as instrument_selection() and the
+        # analysis behave, and "very likely" where nothing is proven yet.
+        return """\
+  WHAT THE RECORDING CONTAINS, AND WHAT HAPPENS TO IT
+  - The USB conversation between i1Profiler and the i1iSis. That very
+    likely includes the i1iSis's serial number and its factory
+    calibration data, as it does for every X-Rite instrument we know
+    (not yet proven for the i1iSis). They identify your i1iSis, not you.
+  - The colour values the i1iSis measured from your chart page (your
+    printer's and paper's colours; they say nothing about you) and, if
+    the chart has a barcode, what the barcode holds, which may include
+    the chart's name.
+  - While a step records, the recording program also sees the other USB
+    devices on the same USB port group, such as a keyboard or a monitor
+    calibrator. Please do not type anything private during a step. After
+    each step the tool makes a copy that holds ONLY the i1iSis's traffic,
+    and that copy is the only thing to send. If a step's recording does
+    not show an i1iSis at all, the copy holds an X-Rite device this tool
+    does not know instead (in case that is your i1iSis), and the tool
+    tells you so right after the step; it never keeps a keyboard or an
+    X-Rite instrument it knows to be another one. If the recording does
+    not show which device is which, the tool keeps nothing.
+  - Your short notes for each step.
+  Nothing is uploaded, ever. You decide whether to send the files, and you
+  send them yourself. At the end the tool offers to delete the full
+  recordings, which you never need to send."""
     return f"""\
   WHAT THE RECORDING CONTAINS, AND WHAT HAPPENS TO IT
   - The USB conversation between the program and the instrument. That
@@ -6581,7 +6682,7 @@ def privacy_text(profile: str) -> str:
     type anything private during a step. After each step the tool makes a
     copy that holds ONLY the instrument's traffic (its device address and
     nothing else), and that copy is the only thing to send.
-  - Your short notes for each step.{isis}
+  - Your short notes for each step.
   Nothing is uploaded, ever. You decide whether to send the files, and you
   send them yourself. At the end the tool offers to delete the full
   recordings, which you never need to send."""
@@ -6737,10 +6838,16 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                 activity += check.get("activity") or 0
                 empty = empty or check["code"] == "empty-step"
                 zero = zero or check["code"] == "all-zero"
+                if check["code"] == "unidentified":
+                    entry["unidentified"] = True
                 if check["xrite_packets"] and check["code"] in ("ok", "all-zero"):
                     dst_name = name.replace("-full.pcap", "-instrument.pcap")
                     if filter_xrite_capture(src, os.path.join(folder, dst_name), profile):
                         entry["files_xrite"].append(dst_name)
+                        if check.get("kept") == "unknown":
+                            entry["kept_unknown"] = sorted(
+                                {f"{v:04x}:{p:04x}" for v, p in check["kept_ids"]}
+                                | set(entry.get("kept_unknown", [])))
             if recorder is not None and (not entry["files_xrite"] or zero):
                 entry["empty"] = True
             session["steps"].append(entry)
@@ -6843,9 +6950,23 @@ def handheld_step_verdict(entry: dict, activity: int, empty: bool, zero: bool = 
     if zero:
         return ("ALL-ZERO: the recording shows the traffic, but every data byte is zero, so "
                 "it cannot show the commands. This is a limit of this Mac, not your mistake.")
+    if entry.get("files_xrite") and activity and entry.get("kept_unknown"):
+        # 1.6 review: an i1iSis session that saw no i1iSis keeps an X-Rite
+        # device the tool does not know, and says so.
+        word = "request or data transfer" if activity == 1 else "requests and data transfers"
+        return (f"this step recorded {activity} {word}, but not of an i1iSis: no i1iSis "
+                f"(0971:2006) was seen in it. The tool kept the traffic of an X-Rite device "
+                f"it does not know ({', '.join(entry['kept_unknown'])}), in case that is "
+                "your i1iSis. If it is not, please tell us; you can also repeat the step.")
     if entry.get("files_xrite") and activity:
         word = "request or data transfer" if activity == 1 else "requests and data transfers"
         return f"this step recorded {activity} {word} of the instrument: good."
+    if entry.get("unidentified"):
+        return ("NOTHING KEPT: this recording does not show which device is the i1iSis "
+                "(it holds no USB description), so the tool kept nothing rather than risk "
+                "keeping another device. Please repeat the step. If this happens again: "
+                "start the step, then unplug the i1iSis's USB cable and plug it back in "
+                "(leave the i1iSis switched on), so that the recording sees it arrive.")
     if empty:
         return "EMPTY: nothing was recorded in this step, please repeat it."
     return ("no instrument traffic was found in this step. Was the measuring program "
@@ -7066,14 +7187,17 @@ HANDHELD_SEND_WAYS = f"""\
   send the zip in a private message to itsab1989 on the forum instead."""
 
 
-def session_send_text(folder: str) -> str:
+def session_send_text(folder: str, profile: str | None = None) -> str:
+    serial = ("It very likely contains your i1iSis's serial\n  number and its factory "
+              "calibration data." if profile == "isis" else
+              "It contains your instrument's serial\n  number and its factory "
+              "calibration data.")
     return f"""\
   WHAT TO SEND (only if you want to)
   At the very end the tool puts everything we need into ONE file next to
   it, named  SEND-THIS-<date>.zip : the report, the instrument-only
   recordings, session.json (the steps and your notes) and analysis.txt.
-  That one file is all you send. It contains your instrument's serial
-  number and its factory calibration data.
+  That one file is all you send. {serial}
 {HANDHELD_SEND_WAYS}
   Do NOT send the folder ending in -FULL-do-not-send."""
 
@@ -7414,7 +7538,7 @@ def instrument_session_step(pids: list, direct: bool, only: list | None = None,
                                  "that starts a step and the  e  + Enter that stops it.")
     if outcome["recorded"]:
         print()
-        print(session_send_text(folder))
+        print(session_send_text(folder, profile))
     if system == "Darwin":
         print()
         print(SIP_OFF_REMINDER)

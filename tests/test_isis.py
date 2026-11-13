@@ -115,14 +115,18 @@ class Filter(test_instrument.TempDirCase):
 
     def test_other_sessions_keep_every_xrite_device_as_before(self):
         dst = os.path.join(self.dir, "out.pcap")
-        self.assertTrue(probe.filter_xrite_capture(self.files["page-single"], dst))
+        self.assertTrue(probe.filter_xrite_capture(self.files["page-single"], dst, "i1pro2"))
         self.assertEqual(self.keys_in(dst), {(1, synth.ISIS), (1, synth.DISPLAY)})
 
     def test_check_counts_only_the_isis(self):
-        both = probe.check_capture(self.files["page-single"])
+        both = probe.check_capture(self.files["page-single"], "i1pro2")
         mine = probe.check_capture(self.files["page-single"], "isis")
         self.assertEqual(mine["code"], "ok")
+        self.assertEqual(mine["kept"], "isis")
         self.assertLess(mine["xrite_packets"], both["xrite_packets"])
+        # A recording without a session that shows an i1iSis is read as one.
+        self.assertEqual(probe.check_capture(self.files["page-single"])["xrite_packets"],
+                         mine["xrite_packets"])
 
     def test_mac_records_by_their_own_ids(self):
         w = synth_io.DarwinWriter()
@@ -137,8 +141,8 @@ class Filter(test_instrument.TempDirCase):
             blob = fh.read()
         self.assertNotIn(b"DISPLAYSERIAL99", blob)
         self.assertIn(b"INVENTED-HELLO", blob)
-        # Without the i1iSis session: the i1Display stays, the keyboard never.
-        self.assertEqual(probe.filter_xrite_capture(src, dst), 5)
+        # A handheld session: the i1Display stays, the keyboard never.
+        self.assertEqual(probe.filter_xrite_capture(src, dst, "i1pro2"), 5)
 
     def test_a_step_with_only_the_usb_description_is_empty(self):
         w = synth.UsbPcapWriter()
@@ -146,6 +150,118 @@ class Filter(test_instrument.TempDirCase):
         synth.keyboard_noise(w)
         path = w.save(os.path.join(self.dir, "empty.pcap"))
         self.assertEqual(probe.check_capture(path, "isis")["code"], "empty-step")
+
+
+# ---- the review's privacy simulation (review/sim/privacy_sim.py), as tests ----
+
+PRIV_DEVS = {  # address: (vid, pid, marker, endpoints); markers are invented
+    3: (0x0971, 0x2006, b"ISIS-MARK", [(0x81, 2), (0x02, 2)]),
+    4: (0x0765, 0x5020, b"DISPLAY-SERIAL", [(0x81, 3), (0x01, 3)]),
+    5: (0x046D, 0xC31C, b"KEYB-TYPED-PASSWORD", [(0x81, 3)]),
+    6: (0x046D, 0xC077, b"MOUSE-MARK", [(0x81, 3)]),
+    7: (0x0781, 0x5567, b"STICK-FILE-CONTENT", [(0x81, 2), (0x02, 2)]),
+    8: (0x0971, 0x2099, b"UNKNOWN-XRITE-SERIAL", [(0x81, 2), (0x02, 2)]),
+    9: (0x0971, 0x2000, b"I1PRO2-SERIAL", [(0x82, 2), (0x84, 3), (0x03, 2)]),
+    10: (0x0765, 0x600A, b"DISPLAY3L-SERIAL", [(0x81, 3)]),
+}
+ALL_MARKERS = [v[2] for v in PRIV_DEVS.values()]
+
+
+def priv_usbpcap(described, devices=PRIV_DEVS, i1pro_cmds=True):
+    w = synth.UsbPcapWriter()
+    for a, (vid, pid, _m, eps) in devices.items():
+        if a in described:
+            w.describe(a, vid, pid, eps)
+    for a, (_vid, _pid, m, eps) in devices.items():
+        w.bulk_in(a, [e for e, _k in eps if e & 0x80][0], m)
+        outs = [e for e, _k in eps if not e & 0x80]
+        if outs:
+            w.bulk_out(a, outs[0], m + b"-OUT\r")
+    if i1pro_cmds and 9 in devices:
+        for req in sorted(probe.FAMILIES["i1pro2"]["requests"])[:4]:
+            w.vendor_in(9, req, b"I1PRO2-SERIAL-EEPROM")
+    return w
+
+
+class PrivacyCases(test_instrument.TempDirCase):
+    """What an i1iSis copy keeps, whatever the recording looks like."""
+
+    def kept(self, w, profile="isis", name="x"):
+        src = w.save(os.path.join(self.dir, name + ".pcap"))
+        dst = os.path.join(self.dir, name + "-out.pcap")
+        n = probe.filter_xrite_capture(src, dst, profile)
+        blob = b""
+        if n and os.path.exists(dst):
+            with open(dst, "rb") as fh:
+                blob = fh.read()
+        return [m for m in ALL_MARKERS if m in blob], probe.check_capture(src, profile), src
+
+    def test_everything_described_keeps_only_the_isis(self):
+        kept, check, _src = self.kept(priv_usbpcap(set(PRIV_DEVS)))
+        self.assertEqual(kept, [b"ISIS-MARK"])
+        self.assertEqual((check["code"], check["kept"]), ("ok", "isis"))
+
+    def test_no_description_keeps_nothing_and_does_not_say_ok(self):
+        kept, check, _src = self.kept(priv_usbpcap(set()))
+        self.assertEqual(kept, [])
+        self.assertEqual(check["code"], "unidentified")
+        self.assertIn("NOTHING KEPT", check["verdict"])
+
+    def test_an_undescribed_i1pro_next_to_the_isis_is_dropped(self):
+        kept, _check, _src = self.kept(priv_usbpcap(set(PRIV_DEVS) - {9}))
+        self.assertEqual(kept, [b"ISIS-MARK"])
+
+    def test_without_an_isis_only_unknown_xrite_devices_and_it_says_so(self):
+        devs = {k: v for k, v in PRIV_DEVS.items() if k != 3}
+        kept, check, _src = self.kept(priv_usbpcap(set(devs), devs))
+        self.assertEqual(kept, [b"UNKNOWN-XRITE-SERIAL"])
+        self.assertEqual(check["kept"], "unknown")
+        self.assertEqual(check["kept_ids"], [(0x0971, 0x2099)])
+        entry = {"files_xrite": ["x"], "kept_unknown": ["0971:2099"]}
+        text = probe.handheld_step_verdict(entry, 3, False)
+        self.assertIn("not of an i1iSis", text)
+        self.assertIn("0971:2099", text)
+
+    def test_mac_records(self):
+        d = synth_io.DarwinWriter()
+        for seq, (a, (vid, pid, m, _e)) in enumerate(PRIV_DEVS.items(), 1):
+            d._rec(1, seq, a, 0x81, 2, vid, pid, m, len(m))
+        kept, check, _src = self.kept(d, name="mac")
+        self.assertEqual(kept, [b"ISIS-MARK"])
+        self.assertEqual(check["kept_ids"], [(0x0971, 0x2006)])
+
+    def test_linux_without_descriptions_keeps_nothing(self):
+        u = synth_io.UsbmonWriter()
+        for a, (_vid, _pid, m, _e) in PRIV_DEVS.items():
+            u.bulk_in(a, 0x81, m)
+        kept, check, _src = self.kept(u, name="linux")
+        self.assertEqual(kept, [])
+        self.assertEqual(check["code"], "unidentified")
+
+    def test_the_3l_is_a_known_other_instrument(self):
+        self.assertIn((0x0765, 0x600A), probe.OTHER_INSTRUMENT_IDS)
+
+    def test_analyze_on_a_raw_full_file_shows_only_the_isis(self):
+        src = priv_usbpcap(set(PRIV_DEVS)).save(os.path.join(self.dir, "raw.pcap"))
+        report = probe.analyze_paths([src])
+        detail = report.split("Instrument recording analysis")[1]
+        for marker in ALL_MARKERS:
+            if marker != b"ISIS-MARK":
+                self.assertNotIn(marker.decode(), report)
+        self.assertNotIn("0765:5020", detail)
+        self.assertNotIn("0971:2000", detail)
+        self.assertEqual(detail.count("instrument at bus"), 1)
+        lines = detail.split("the first different lines the program sent")[1]
+        self.assertIn("ISIS-MARK-OUT", lines)
+        self.assertNotIn("STICK", lines)
+        # The i1iSis's own answers are not shown either, only their size.
+        self.assertIn("data on 0x81 bulk IN: 9 bytes (from the device, not shown)", detail)
+
+    def test_a_session_step_without_descriptions(self):
+        entry = {"files_xrite": [], "unidentified": True}
+        text = probe.handheld_step_verdict(entry, 0, False)
+        self.assertIn("NOTHING KEPT", text)
+        self.assertIn("unplug the i1iSis's USB cable and plug it back in", text)
 
 
 class Analysis(test_instrument.TempDirCase):
@@ -381,9 +497,15 @@ class Texts(unittest.TestCase):
 
     def test_privacy_names_the_chart_values_and_barcode(self):
         text = flat(probe.privacy_text("isis"))
-        self.assertIn("the colour values it measured from your chart page", text)
+        self.assertIn("The colour values the i1iSis measured from your chart page", text)
         self.assertIn("barcode", text)
-        self.assertIn("serial number", text)
+        self.assertIn("very likely includes the i1iSis's serial number", text)
+        self.assertIn("not yet proven for the i1iSis", text)
+        self.assertIn("a copy that holds ONLY the i1iSis's traffic", text)
+        self.assertIn("If the recording does not show which device is which, the tool "
+                      "keeps nothing", text)
+        self.assertIn("very likely contains your i1iSis's serial",
+                      flat(probe.session_send_text("/x/f", "isis")))
         self.assertNotIn("barcode", probe.privacy_text("i1pro2"))
 
     def test_lines_fit_the_window(self):
