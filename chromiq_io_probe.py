@@ -129,7 +129,8 @@ OTHER_INSTRUMENT_IDS = frozenset({
 })
 
 
-def instrument_selection(devices: dict, profile: str | None = None) -> tuple:
+def instrument_selection(devices: dict, profile: str | None = None,
+                         undescribed: bool = False) -> tuple:
     """1.6: which devices of a recording an instrument-only copy keeps.
 
     devices: key -> {"vid", "pid", "guess_family"} (a device_map(), or the
@@ -144,11 +145,13 @@ def instrument_selection(devices: dict, profile: str | None = None) -> tuple:
     i1iSis model reports an ID nobody has seen yet (how = "unknown"), and
     never a known other instrument or a device it can only guess at: a guess
     comes from i1Pro or ColorMunki commands, which is never the i1iSis.
-    A recording without a session (profile None) that shows an i1iSis is
-    read as an i1iSis recording."""
-    if profile is None and any((v.get("vid"), v.get("pid")) in ISIS_IDS
-                               for v in devices.values()):
-        profile = "isis"
+
+    profile is the session type: "io" (the i1iO table), a handheld profile
+    ("i1pro2", "i1pro", "i1pro3", "munki", "generic"), "isis", or None (a
+    caller from before 1.6). Every type except "isis" keeps exactly what
+    1.5.5 kept (second review of 1.6: a table recording with an i1iSis on
+    the same bus must keep the table). A plain file in --analyze becomes
+    "isis" only through plain_file_profile()."""
     if profile != "isis":
         return ([k for k, v in devices.items()
                  if v.get("vid") in XRITE_VIDS or (not v.get("vid") and v.get("guess_family"))],
@@ -156,9 +159,36 @@ def instrument_selection(devices: dict, profile: str | None = None) -> tuple:
     isis = [k for k, v in devices.items() if (v.get("vid"), v.get("pid")) in ISIS_IDS]
     if isis:
         return isis, "isis"
+    if undescribed:
+        # A device without a USB description may be the i1iSis, so "no
+        # i1iSis here" cannot be told: keep nothing (second review).
+        return [], "unidentified"
     unknown = [k for k, v in devices.items()
                if v.get("vid") in XRITE_VIDS and (v["vid"], v.get("pid")) not in OTHER_INSTRUMENT_IDS]
     return unknown, ("unknown" if unknown else "")
+
+
+SESSION_TABLE = "io"           # the session type of the i1iO table recording
+
+
+def undescribed_present(keys, devices: dict) -> bool:
+    """1.6: does a Windows or Linux recording hold traffic of a device whose
+    USB description it does not show? (Address 0 is a device being set up.)"""
+    described = {k for k, v in devices.items() if v.get("vid")}
+    return any(k is not None and k[1] != 0 and k not in described for k in keys)
+
+
+def plain_file_profile(devices: dict):
+    """1.6: --analyze on a plain recording (no session.json): "isis" when the
+    only X-Rite device it shows that the tool knows is an i1iSis (and no
+    device is only guessed from an instrument's commands); else None, which
+    reads the file exactly as 1.5.5 did."""
+    ids = {(v.get("vid"), v.get("pid")) for v in devices.values()
+           if v.get("vid") in XRITE_VIDS}
+    guessed = any(not v.get("vid") and v.get("guess_family") for v in devices.values())
+    if ids & set(ISIS_IDS) and not ids & OTHER_INSTRUMENT_IDS and not guessed:
+        return "isis"
+    return None
 
 
 def keeps_device(vid, pid, profile: str | None = None) -> bool:
@@ -2369,13 +2399,13 @@ def finish_recordings(files: dict, record: list | None = None, ask_delete: bool 
         if not os.path.exists(path):
             continue
         full.append(path)
-        check = check_capture(path)
+        check = check_capture(path, SESSION_TABLE)
         lines.append(f"{iface}: {check['packets']} packets, "
                      f"{check['xrite_packets']} of them from X-Rite devices")
         lines.append("  " + check["verdict"])
         if check["xrite_packets"]:
             dst = path.replace("-full.pcap", "-xrite.pcap")
-            kept = filter_xrite_capture(path, dst)
+            kept = filter_xrite_capture(path, dst, SESSION_TABLE)
             if kept:
                 send.append(dst)
                 lines.append(f"  X-Rite-only copy ({kept} packets): {os.path.basename(dst)}")
@@ -2715,23 +2745,26 @@ def check_capture(path: str, profile: str | None = None) -> dict:
         keys = record_device_keys(linktype, recs)
         all_events = capture_events(linktype, recs)
         devices = device_map(all_events)
-        wanted_keys, how = instrument_selection(devices, profile)
+        wanted_keys, how = instrument_selection(devices, profile,
+                                                undescribed_present(keys, devices))
         wanted = set(wanted_keys)
         kept_ids = sorted({(devices[k]["vid"], devices[k]["pid"]) for k in wanted
                            if devices[k].get("vid") is not None})
         if wanted:
             mine = [d for (_ts, d), k in zip(recs, keys) if k in wanted]
             mine_events = [e for e in all_events if (e["bus"], e["dev"]) in wanted]
+        elif profile == "isis":
+            # 1.6 review: no i1iSis identified. If any device in the recording
+            # has no USB description, it may be the i1iSis: nothing is kept,
+            # and the check says so (with what to do) instead of "OK" over
+            # the keyboard's traffic or "no X-Rite traffic". A bus where every
+            # device is described and none is the i1iSis is simply not its bus.
+            mine = []
+            mine_events = []
+            unidentified_isis = how == "unidentified"
         elif any(v.get("vid") for v in devices.values()):
             mine = []
             mine_events = []
-        elif profile == "isis":
-            # 1.6 review: no USB description at all, so the i1iSis cannot be
-            # told from any other device. Nothing is kept, and the check says
-            # so instead of "OK" over the keyboard's traffic.
-            mine = []
-            mine_events = []
-            unidentified_isis = bool(recs)
         else:
             mine = [d for _ts, d in recs]
             mine_events = all_events
@@ -2835,11 +2868,12 @@ def filter_xrite_capture(src: str, dst: str, profile: str | None = None) -> int:
     except (OSError, ValueError):
         return 0
     if linktype in (LINKTYPE_USBPCAP, LINKTYPE_USB_LINUX, LINKTYPE_USB_LINUX_MMAPPED):
-        wanted = set(instrument_selection(device_map(capture_events(linktype, recs)),
-                                          profile)[0])
+        devices = device_map(capture_events(linktype, recs))
+        keys = record_device_keys(linktype, recs)
+        wanted = set(instrument_selection(devices, profile,
+                                          undescribed_present(keys, devices))[0])
         if not wanted:
             return 0
-        keys = record_device_keys(linktype, recs)
         kept = [r for r, k in zip(recs, keys) if k in wanted]
         if not kept or not _write_pcap(dst, linktype, kept):
             return 0
@@ -4114,23 +4148,31 @@ def load_session(path: str) -> dict | None:
     return data
 
 
-def _xrite_events(path: str, profile: str | None = None):
-    """(events of the kept devices, their device map, check) for one file.
-    1.6 review: the same selection as the instrument-only copy, so the
-    analysis never lists another device as the instrument, nor its traffic."""
+def _xrite_events(path: str, profile: str | None = None, plain: bool = False):
+    """(events of the kept devices, device map, check) for one file.
+
+    profile: the session type. plain (1.6): a recording given to --analyze
+    without a session; it is read as an i1iSis recording only when
+    plain_file_profile() says so. For an i1iSis the analysis keeps exactly
+    what the copy keeps; every other type reads the file as 1.5.5 did."""
+    try:
+        linktype, recs = _read_pcap(path)
+    except (OSError, ValueError):
+        return [], {}, check_capture(path, profile)
+    events = capture_events(linktype, recs)
+    devices = device_map(events)
+    if profile is None and plain:
+        profile = plain_file_profile(devices)
     check = check_capture(path, profile)
     if check["code"] == "unreadable":
         return [], {}, check
-    linktype, recs = _read_pcap(path)
-    events = capture_events(linktype, recs)
-    devices = device_map(events)
-    mine, how = instrument_selection(devices, profile)
-    if mine:
-        events = [e for e in events if (e["bus"], e["dev"]) in set(mine)]
-        devices = {k: v for k, v in devices.items() if k in set(mine)}
-    elif profile == "isis" or how in ("isis", "unknown") or any(
-            v.get("vid") for v in devices.values()):
-        events, devices = [], {}
+    mine = set(instrument_selection(devices, profile, undescribed_present(
+        record_device_keys(linktype, recs), devices))[0])
+    if profile == "isis":
+        events = [e for e in events if (e["bus"], e["dev"]) in mine]
+        devices = {k: v for k, v in devices.items() if k in mine}
+    elif mine:
+        events = [e for e in events if (e["bus"], e["dev"]) in mine]
     return events, devices, check
 
 
@@ -4198,7 +4240,7 @@ def session_steps(paths: list) -> tuple:
                           bool(step.get("control")), step.get("key", "")))
         return steps, devinfo, checks, session
     for f in whole:
-        evs, devs, check = _xrite_events(f)
+        evs, devs, check = _xrite_events(f, plain=True)
         devinfo.update(devs)
         checks.append((os.path.basename(f), check))
         low = os.path.basename(f).lower()
@@ -4211,11 +4253,19 @@ def session_family(devinfo: dict, steps: list, session: dict | None = None) -> s
     if session and session.get("family") in FAMILIES:
         return session["family"]
     all_events = [e for _n, evs, *_ in steps for e in evs]
+    found = []
     for info in devinfo.values():
         if info.get("vid") in XRITE_VIDS:
             fam = family_for(info["vid"], info["pid"], info.get("config"), all_events)
             if fam != "generic":
-                return fam
+                found.append(fam)
+    # 1.6: an instrument with a decoder comes first, as in 1.5.5 (which did
+    # not know the i1iSis); the i1iSis only when it is the one found.
+    for fam in found:
+        if fam != "isis":
+            return fam
+    if found:
+        return found[0]
     for info in devinfo.values():
         if info.get("guess_family"):
             fam = info["guess_family"]

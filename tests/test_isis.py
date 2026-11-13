@@ -124,9 +124,9 @@ class Filter(test_instrument.TempDirCase):
         self.assertEqual(mine["code"], "ok")
         self.assertEqual(mine["kept"], "isis")
         self.assertLess(mine["xrite_packets"], both["xrite_packets"])
-        # A recording without a session that shows an i1iSis is read as one.
+        # Without a session type the check is exactly 1.5.5's (second review).
         self.assertEqual(probe.check_capture(self.files["page-single"])["xrite_packets"],
-                         mine["xrite_packets"])
+                         both["xrite_packets"])
 
     def test_mac_records_by_their_own_ids(self):
         w = synth_io.DarwinWriter()
@@ -242,20 +242,37 @@ class PrivacyCases(test_instrument.TempDirCase):
         self.assertIn((0x0765, 0x600A), probe.OTHER_INSTRUMENT_IDS)
 
     def test_analyze_on_a_raw_full_file_shows_only_the_isis(self):
-        src = priv_usbpcap(set(PRIV_DEVS)).save(os.path.join(self.dir, "raw.pcap"))
+        # A plain file whose only known X-Rite device is the i1iSis (the
+        # unknown X-Rite device, keyboard, mouse and stick are not known
+        # instruments). With a known other instrument in it, a plain file is
+        # read as in 1.5.5 (tests/test_regression_v155.py).
+        devs = {k: v for k, v in PRIV_DEVS.items() if k not in (4, 9, 10)}
+        src = priv_usbpcap(set(devs), devs).save(os.path.join(self.dir, "raw.pcap"))
         report = probe.analyze_paths([src])
         detail = report.split("Instrument recording analysis")[1]
         for marker in ALL_MARKERS:
             if marker != b"ISIS-MARK":
                 self.assertNotIn(marker.decode(), report)
-        self.assertNotIn("0765:5020", detail)
-        self.assertNotIn("0971:2000", detail)
+        self.assertNotIn("0971:2099", detail)
         self.assertEqual(detail.count("instrument at bus"), 1)
         lines = detail.split("the first different lines the program sent")[1]
         self.assertIn("ISIS-MARK-OUT", lines)
         self.assertNotIn("STICK", lines)
         # The i1iSis's own answers are not shown either, only their size.
         self.assertIn("data on 0x81 bulk IN: 9 bytes (from the device, not shown)", detail)
+
+    def test_isis_undescribed_next_to_a_described_xrite_device(self):
+        # Second review, minor 1: the i1iSis's description missing, an
+        # i1Pro 2's present: NOTHING KEPT with the replug hint, not "no X-Rite".
+        kept, check, _src = self.kept(priv_usbpcap(set(PRIV_DEVS) - {3}))
+        self.assertEqual(kept, [])
+        self.assertEqual(check["code"], "unidentified")
+
+    def test_a_bus_without_the_isis_is_just_not_its_bus(self):
+        devs = {5: PRIV_DEVS[5], 6: PRIV_DEVS[6]}
+        kept, check, _src = self.kept(priv_usbpcap(set(devs), devs))
+        self.assertEqual(kept, [])
+        self.assertEqual(check["code"], "no-xrite")
 
     def test_a_session_step_without_descriptions(self):
         entry = {"files_xrite": [], "unidentified": True}

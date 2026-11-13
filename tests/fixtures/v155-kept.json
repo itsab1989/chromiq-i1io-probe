@@ -1,0 +1,202 @@
+{
+ "analysis": {
+  "A-everything-described": {
+   "family": [],
+   "instrument_ids": [],
+   "markers": [
+    "i1iO"
+   ]
+  },
+  "B-two-isis-keyboard": {
+   "family": [],
+   "instrument_ids": [],
+   "markers": []
+  },
+  "C-isis-undescribed-i1pro2-described": {
+   "family": [
+    "instrument family: original i1Pro (Rev A to D)"
+   ],
+   "instrument_ids": [
+    "0971:2000"
+   ],
+   "markers": []
+  },
+  "D-nothing-described-i1pro2-commands": {
+   "family": [
+    "instrument family: original i1Pro (Rev A to D)"
+   ],
+   "instrument_ids": [
+    "identity "
+   ],
+   "markers": []
+  },
+  "E-no-isis-unknown-display-3l": {
+   "family": [],
+   "instrument_ids": [],
+   "markers": []
+  },
+  "F-i1io-table-with-isis": {
+   "family": [],
+   "instrument_ids": [],
+   "markers": [
+    "i1iO"
+   ]
+  },
+  "G-i1pro2-with-isis": {
+   "family": [
+    "instrument family: original i1Pro (Rev A to D)"
+   ],
+   "instrument_ids": [
+    "0971:2000",
+    "0971:2006"
+   ],
+   "markers": []
+  },
+  "H-mac-everything": {
+   "family": [],
+   "instrument_ids": [],
+   "markers": []
+  },
+  "H2-mac-i1io-table-with-isis": {
+   "family": [],
+   "instrument_ids": [],
+   "markers": []
+  },
+  "I-linux-no-descriptions": {
+   "family": [],
+   "instrument_ids": [],
+   "markers": []
+  },
+  "K-i1pro2-alone": {
+   "family": [
+    "instrument family: original i1Pro (Rev A to D)"
+   ],
+   "instrument_ids": [
+    "0971:2000"
+   ],
+   "markers": []
+  },
+  "L-i1io-alone": {
+   "family": [],
+   "instrument_ids": [],
+   "markers": [
+    "i1iO"
+   ]
+  }
+ },
+ "copies": {
+  "A-everything-described": {
+   "check": "ok",
+   "kept": [
+    "iSis",
+    "iSis#2",
+    "i1Display",
+    "unknownXR",
+    "i1Pro2",
+    "i1iO",
+    "Display3L"
+   ],
+   "records": 80,
+   "xrite_packets": 80
+  },
+  "B-two-isis-keyboard": {
+   "check": "ok",
+   "kept": [
+    "iSis",
+    "iSis#2"
+   ],
+   "records": 20,
+   "xrite_packets": 20
+  },
+  "C-isis-undescribed-i1pro2-described": {
+   "check": "ok",
+   "kept": [
+    "i1Pro2"
+   ],
+   "records": 10,
+   "xrite_packets": 10
+  },
+  "D-nothing-described-i1pro2-commands": {
+   "check": "ok",
+   "kept": [
+    "i1Pro2"
+   ],
+   "records": 16,
+   "xrite_packets": 16
+  },
+  "E-no-isis-unknown-display-3l": {
+   "check": "ok",
+   "kept": [
+    "i1Display",
+    "unknownXR",
+    "Display3L"
+   ],
+   "records": 28,
+   "xrite_packets": 28
+  },
+  "F-i1io-table-with-isis": {
+   "check": "ok",
+   "kept": [
+    "iSis",
+    "i1iO"
+   ],
+   "records": 20,
+   "xrite_packets": 20
+  },
+  "G-i1pro2-with-isis": {
+   "check": "ok",
+   "kept": [
+    "iSis",
+    "i1Pro2"
+   ],
+   "records": 32,
+   "xrite_packets": 32
+  },
+  "H-mac-everything": {
+   "check": "ok",
+   "kept": [
+    "iSis",
+    "iSis#2",
+    "i1Display",
+    "unknownXR",
+    "i1Pro2",
+    "i1iO",
+    "Display3L"
+   ],
+   "records": 7,
+   "xrite_packets": 7
+  },
+  "H2-mac-i1io-table-with-isis": {
+   "check": "ok",
+   "kept": [
+    "iSis",
+    "i1iO"
+   ],
+   "records": 2,
+   "xrite_packets": 2
+  },
+  "I-linux-no-descriptions": {
+   "check": "ok",
+   "kept": [],
+   "records": 0,
+   "xrite_packets": 6
+  },
+  "K-i1pro2-alone": {
+   "check": "ok",
+   "kept": [
+    "i1Pro2"
+   ],
+   "records": 22,
+   "xrite_packets": 22
+  },
+  "L-i1io-alone": {
+   "check": "ok",
+   "kept": [
+    "i1iO"
+   ],
+   "records": 10,
+   "xrite_packets": 10
+  }
+ },
+ "version": "1.5.5"
+}
