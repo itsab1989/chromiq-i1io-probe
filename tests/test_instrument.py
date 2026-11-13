@@ -570,7 +570,7 @@ class SessionTests(TempDirCase):
         w.describe(synth.KEYBOARD, 0x046D, 0xC31C, [(0x81, 3)])
         synth.keyboard_noise(w, 3)
         w.save(os.path.join(self.pcaps, "idle.pcap"))
-        _session, screen = self.run_session(["", "e", "", "", "", "q"])
+        _session, screen = self.run_session(["", "e", "", "q"])
         self.assertIn("no instrument traffic was found in this", " ".join(screen.split()))
         self.assertEqual(self.saved()["steps"][0]["files_xrite"], [])
 
