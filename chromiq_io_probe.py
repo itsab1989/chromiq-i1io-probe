@@ -7560,6 +7560,9 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                 entry["check"].append(f"{name}: {check['xrite_packets']} instrument packets; "
                                       f"{check['verdict']}")
                 activity += check.get("activity") or 0
+                for kind, count in (check.get("left_out") or {}).items():
+                    entry.setdefault("left_out", {})
+                    entry["left_out"][kind] = entry["left_out"].get(kind, 0) + count
                 empty = empty or check["code"] == "empty-step"
                 zero = zero or check["code"] == "all-zero"
                 if check["code"] == "unidentified":
@@ -7684,7 +7687,13 @@ def handheld_step_verdict(entry: dict, activity: int, empty: bool, zero: bool = 
                 "your i1iSis. If it is not, please tell us; you can also repeat the step.")
     if entry.get("files_xrite") and activity:
         word = "request or data transfer" if activity == 1 else "requests and data transfers"
-        return f"this step recorded {activity} {word} of the instrument: good."
+        text = f"this step recorded {activity} {word} of the instrument: good."
+        if entry.get("left_out"):
+            # 1.6.2: traffic at the instrument's address that was not its own.
+            text += (" " + left_out_text(entry["left_out"]) + " If you can, unplug other "
+                     "USB devices (a USB disk or memory stick above all) before the next "
+                     "step; it is not needed for this one.")
+        return text
     if entry.get("unidentified"):
         return ("NOTHING KEPT: this recording does not show which device is the i1iSis "
                 "(it holds no USB description), so the tool kept nothing rather than risk "
@@ -7962,6 +7971,262 @@ def make_send_zip(report_path: str, send: dict) -> str | None:
     except (OSError, ValueError):
         return None
     return dst
+
+
+# --------------------------------------------------------------------------
+# 1.6.2: --clean, for recordings made with an earlier version
+#
+# Up to 1.6.1 the instrument-only copies could hold traffic of another USB
+# device that carried the instrument's address (see attribute_records). This
+# writes a NEW copy of a SEND-THIS zip, a session folder or a recording with
+# only the instrument's traffic by the 1.6.2 rules, makes the analysis again
+# from the cleaned recordings, and says what it removed: counts and kinds of
+# device, never content. The original is never changed.
+# --------------------------------------------------------------------------
+
+_ANALYSIS_START = "=" * 68 + "\n  Instrument recording analysis\n"
+_REPORT_SECTION = "=" * 72
+
+
+def _clean_profile(name: str, session: dict | None):
+    """The session type a recording was made with: the i1iO table's copies
+    end in -xrite.pcap; a session folder names its own; plain files: None."""
+    if name.lower().endswith("-xrite.pcap"):
+        return SESSION_TABLE
+    if session and session.get("family"):
+        return session["family"]
+    return None
+
+
+def clean_recording(src: str, dst: str, profile=None) -> dict:
+    """Write dst with only the instrument's records of src. Returns
+    {"records": before, "kept": after, "left_out": {kind: transfers},
+    "others": transfers of other devices removed, "ok": bool}."""
+    try:
+        linktype, recs = _read_pcap(src)
+    except (OSError, ValueError) as exc:
+        return {"ok": False, "error": str(exc), "records": 0, "kept": 0, "left_out": {}}
+    if profile is None:
+        try:
+            profile = plain_file_profile(device_map(capture_events(linktype, recs)))
+        except Exception:                                 # noqa: BLE001
+            profile = None
+    att = attribute_records(linktype, recs, profile)
+    kept = [r for r, k in zip(recs, att["keep"]) if k]
+    ok = _write_pcap(dst, linktype, kept) if kept else False
+    if not kept:
+        try:
+            if os.path.exists(dst):
+                os.remove(dst)
+        except OSError:
+            pass
+    return {"ok": ok, "records": len(recs), "kept": len(kept),
+            "left_out": att["left_out"]}
+
+
+def _clean_report_text(text: str, analysis: str | None) -> tuple:
+    """(the report with its old analysis replaced, whether one was found).
+    The analysis sits at the end of the "Instrument recording session"
+    section, up to the next section line."""
+    start = text.find(_ANALYSIS_START)
+    if start < 0:
+        return text, False
+    end = text.find("\n" + _REPORT_SECTION + "\n", start)
+    end = len(text) if end < 0 else end + 1
+    note = (f"(This analysis was made again by version {PROBE_VERSION} of the tool from the "
+            "cleaned recordings; the one made at the time was removed.)\n")
+    new = note + ((analysis + "\n") if analysis else
+                  "(No analysis could be made from the cleaned recordings.)\n")
+    return text[:start] + new + "\n" + text[end:], True
+
+
+def _unique_path(path: str) -> str:
+    if not os.path.exists(path):
+        return path
+    stem, ext = os.path.splitext(path)
+    n = 2
+    while os.path.exists(f"{stem}-{n}{ext}"):
+        n += 1
+    return f"{stem}-{n}{ext}"
+
+
+def _clean_folder_files(src_dir: str, dst_dir: str, lines: list) -> dict:
+    """Clean every recording of one folder into dst_dir, copy session.json,
+    make analysis.txt again. Returns the totals."""
+    totals = {"files": 0, "left_out": {}, "removed": 0}
+    session = load_session(os.path.join(src_dir, "session.json")) \
+        if os.path.exists(os.path.join(src_dir, "session.json")) else None
+    os.makedirs(dst_dir, exist_ok=True)
+    names = sorted(os.listdir(src_dir))
+    for name in names:
+        full = os.path.join(src_dir, name)
+        if not os.path.isfile(full) or not is_sendable(name) or name.lower() == "analysis.txt":
+            continue
+        if name.lower() == "session.json":
+            with open(full, "rb") as fh, open(os.path.join(dst_dir, name), "wb") as out:
+                out.write(fh.read())
+            continue
+        res = clean_recording(full, os.path.join(dst_dir, name), _clean_profile(name, session))
+        totals["files"] += 1
+        removed = res["records"] - res["kept"]
+        totals["removed"] += removed
+        for k, v in res["left_out"].items():
+            totals["left_out"][k] = totals["left_out"].get(k, 0) + v
+        if res.get("error"):
+            lines.append(f"    {name}: not a readable recording, left out")
+            continue
+        what = left_out_kinds_words(res["left_out"])
+        if not res["kept"]:
+            lines.append(f"    {name}: nothing in it could be attributed to the instrument, "
+                         "so the cleaned copy leaves this file out" + (f" ({what})" if what else ""))
+        elif removed:
+            lines.append(f"    {name}: kept {res['kept']:,} of {res['records']:,} records; "
+                         + (f"removed {what}" if what else
+                            f"removed {removed:,} records of other devices"))
+        else:
+            lines.append(f"    {name}: nothing to remove ({res['kept']:,} records kept)")
+    if session is not None and os.path.exists(os.path.join(dst_dir, "session.json")):
+        try:
+            analysis = summarize_session([os.path.join(dst_dir, "session.json")])
+            with open(os.path.join(dst_dir, "analysis.txt"), "w", encoding="utf-8") as fh:
+                fh.write(analysis + "\n")
+            totals["analysis"] = analysis
+        except Exception as exc:                          # noqa: BLE001
+            lines.append(f"    the analysis could not be made again ({exc}); analysis.txt "
+                         "is left out of the cleaned copy")
+    return totals
+
+
+def left_out_kinds_words(left: dict) -> str:
+    """"3 transfers that looked like a USB disk or memory stick; ..." or ""."""
+    parts = []
+    for kind, count in sorted(left.items(), key=lambda kv: -kv[1]):
+        word = "transfer" if count == 1 else "transfers"
+        parts.append(f"{count:,} {word} that looked like {LEFT_OUT_KINDS.get(kind, kind)}")
+    return "; ".join(parts)
+
+
+def clean_paths(paths: list) -> tuple:
+    """--clean: (text to print, exit code). Never changes the originals."""
+    import zipfile                                        # noqa: PLC0415
+    lines = ["=" * 68, "  Cleaning recordings made with an earlier version of this tool",
+             "=" * 68, "",
+             "  " + _wrap("Versions up to 1.6.1 could keep traffic of another USB device "
+                          "that shared the instrument's USB hub (for example a USB disk) in "
+                          "the instrument-only files. This writes a NEW copy that holds only "
+                          "the instrument's traffic, by the rules of version "
+                          f"{PROBE_VERSION}, and makes the analysis again. It shows what it "
+                          "removed (how much, and what kind of device it looked like), never "
+                          "the content. Your original is not changed.", 64, "  "), ""]
+    code = 0
+    for path in paths:
+        given = path
+        if not os.path.exists(path):
+            lines += [f"  {given}: not found", ""]
+            code = 1
+            continue
+        if os.path.isdir(path):
+            dst = _unique_path(path.rstrip("/\\") + "-cleaned")
+            lines.append(f"  {given} (a session folder)")
+            _clean_folder_files(path, dst, lines)
+            lines += [f"  -> the cleaned copy: {dst}", ""]
+            continue
+        low = path.lower()
+        if low.endswith(".zip"):
+            dst = _unique_path(path[:-4] + "-cleaned.zip")
+            lines.append(f"  {given} (a SEND-THIS zip)")
+            try:
+                zf = zipfile.ZipFile(path)
+            except (OSError, zipfile.BadZipFile) as exc:
+                lines += [f"    not a readable zip file ({exc})", ""]
+                code = 1
+                continue
+            with tempfile.TemporaryDirectory(prefix="chromiq-clean-") as tmp:
+                src_root = os.path.join(tmp, "in")
+                out_root = os.path.join(tmp, "out")
+                os.makedirs(src_root)
+                os.makedirs(out_root)
+                folders, reports = set(), []
+                with zf:
+                    for info in zf.infolist():
+                        parts = [p for p in info.filename.replace("\\", "/").split("/") if p]
+                        if (info.is_dir() or not parts or len(parts) > 2
+                                or any(p in (".", "..") or ":" in p for p in parts)):
+                            continue
+                        name = parts[-1]
+                        if not (is_sendable(name) or name.lower().endswith(".txt")):
+                            continue
+                        sub = parts[0] if len(parts) == 2 else ""
+                        target_dir = os.path.join(src_root, sub) if sub else src_root
+                        os.makedirs(target_dir, exist_ok=True)
+                        with zf.open(info) as fh, \
+                                open(os.path.join(target_dir, name), "wb") as out:
+                            out.write(fh.read())
+                        if sub:
+                            folders.add(sub)
+                        elif name.lower().endswith(".txt"):
+                            reports.append(name)
+                analysis = None
+                for sub in sorted(folders):
+                    totals = _clean_folder_files(os.path.join(src_root, sub),
+                                                 os.path.join(out_root, sub), lines)
+                    analysis = totals.get("analysis") or analysis
+                # loose recordings at the top of the zip
+                loose = [n for n in sorted(os.listdir(src_root))
+                         if os.path.isfile(os.path.join(src_root, n)) and is_sendable(n)
+                         and n.lower() not in ("session.json", "analysis.txt")]
+                for name in loose:
+                    res = clean_recording(os.path.join(src_root, name),
+                                          os.path.join(out_root, name),
+                                          _clean_profile(name, None))
+                    what = left_out_kinds_words(res["left_out"])
+                    removed = res["records"] - res["kept"]
+                    lines.append(f"    {name}: kept {res['kept']:,} of {res['records']:,} "
+                                 "records" + (f"; removed {what}" if what else
+                                              f"; removed {removed:,} records of other devices"
+                                              if removed else ""))
+                for name in reports:
+                    with open(os.path.join(src_root, name), encoding="utf-8",
+                              errors="replace") as fh:
+                        text = fh.read()
+                    new, found = _clean_report_text(text, analysis)
+                    with open(os.path.join(out_root, name), "w", encoding="utf-8") as fh:
+                        fh.write(new)
+                    lines.append(f"    {name}: " + (
+                        "its analysis was replaced by the one made from the cleaned "
+                        "recordings" if found else "kept as it was (it holds no analysis)"))
+                try:
+                    with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as out_zip:
+                        for root, _dirs, files in os.walk(out_root):
+                            for name in sorted(files):
+                                full = os.path.join(root, name)
+                                arc = os.path.relpath(full, out_root).replace(os.sep, "/")
+                                out_zip.write(full, arc)
+                except OSError as exc:
+                    lines += [f"    the cleaned zip could not be written ({exc})", ""]
+                    code = 1
+                    continue
+            lines += [f"  -> the cleaned copy: {dst}", ""]
+            continue
+        if low.endswith((".pcap", ".pcapng")):
+            stem = path[:-7] if low.endswith(".pcapng") else path[:-5]
+            dst = _unique_path(stem + "-cleaned.pcap")
+            res = clean_recording(path, dst, _clean_profile(os.path.basename(path), None))
+            what = left_out_kinds_words(res["left_out"])
+            lines.append(f"  {given}: kept {res['kept']:,} of {res['records']:,} records"
+                         + (f"; removed {what}" if what else ""))
+            lines += [f"  -> the cleaned copy: {dst}" if res["kept"] else
+                      "  -> nothing in it could be attributed to the instrument, so no "
+                      "cleaned copy was written", ""]
+            continue
+        lines += [f"  {given}: not a SEND-THIS zip, a session folder or a recording", ""]
+        code = 1
+    lines.append("  " + _wrap(
+        "What to do now: send the cleaned copy instead of the old one (if you want to "
+        "send it at all), and delete the old file and any copy of it you no longer need. "
+        "If you already sent the old one to us, tell us and we will delete it.", 64, "  "))
+    lines.append("=" * 68)
+    return "\n".join(lines), code
 
 
 def manual_recording_text(folder: str, after_failure: bool = False) -> str:
@@ -8399,6 +8664,11 @@ def main(argv: list | None = None) -> int:
                         help="read a USB recording (.pcap/.pcapng) and print a plain "
                              "verdict + command timeline; with no path, finds "
                              "the newest recording next to the tool")
+    parser.add_argument("--clean", nargs="+", default=None, metavar="ZIP_OR_FOLDER",
+                        help="write a cleaned copy of a SEND-THIS zip, a session folder or "
+                             "a recording made with version 1.6.1 or earlier: only the "
+                             "instrument's traffic, by this version's rules. The original "
+                             "is not changed")
     parser.add_argument("--steps", default=None, metavar="LIST",
                         help="handheld session: record only these steps, for example "
                              "--steps 7,9 (to repeat steps of an earlier session)")
@@ -8452,6 +8722,11 @@ def main(argv: list | None = None) -> int:
 
     if args.rehearse:
         return rehearse_io()
+
+    if args.clean is not None:
+        text, code = clean_paths(args.clean)
+        print(text)
+        return code
 
     if args.analyze is not None:
         paths = args.analyze or find_session_folders() or find_captures()
