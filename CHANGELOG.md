@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.6.1
+
+- **`--analyze` with several plain files from different instruments:**
+  the files are no longer read as one. The analysis lists which instrument
+  each file shows and asks you, in friendly words, to analyse each
+  instrument's recordings on their own (it prints the commands to do so).
+  The check of every file at the top stays as it was. This closes the known
+  limit of 1.6.0, where an i1Pro 2 in one file and an i1iSis in the other,
+  both at the same USB address, could be named after the wrong instrument
+  and the i1Pro 2's outgoing lines could appear among the lines sent to the
+  i1iSis.
+- **A device in plain files is told apart by file, bus and address**, not
+  by bus and address only, so a device in one file no longer hides another
+  device that sat at the same address in another file. The same device in
+  several files is still listed once. The instrument family now comes from
+  the same decision that chose what to read, never from a second one.
+  Session folders, and what every session keeps in the copy to send, are
+  exactly as in 1.6.0 (checked against the tagged 1.5.5 for every session
+  type except the i1iSis, and against 1.6.0's own 234 cases).
+- **README:** the i1iSis section now says itself that the session has not
+  been tried with a real i1iSis yet.
+- Tests: plain files that share a USB address, in both orders, for Windows
+  and macOS recordings; a mutant of the read-only test may be left out only
+  on Windows, where its function does not exist.
+
 ## v1.6.0
 
 The i1iSis chart readers (i1iSis, i1iSis XL, i1iSis 2, i1iSis 2 XL).
@@ -57,8 +82,8 @@ The i1iSis chart readers (i1iSis, i1iSis XL, i1iSis 2, i1iSis 2 XL).
   wrong instrument family, and what the program sent to the other
   instrument can then appear among the lines sent to the i1iSis. The
   devices' answers stay hidden, and the copies to send are not affected.
-  Analysing one recording set (one session folder) at a time avoids it; a
-  later version fixes it.
+  Analysing one recording set (one session folder) at a time avoids it.
+  Fixed in 1.6.1.
 
 An independent review before the release found, and this release fixes:
 
