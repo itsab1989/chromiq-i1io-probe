@@ -229,15 +229,21 @@ jobs:
             - **Versions up to 1.6.1 could keep traffic of another USB
               device** that shared the instrument's USB hub (for example a
               USB disk) in the files meant to hold only the instrument's
-              traffic, and in `analysis.txt` and the report. Now a packet is
-              kept only when it belongs to the instrument by its address at
-              that moment, its endpoint and its content; whatever cannot be
-              attributed is left out, and the tool says so. No session keeps
-              a monitor calibrator (such as an i1Display) any more.
+              traffic, and in `analysis.txt` and the report.
+            - **1.6.2 leaves out** traffic at the instrument's address on
+              endpoints the instrument does not have (the case found), other
+              devices' kinds of traffic (disk, keyboard, mouse, hub), and
+              monitor calibrators; then the analysis shows no contents of
+              that step and asks you to record it again.
+            - **It cannot tell apart** a device that was given the
+              instrument's address and uses the same endpoint numbers (for
+              example a USB 3 "UAS" disk, a printer, a phone or a USB-serial
+              adapter), nor another device's vendor requests.
             - **What to do:** update; clean old files with
-              `--clean SEND-THIS-....zip` (or delete them); if unsure,
-              unplug other USB devices while you record. If you already sent
-              us an older file, tell us and we will delete it.
+              `--clean SEND-THIS-....zip` (or delete them); and while you
+              record, unplug every other USB device you can, or at least
+              those on the same hub or dock. If you already sent us an older
+              file, tell us and we will delete it.
             - Clearer steps: one action per line; wait for the ready signal
               before moving; "slow" means about twice as long as the normal
               scan, counted. The measurement condition is asked.

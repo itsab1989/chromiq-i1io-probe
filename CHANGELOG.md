@@ -9,28 +9,38 @@ older.**
   shared the instrument's USB hub in the files meant to hold only the
   instrument's traffic, and in `analysis.txt` and the report. A real Windows
   recording held a USB disk's traffic this way, including the disk's model
-  name, its serial number and its first sectors. The most likely reason
-  (it cannot be proven for that file, whose full recording no longer
-  exists): USBPcap writes
-  into each packet a device address it remembered earlier, and after Windows
-  gives a device a new address another device can own the remembered one
-  (USBPcap issue 105); the tool kept everything at the instrument's address.
-  Mac recordings name the device in every packet and were not affected this
-  way; on Linux an address can come back after a replug.
-- **What to do:** update to 1.6.2; clean what you already made with
+  name, its serial number and its first sectors. The most likely reason (it
+  cannot be proven for that file, whose full recording no longer exists):
+  USBPcap writes into each packet a device address it remembered earlier,
+  and after Windows gives a device a new address another device can own the
+  remembered one (USBPcap issue 105). The tool kept everything at the
+  instrument's address. Mac recordings name the device in every packet and
+  were not affected this way; on Linux an address can come back after a
+  replug.
+- **What 1.6.2 fixes:** traffic at the instrument's address is now left out
+  when it travels on an endpoint the instrument does not have (the case in
+  that recording), when it is another kind of device's traffic (disk
+  commands with their data and status; disk, keyboard, mouse and hub
+  requests; other devices' USB descriptions; a keyboard on the instrument's
+  own button endpoint), and when the address belonged to another device at
+  that time. No session keeps a monitor calibrator (such as an i1Display)
+  any more. When a recording shows such traffic, the analysis shows no
+  contents of that step at all, only counts and sizes, and the step's
+  check and `--clean` say so and ask you to record it again with the other
+  devices unplugged.
+- **What can still happen:** a device that was given the instrument's
+  address AND uses the same endpoint numbers as the instrument looks to
+  the recording exactly like the instrument, and its traffic can still end
+  up in the recording files, for example a USB 3 "UAS" disk, a printer, a
+  phone or a USB-serial adapter, and so can another device's vendor
+  requests. If the tool sees nothing else of that device, the analysis can
+  show some of it too.
+- **What to do:** update to 1.6.2. Clean what you already made with
   `--clean SEND-THIS-....zip` (or the session folder), or delete the old
-  files; if you are unsure, unplug other USB devices while you record. If
-  you already sent us an older file, tell us and we will delete it.
-- **The fix:** a packet is kept only if its address belonged to the
-  instrument at that moment, it travels on one of the instrument's own
-  endpoints (of the right kind), and it is not another kind of device's
-  traffic (disk commands, their data and status; disk, keyboard, mouse and
-  hub requests). No session keeps a monitor calibrator (an i1Display, for
-  example) any more. Whatever cannot be attributed with certainty is left out,
-  and the step's check, `--analyze` and `--clean` say how much and what kind
-  of device it looked like, never what it was. The analysis reads only what
-  is kept, so it can no longer print another device's bytes or find
-  "possible position data" in them.
+  files. While you record, unplug every other USB device you can from that
+  computer, or at least from the same hub or dock: not only disks and
+  memory sticks, also printers, phones, adapters and card readers. If you
+  already sent us an older file, tell us and we will delete it.
 - **New: `--clean`** writes a cleaned copy of a `SEND-THIS-....zip`, a
   session folder or a recording, makes `analysis.txt` again and replaces the
   analysis inside the report. The original is not changed.
@@ -59,7 +69,10 @@ older.**
   not have. An independent review attacked the first draft; its findings
   (a monitor calibrator still kept, transfer types not checked without a
   USB description, control data without its request, another device's
-  string description) are fixed and tested.
+  string description) are fixed and tested. A second review ran 17 kinds
+  of foreign device at the instrument's address for six session types;
+  those cases are tests now, and the ones 1.6.2 cannot tell apart are
+  listed in them exactly.
 
 ## v1.6.1
 

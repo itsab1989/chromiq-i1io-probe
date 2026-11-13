@@ -42,8 +42,10 @@ It takes about **two minutes**, and you do **not** need to be technical.
 >    next to it and says what it removed (how much, and what kind of device
 >    it looked like, never the content); your original stays as it was.
 >    Or simply delete the old files.
-> 3. If you are unsure, unplug other USB devices (above all disks and
->    memory sticks) while you record.
+> 3. While you record, unplug every other USB device you can from that
+>    computer, or at least from the same hub or dock (disks, memory sticks,
+>    printers, phones, adapters). 1.6.2 cannot tell every such device apart
+>    from the instrument ([what it can and cannot](#which-traffic-is-the-instruments-since-162)).
 >
 > If you already sent us an older file, tell us and we will delete it.
 > [Why it happened](#which-traffic-is-the-instruments-since-162).
@@ -483,9 +485,10 @@ line about what the lights did.
   before you start.
 - While a step records, USBPcap also sees the other devices on the same USB
   root hub, such as a keyboard. After each step the tool makes a copy that
-  holds **only the instrument's traffic** (by the rules
-  [below](#which-traffic-is-the-instruments-since-162); up to 1.6.1 by its
-  device address alone, which was not enough). Only that copy goes into the
+  is meant to hold **only the instrument's traffic** (by the rules
+  [below](#which-traffic-is-the-instruments-since-162), which say what they
+  cannot tell apart; up to 1.6.1 by its device address alone, which was not
+  enough). Only that copy goes into the
   session folder (`instrument-session-<date>`);
   the full recordings sit in a separate folder ending in `-FULL-do-not-send`,
   and the tool offers to delete them at the end.
@@ -756,8 +759,9 @@ Useful options:
   whether the table's commands were recorded. The table's serial number is
   hidden unless you add `--no-redact`.
   With no path it finds the newest session or recording next to the tool.
-  Reads only; sends nothing to the device. It reads only what belongs to
-  the instrument (1.6.2), so it never prints another device's bytes.
+  Reads only; sends nothing to the device. Since 1.6.2 it reads only what
+  the copies keep, and shows no contents of a step in which another device
+  shared the instrument's address.
 - `--clean ZIP_OR_FOLDER ...` (1.6.2): for files made with version 1.6.1 or
   older. Writes a cleaned copy of a `SEND-THIS-....zip` (as
   `...-cleaned.zip`), a session folder (as `...-cleaned`) or a single
@@ -775,38 +779,49 @@ The tests need nothing but Python: `python3 -m unittest discover -s tests -v`.
 ## Which traffic is the instrument's (since 1.6.2)
 
 A real Windows recording showed a USB disk's traffic carrying the
-instrument's own USB address. The reason is in USBPcap, the recorder: the
-address it writes into each packet is one it remembered when the device was
-started, and after Windows gives a device a new address (for example after
-waking from hibernation) another device can by then own the remembered one
-(USBPcap's own issue 105). The tool used to keep everything at the
-instrument's address, so it kept the disk's traffic too. (That is the most
-likely reason for the recording we saw; the full recording no longer exists,
-so it cannot be proven for that one file.) A Mac recording
-names the device in every packet, and Linux never gives one address to two
-devices at the same time, but an address can come back after a replug.
+instrument's own USB address. The most likely reason is in USBPcap, the
+recorder: the address it writes into each packet is one it remembered when
+the device was started, and after Windows gives a device a new address (for
+example after waking from hibernation) another device can by then own the
+remembered one (USBPcap's own issue 105). The tool used to keep everything
+at the instrument's address, so it kept the disk's traffic too. (The full
+recording no longer exists, so this cannot be proven for that one file.) A
+Mac recording names the device in every packet, and Linux never gives one
+address to two devices at the same time, but an address can come back after
+a replug.
 
-Since 1.6.2 a packet is kept only when all of this holds:
+**What 1.6.2 leaves out.** A packet at the instrument's address is left out
+when:
 
-1. its address belonged to the instrument at that moment (each USB
+1. the address belonged to another device at that moment (each USB
    description at an address starts a new owner; the address every device
    uses while it is being set up is never kept);
-2. it travels on endpoint 0 or on one of the instrument's own endpoints, of
-   the right kind (from the instrument's own USB description in the
-   recording, or the endpoints its family is known to have);
-3. it is not another kind of device's traffic: no disk commands, their data
-   or their status, no requests of a disk, keyboard, mouse or hub, nothing
-   aimed at an endpoint the instrument does not have.
+2. it travels on an endpoint the instrument does not have, or of the wrong
+   kind (from the instrument's own USB description in the recording, or the
+   endpoints its family is known to have). This is the case in the recording
+   we saw;
+3. it is another kind of device's traffic: disk commands with their data and
+   status, requests of a disk, keyboard, mouse or hub, another device's USB
+   description, or a keyboard on the instrument's own button endpoint.
 
-Whatever cannot be attributed with certainty is left out, and the step's
-check says so ("some traffic could not be attributed to the instrument and
-was left out"), with how much and what kind of device it looked like, never
-what it was. The analysis reads only what is kept. Since 1.6.2 no session
-keeps a monitor calibrator (such as an i1Display) either. One limit remains:
-a device that is wrongly labelled with the instrument's address and sends
-nothing recognisable, either on exactly the instrument's endpoint numbers or
-as vendor requests on endpoint 0, cannot be told apart. If you are unsure,
-unplug other USB devices while you record.
+No session keeps a monitor calibrator (such as an i1Display) either. The
+step's check says what was left out, how much and what kind of device it
+looked like, never what it was. When a recording shows another device at the
+instrument's address in this way, the analysis shows no contents of that
+step, only counts and sizes, and asks you to record it again with the other
+devices unplugged.
+
+**What 1.6.2 cannot tell apart.** A device that was given the instrument's
+address and uses the same endpoint numbers as the instrument looks to the
+recording exactly like the instrument. Its traffic can still end up in the
+recording files, for example a USB 3 "UAS" disk, a printer, a phone or a
+USB-serial adapter, and so can another device's vendor requests. If the tool
+sees nothing else of that device, the analysis can show some of it too.
+
+**So, while you record:** unplug every other USB device you can from that
+computer, or at least from the same hub or dock. Not only disks and memory
+sticks: also printers, phones, adapters and card readers. A keyboard and a
+mouse may stay.
 
 ---
 
