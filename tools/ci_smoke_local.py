@@ -62,7 +62,8 @@ def main():
     failed = 0
     with tempfile.TemporaryDirectory() as tmp:
         work = os.path.join(tmp, "repo")
-        shutil.copytree(ROOT, work, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+        shutil.copytree(ROOT, work, ignore=shutil.ignore_patterns(
+            ".git", "__pycache__", "out", "smoke", "build", "dist", "*.spec"))
         out = os.path.join(work, "out")
         os.makedirs(out)
         shutil.copy(os.path.join(work, "chromiq_io_probe.py"), out)

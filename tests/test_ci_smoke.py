@@ -40,7 +40,10 @@ class AnalyserSmokeSteps(unittest.TestCase):
         self.assertEqual(len(steps), 3)
         with tempfile.TemporaryDirectory() as tmp:
             work = os.path.join(tmp, "repo")
-            shutil.copytree(ROOT, work, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+            # The build has made out/ and smoke/ in the checkout before the
+            # tests run (Python 3.8 step): never copy them.
+            shutil.copytree(ROOT, work, ignore=shutil.ignore_patterns(
+                ".git", "__pycache__", "out", "smoke", "build", "dist", "*.spec"))
             os.makedirs(os.path.join(work, "out"))
             wrapper = os.path.join(work, "out", "probe")
             with open(wrapper, "w") as fh:

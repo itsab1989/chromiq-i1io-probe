@@ -839,10 +839,13 @@ class DeviceWatch:
                 self._patches.append(mock.patch.object(_ctypes, name, refuse("_ctypes." + name)))
         self._patches.append(mock.patch.object(multiprocessing.process.BaseProcess, "start",
                                                refuse("multiprocessing.Process.start")))
-        import pty
+        try:
+            import pty                       # POSIX only (it needs termios)
+        except ImportError:
+            pty = None
         for mod, name in ((os, "forkpty"), (os, "openpty"), (os, "fork"), (pty, "fork"),
                           (pty, "openpty"), (pty, "spawn")):
-            if hasattr(mod, name):
+            if mod is not None and hasattr(mod, name):
                 self._patches.append(mock.patch.object(
                     mod, name, refuse(f"{mod.__name__}.{name}")))
         if real_posix_spawn:
@@ -895,6 +898,10 @@ MUTATIONS = {
     "multiprocessing_spawn": '__import__("multiprocessing").get_context("spawn").Process('
                              'target=os.getpid).start()',
 }
+# Mutations that need a POSIX function; on Windows the function does not
+# exist, so the broken copy could not do it there either.
+POSIX_ONLY = {"posix_spawn": ("os", "posix_spawn"), "forkpty": ("os", "forkpty"),
+              "ctypes_dlsym": ("_ctypes", "dlsym")}
 MUTATION_ANCHOR = '    os.makedirs(folder, exist_ok=True)\n    _END["session_folder"] = folder\n'
 
 
@@ -934,6 +941,10 @@ class ReadOnlyPromise(_IsisSessionBase):
             src = fh.read()
         self.assertEqual(src.count(MUTATION_ANCHOR), 1)
         for name, line in MUTATIONS.items():
+            if name in POSIX_ONLY:
+                mod_name, attr = POSIX_ONLY[name]
+                if not hasattr(__import__(mod_name), attr):
+                    continue
             with self.subTest(mutation=name):
                 path = os.path.join(self.dir, f"mutant_{name}.py")
                 with open(path, "w", encoding="utf-8") as fh:
