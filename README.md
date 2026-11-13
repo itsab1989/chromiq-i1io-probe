@@ -47,7 +47,8 @@ It takes about **two minutes**, and you do **not** need to be technical.
 >    printers, phones, adapters). 1.6.2 cannot tell every such device apart
 >    from the instrument ([what it can and cannot](#which-traffic-is-the-instruments-since-162)).
 >
-> If you already sent us an older file, tell us and we will delete it.
+> If you already sent us an older file, tell us and we will delete it
+> wherever we can, and treat it as private meanwhile.
 > [Why it happened](#which-traffic-is-the-instruments-since-162).
 
 > **Important for owners of an i1Pro 2 or an i1iO 2:** i1Profiler **3.8.7**

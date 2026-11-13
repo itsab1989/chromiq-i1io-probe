@@ -28,7 +28,8 @@ It writes a cleaned copy next to it and says what it removed.  Or
 simply delete the old files.  While you record, unplug every other
 USB device you can (disks, memory sticks, printers, phones,
 adapters): 1.6.2 cannot tell every such device apart from the
-instrument.
+instrument.  If you already sent us an older file, tell us and we
+will delete it wherever we can, and treat it as private meanwhile.
 
 
 THE SHORT VERSION

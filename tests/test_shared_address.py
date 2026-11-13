@@ -200,8 +200,10 @@ class SharedAddress(unittest.TestCase):
         self.assertTrue(all(not self.results[c]["seen"] for c in leaked))
 
     def test_a_keyboard_on_the_button_endpoint_is_recognised(self):
-        for prof, name in (("i1pro2", "keyboard-84"), ("i1pro3", "keyboard-83"),
-                           ("munki", "keyboard-83")):
+        # (the ColorMunki's 8-byte events are checked by size only, since an
+        # event code ArgyllCMS does not know must be kept: a keyboard there is
+        # kept in the copy, its bytes are never shown)
+        for prof, name in (("i1pro2", "keyboard-84"), ("i1pro3", "keyboard-83")):
             with self.subTest(session=prof):
                 r = self.results[(prof, name)]
                 self.assertIn("button", r["left_out"])

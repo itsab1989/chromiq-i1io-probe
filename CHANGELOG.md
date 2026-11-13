@@ -38,14 +38,16 @@ older.**
   the recording exactly like the instrument, and its traffic can still end
   up in the recording files, for example a USB 3 "UAS" disk, a printer, a
   phone or a USB-serial adapter, and so can another device's vendor
-  requests. If the tool sees nothing else of that device, the analysis can
+  requests and a keyboard's reports on a ColorMunki's event endpoint (their
+  bytes are not shown). If the tool sees nothing else of that device, the analysis can
   show some of it too.
 - **What to do:** update to 1.6.2. Clean what you already made with
   `--clean SEND-THIS-....zip` (or the session folder), or delete the old
   files. While you record, unplug every other USB device you can from that
   computer, or at least from the same hub or dock: not only disks and
   memory sticks, also printers, phones, adapters and card readers. If you
-  already sent us an older file, tell us and we will delete it.
+  already sent us an older file, tell us and we will delete it wherever we
+  can, and treat it as private meanwhile.
 - **New: `--clean`** writes a cleaned copy of a `SEND-THIS-....zip`, a
   session folder or a recording, makes `analysis.txt` again and replaces the
   analysis inside the report. The original is not changed. It refuses

@@ -244,7 +244,8 @@ jobs:
               `--clean SEND-THIS-....zip` (or delete them); and while you
               record, unplug every other USB device you can, or at least
               those on the same hub or dock. If you already sent us an older
-              file, tell us and we will delete it.
+              file, tell us and we will delete it wherever we can, and treat
+              it as private meanwhile.
             - Clearer steps: one action per line; wait for the ready signal
               before moving; "slow" means about twice as long as the normal
               scan, counted. The measurement condition is asked.

@@ -115,10 +115,24 @@ class OneActionPerLine(unittest.TestCase):
                             self.assertLessEqual(len(line), 79, line)
 
     def test_a_stop_key_is_not_taken_as_the_notes(self):
-        for word in ("e", " E ", "end", "done", "q", ""):
+        for word in ("e", " E ", "end", "done", "q"):
             self.assertTrue(probe.is_stop_word(word), word)
-        for word in ("strip A, accepted", "ok", "e-mail"):
+        for word in ("strip A, accepted", "ok", "e-mail", ""):   # empty: notes are optional
             self.assertFalse(probe.is_stop_word(word), word)
+
+    def test_the_session_prompts_fit_79_columns_with_their_trailing_space(self):
+        with open(os.path.join(os.path.dirname(HERE), "chromiq_io_probe.py"),
+                  encoding="utf-8") as fh:
+            src = fh.read()
+        start = src.index("def run_instrument_session")
+        body = src[start:src.index("\nSHORT_STEP_SECONDS", start)]
+        for m in re.finditer(r'_session_ask\(\s*((?:f?"(?:[^"\\]|\\.)*"\s*)+)', body):
+            text = "".join(re.findall(r'f?"((?:[^"\\]|\\.)*)"', m.group(1)))
+            text = text.replace("\\n", "\n")
+            for line in text.split("\n"):
+                if "{" in line:
+                    continue                    # filled in at run time, checked elsewhere
+                self.assertLessEqual(len(line), 79, repr(line))
 
     def test_no_em_dash(self):
         for name, text in all_texts():

@@ -689,8 +689,9 @@ class CleanOldFiles(_Base):
     def test_a_huge_zip_member_is_not_unpacked(self):
         big = os.path.join(self.dir, "SEND-THIS-big.zip")
         with zipfile.ZipFile(big, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr("x/step1-instrument.pcap", b"\0" * (probe.CLEAN_MEMBER_LIMIT + 1))
-        text, _code = probe.clean_paths([big])
+            zf.writestr("x/step1-instrument.pcap", b"\0" * (64 * 1024 + 1))
+        with mock.patch.object(probe, "CLEAN_MEMBER_LIMIT", 64 * 1024):
+            text, _code = probe.clean_paths([big])
         self.assertIn("far larger than any recording this tool makes", text)
 
     def test_cleaning_a_clean_file_says_nothing_to_remove(self):

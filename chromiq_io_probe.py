@@ -3407,8 +3407,9 @@ BUTTON_ENDPOINTS = {
     "i1pro2": (0x84, lambda d: len(d) == 1),
     "i1pro": (0x84, lambda d: len(d) == 1),
     "i1pro3": (0x83, lambda d: len(d) == 1),
-    "munki": (0x83, lambda d: len(d) == 8
-              and int.from_bytes(d[:4], "little") in (0, 1, 2, 0x100)),
+    # (an unknown code is kept: ArgyllCMS itself has an "Unknown" branch, and
+    # the analysis names it "unknown event code")
+    "munki": (0x83, lambda d: len(d) == 8),
 }
 
 _DESC_TYPES = {0: "control", 1: "isochronous", 2: "bulk", 3: "interrupt"}
@@ -3897,8 +3898,8 @@ def attribute_records(linktype: int, recs, profile: str | None = None,
     foreign_eps = {fields[ri][1] for ri, why in enumerate(drop_reason)
                    if why in ("endpoint", "storage") and fields[ri]
                    and fields[ri][1] & 0x7F and fields[ri][1] != 0xFF}
-    explained = bool(left) and set(left) <= {"storage", "endpoint", "owner"}
-    if explained and (set(left) - {"owner"}):
+    explained = bool(left) and set(left) <= {"storage", "endpoint", "owner", "unattributed"}
+    if explained and (set(left) & {"storage", "endpoint"}):
         for s in wanted:
             pair = bot_pairs.get(addr(s)) if not darwin else None
             eps = allowed.get(s) or {}
@@ -3913,14 +3914,18 @@ def attribute_records(linktype: int, recs, profile: str | None = None,
 # instrument's address at the same time ("owner": the address only
 # belonged to another device at another time).
 PROVEN_FOREIGN = frozenset({"storage", "hid", "hub", "description", "endpoint",
-                            "shared-endpoint", "button", "unattributed"})
+                            "shared-endpoint", "button"})
+# ("unattributed" is NOT proof: Windows' Microsoft OS string request, a string
+# the instrument's description does not name, a control answer whose request
+# came before the recording started. They are left out of the copies, but
+# nothing is hidden and no other device is claimed.)
 # ... and the kinds that mean it used one of the instrument's OWN endpoint
 # numbers (or could not be placed at all), so that more of its traffic may
 # hide among the instrument's: then a step's contents are not shown (G2).
 # Traffic only on endpoints the instrument does not have, or recognised class
 # traffic (as in the real recording that led to 1.6.2), is simply removed,
 # and the rest is the instrument's by rules 1 to 3.
-SHARED_ENDPOINT_KINDS = frozenset({"shared-endpoint", "button", "unattributed"})
+SHARED_ENDPOINT_KINDS = frozenset({"shared-endpoint", "button"})
 
 REMOVED_TEXT = ("Another USB device's traffic at this instrument's address was removed "
                 "from this step (it used endpoints the instrument does not have, or was a "
@@ -3957,6 +3962,10 @@ def left_out_text(left: dict, explained: bool = False) -> str:
     total = sum(left.values())
     if not total:
         return ""
+    if not foreign_seen(left):
+        # 1.6.2: nothing here proves another device
+        return ("A few records could not be matched to the instrument and were left out "
+                f"({total}). They are not in the files meant to be sent.")
     kinds = [LEFT_OUT_KINDS.get(k, k) for k, _v in sorted(left.items(), key=lambda kv: -kv[1])]
     word = "transfer" if total == 1 else "transfers"
     text = (f"Some traffic could not be attributed to the instrument and was left out: "
@@ -4502,7 +4511,11 @@ def decode_munki_event(data: bytes) -> str:
     code = _le(data, 0, 4)
     stamp = _le(data, 4, 4)
     name = {0: "none", 1: "button pressed", 2: "button released",
-            0x100: "dial turned"}.get(code, f"unknown 0x{code:x}" if code is not None else "?")
+            0x100: "dial turned"}.get(code)
+    if name is None:
+        # 1.6.2: kept (ArgyllCMS knows such codes exist), but its bytes are not
+        # shown: they could be another device's (a keyboard on 0x83)
+        return f"unknown event code ({len(data)} bytes, not shown)"
     return f"{name}" + (f" at {stamp} ms" if stamp is not None else "")
 
 
@@ -8182,7 +8195,7 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
             if stop_after:
                 session["ended"] = "stopped by the operator"
                 break
-            again = _session_ask("\n  Press Enter to go on to the next step, or type  r  to "
+            again = _session_ask("\n  Press Enter to go on to the next step, or type  r  to\n  "
                                  "record this step again: ").lower()
             if again.startswith("r"):
                 entry["kept"] = False
@@ -8222,7 +8235,8 @@ SHORT_STEP_SECONDS = 2.0
 
 # 1.6.2: a notes answer that is only one of these was most likely a stop
 # key typed once too often (or an Enter); the question is asked once more.
-STOP_WORDS = ("", "e", "end", "done", "q", "quit", "stop", "s", "r")
+STOP_WORDS = ("e", "end", "done", "q", "quit", "stop", "s", "r")
+# (an empty answer is fine: the notes are optional)
 
 
 def is_stop_word(answer: str) -> bool:
@@ -8737,6 +8751,7 @@ def _copy_limited(src, dst, limit: int):
 def clean_paths(paths: list) -> tuple:
     """--clean: (text to print, exit code). Never changes the originals."""
     import zipfile                                        # noqa: PLC0415
+    import zlib                                           # noqa: PLC0415
     lines = ["=" * 68, "  Cleaning recordings made with an earlier version of this tool",
              "=" * 68, "",
              "  " + _wrap("Versions up to 1.6.1 could keep traffic of another USB device "
@@ -8787,17 +8802,25 @@ def clean_paths(paths: list) -> tuple:
                             continue
                         sub = parts[0] if len(parts) == 2 else ""
                         target_dir = os.path.join(src_root, sub) if sub else src_root
-                        if info.file_size > CLEAN_MEMBER_LIMIT or \
-                                unpacked + info.file_size > CLEAN_TOTAL_LIMIT:
+                        if info.file_size > CLEAN_MEMBER_LIMIT:
                             lines.append(f"    {name}: far larger than any recording this "
                                          "tool makes, so it was not unpacked (left out)")
+                            continue
+                        if unpacked + info.file_size > CLEAN_TOTAL_LIMIT:
+                            lines.append(f"    {name}: the zip as a whole would unpack to far "
+                                         "more than a session ever holds, so this file and "
+                                         "the rest were not unpacked (left out)")
                             continue
                         try:
                             os.makedirs(target_dir, exist_ok=True)
                             with zf.open(info) as fh, \
                                     open(os.path.join(target_dir, name), "wb") as out:
                                 got = _copy_limited(fh, out, CLEAN_MEMBER_LIMIT)
-                        except OSError:
+                        except (OSError, zipfile.BadZipFile, zlib.error, EOFError):
+                            try:
+                                os.remove(os.path.join(target_dir, name))
+                            except OSError:
+                                pass
                             lines.append(f"    {name}: could not be read from the zip, "
                                          "left out")
                             continue
@@ -8872,7 +8895,8 @@ def clean_paths(paths: list) -> tuple:
     lines.append("  " + _wrap(
         "What to do now: send the cleaned copy instead of the old one (if you want to "
         "send it at all), and delete the old file and any copy of it you no longer need. "
-        "If you already sent the old one to us, tell us and we will delete it.", 64, "  "))
+        "If you already sent the old one to us, tell us and we will delete it wherever "
+        "we can, and treat it as private meanwhile.", 64, "  "))
     lines.append("=" * 68)
     return "\n".join(lines), code
 
