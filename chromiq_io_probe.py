@@ -1565,7 +1565,8 @@ def run_io_steps(steps: list, t0: float, log: list, check=None,
             log.append(f"  mark: {what} at t={when - t0:8.3f}s")
         entry = {"title": title, "start": start, "end": end, "marks": marks}
         record.append(entry)
-        arm = ask(f"\n  In one line: {step['arm']}\n  (Enter to skip)\n  > ",
+        arm = ask("\n  " + _wrap(f"In one line: {step['arm']}", 66, "  ")
+                  + "\n  (Enter to skip)\n  > ",
                   interruptible=True).strip()
         if arm:
             log.append(f"  arm: {arm}")
@@ -1717,9 +1718,12 @@ def io_log_header(t0: float) -> list:
             f"session start (UTC epoch seconds): {t0:.3f}"]
 
 
-def io_timed_steps(check=None) -> list:
+def io_timed_steps(check=None, show_ready: bool = False) -> list:
     """The steps, timed, while someone else's recording runs (Wireshark on
     Windows, a hardware sniffer on a Mac). Returns the step records."""
+    if show_ready:
+        print()
+        print(io_ready_text())
     t0 = time.time()
     log = io_log_header(t0)
     record: list = []
@@ -4480,7 +4484,7 @@ def macos_recording_step(direct: bool) -> None:
     print("  hardware sniffer), this tool can still time the i1Profiler steps")
     print("  for you, which makes that recording much easier to read.")
     if said_yes(ask("  Time the steps for you? (yes / no): ")):
-        io_timed_steps()
+        io_timed_steps(show_ready=True)
     else:
         section("Stage 2: recording",
                 "[not possible on this Mac: " + " ".join(readiness["reasons"]) + "]")
