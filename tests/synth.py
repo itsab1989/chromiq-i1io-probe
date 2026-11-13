@@ -64,11 +64,11 @@ class UsbPcapWriter:
         self._rec(self.irp, dev, ep, xfer, 1, data)
         self.tick(0.0002)
 
-    def bulk_out(self, dev, ep, data):
+    def bulk_out(self, dev, ep, data, xfer=XFER_BULK):
         self.irp += 1
-        self._rec(self.irp, dev, ep, XFER_BULK, 0, data)
+        self._rec(self.irp, dev, ep, xfer, 0, data)
         self.tick(0.0002)
-        self._rec(self.irp, dev, ep, XFER_BULK, 1, b"")
+        self._rec(self.irp, dev, ep, xfer, 1, b"")
         self.tick(0.0002)
 
     def describe(self, dev, vid, pid, endpoints):

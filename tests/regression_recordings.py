@@ -30,6 +30,8 @@ DEVICES = {
 # The i1Pro 2's own vendor requests (ArgyllCMS i1pro_imp.c), so that a
 # device without a description can be guessed from its commands.
 I1PRO2_REQS = (0xC0, 0xC1, 0xC2, 0xC3)
+# descriptor endpoint type (2 bulk, 3 interrupt) -> USBPcap transfer type
+_XFER = {2: synth.XFER_BULK, 3: synth.XFER_INT}
 
 
 def _usbpcap(present, described, pro_cmds=False):
@@ -40,10 +42,13 @@ def _usbpcap(present, described, pro_cmds=False):
             w.describe(a, vid, pid, eps)
     for a in present:
         _vid, _pid, _l, m, eps = DEVICES[a]
-        w.bulk_in(a, [e for e, _k in eps if e & 0x80][0], m)
-        outs = [e for e, _k in eps if not e & 0x80]
+        # 1.6.2: each endpoint with the transfer type its description gives
+        # (a real device cannot do otherwise; 1.6.2 checks the type).
+        ins = [(e, k) for e, k in eps if e & 0x80]
+        w.bulk_in(a, ins[0][0], m, xfer=_XFER[ins[0][1]])
+        outs = [(e, k) for e, k in eps if not e & 0x80]
         if outs:
-            w.bulk_out(a, outs[0], m + b"-OUT\r")
+            w.bulk_out(a, outs[0][0], m + b"-OUT\r", xfer=_XFER[outs[0][1]])
     if pro_cmds and 9 in present:
         for req in I1PRO2_REQS:
             w.vendor_in(9, req, b"I1PRO2-SERIAL-EEPROM")

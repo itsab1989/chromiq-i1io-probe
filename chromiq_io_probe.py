@@ -2750,10 +2750,14 @@ def check_capture(path: str, profile: str | None = None) -> dict:
                 "code": "unreadable", "verdict": f"not a readable recording: {exc}"}
     identified = True
     unidentified_isis = False
+    # 1.6.2: the instrument's records are decided in one place
+    # (attribute_records): its address at that moment, its endpoints, and
+    # nothing that is another device's kind of traffic.
+    mine_recs, att = kept_records(linktype, recs, profile)
+    how = att["how"]
+    left_out = att["left_out"]
     if linktype == LINKTYPE_USB_DARWIN:
-        wanted_ids, how = darwin_selection((d for _ts, d in recs), profile)
-        kept_ids = sorted(wanted_ids)
-        mine_recs = [(ts, d) for ts, d in recs if _darwin_ids(d) in wanted_ids]
+        kept_ids = sorted(att["devices"])
         mine = [d for _ts, d in mine_recs]
         xrite = len(mine)
         mine_events = capture_events(linktype, mine_recs)
@@ -2761,18 +2765,16 @@ def check_capture(path: str, profile: str | None = None) -> dict:
         # 1.5: Windows and Linux records carry a bus and device address but no
         # vendor ID, so the X-Rite device is found from its USB description
         # (or its i1Pro commands). If the recording shows no device at all,
-        # every record counts, as in 1.4.
-        keys = record_device_keys(linktype, recs)
+        # every record counts for this check (only counts, as in 1.4), and
+        # nothing is kept.
         all_events = capture_events(linktype, recs)
         devices = device_map(all_events)
-        wanted_keys, how = instrument_selection(devices, profile,
-                                                undescribed_present(keys, devices))
-        wanted = set(wanted_keys)
-        kept_ids = sorted({(devices[k]["vid"], devices[k]["pid"]) for k in wanted
-                           if devices[k].get("vid") is not None})
+        wanted = att["devices"]
+        kept_ids = sorted({(v["vid"], v["pid"]) for v in wanted.values()
+                           if v.get("vid") is not None})
         if wanted:
-            mine = [d for (_ts, d), k in zip(recs, keys) if k in wanted]
-            mine_events = [e for e in all_events if (e["bus"], e["dev"]) in wanted]
+            mine = [d for _ts, d in mine_recs]
+            mine_events = capture_events(linktype, mine_recs)
         elif profile == "isis":
             # 1.6 review: no i1iSis identified. If any device in the recording
             # has no USB description, it may be the i1iSis: nothing is kept,
@@ -2832,11 +2834,15 @@ def check_capture(path: str, profile: str | None = None) -> dict:
     if code == "ok" and not identified:
         verdict += (" Which device each packet belongs to could not be told from this "
                     "recording (it holds no USB description).")
+    note = left_out_text(left_out)
+    if note:
+        verdict += " " + note
     return {"ok": code == "ok", "packets": len(recs), "xrite_packets": xrite,
             "linktype": linktype, "code": code, "verdict": verdict,
             "payload_bytes": payload_bytes, "nonzero_bytes": nonzero,
             "identified": identified, "activity": activity,
-            "kept": how if xrite else "", "kept_ids": kept_ids if xrite else []}
+            "kept": how if xrite else "", "kept_ids": kept_ids if xrite else [],
+            "left_out": left_out}
 
 
 def record_device_keys(linktype: int, recs) -> list:
@@ -2888,13 +2894,8 @@ def filter_xrite_capture(src: str, dst: str, profile: str | None = None) -> int:
     except (OSError, ValueError):
         return 0
     if linktype in (LINKTYPE_USBPCAP, LINKTYPE_USB_LINUX, LINKTYPE_USB_LINUX_MMAPPED):
-        devices = device_map(capture_events(linktype, recs))
-        keys = record_device_keys(linktype, recs)
-        wanted = set(instrument_selection(devices, profile,
-                                          undescribed_present(keys, devices))[0])
-        if not wanted:
-            return 0
-        kept = [r for r, k in zip(recs, keys) if k in wanted]
+        # 1.6.2: attribute_records() decides, record by record.
+        kept, _att = kept_records(linktype, recs, profile)
         if not kept or not _write_pcap(dst, linktype, kept):
             return 0
         return len(kept)
@@ -2923,11 +2924,19 @@ def _filter_darwin_capture(src: str, dst: str, profile: str | None = None) -> in
             break
         spans.append((off, rec_end))
         off = rec_end
-    wanted, _how = darwin_selection((blob[a + 16:b] for a, b in spans), profile)
+    # 1.6.2: attribute_records() decides; the kept records are copied byte
+    # for byte, with their own time stamps.
+    try:
+        _lt, recs = _read_pcap(src)
+    except (OSError, ValueError):
+        return 0
+    if len(recs) != len(spans):
+        return 0
+    att = attribute_records(LINKTYPE_USB_DARWIN, recs, profile)
     out = [blob[:24]]
     kept = 0
-    for a, b in spans:
-        if _darwin_ids(blob[a + 16:b]) in wanted:
+    for (a, b), keep in zip(spans, att["keep"]):
+        if keep:
             out.append(blob[a:b])
             kept += 1
     if not kept:
@@ -3064,7 +3073,7 @@ def _plausible_setup(setup: bytes) -> bool:
 def _events_usbpcap(recs) -> list:
     events = []
     pending = {}                      # (bus, irp) -> control event being built
-    for ts, d in recs:
+    for ri, (ts, d) in enumerate(recs):
         if len(d) < 27:
             continue
         (hlen, irp, _status, _func, info, bus, dev, ep, xfer,
@@ -3078,7 +3087,7 @@ def _events_usbpcap(recs) -> list:
             key = (bus, irp)
             if stage == 0 and not completion and _plausible_setup(data):
                 ev = {"kind": "control", "t": ts, "bus": bus, "dev": dev,
-                      "out": bytes(data[8:]), "in": b"", "_done": False}
+                      "out": bytes(data[8:]), "in": b"", "_done": False, "_ri": [ri]}
                 ev.update(_setup_fields(data))
                 pending[key] = ev
                 events.append(ev)
@@ -3086,6 +3095,7 @@ def _events_usbpcap(recs) -> list:
             ev = pending.get(key)
             if ev is None:
                 continue
+            ev["_ri"].append(ri)
             if not completion and stage == 1 and not (ev["rt"] & 0x80):
                 ev["out"] += bytes(data)
             elif completion:
@@ -3103,7 +3113,7 @@ def _events_usbpcap(recs) -> list:
             continue
         events.append({"kind": "data", "t": ts, "bus": bus, "dev": dev, "ep": ep,
                        "type": _XFER_NAMES.get(xfer, f"type {xfer}"),
-                       "dir_in": dir_in, "data": bytes(data)})
+                       "dir_in": dir_in, "data": bytes(data), "_ri": [ri]})
     for ev in events:
         ev.pop("_done", None)
     return events
@@ -3112,7 +3122,7 @@ def _events_usbpcap(recs) -> list:
 def _events_usbmon(recs, hdr_len: int) -> list:
     events = []
     pending = {}
-    for ts, d in recs:
+    for ri, (ts, d) in enumerate(recs):
         if len(d) < hdr_len:
             continue
         (uid, typ, xfer, epnum, devnum, busnum, flag_setup, _flag_data, _sec, _usec,
@@ -3122,12 +3132,14 @@ def _events_usbmon(recs, hdr_len: int) -> list:
         if xfer == 2:
             if typ == b"S" and flag_setup == b"\x00" and _plausible_setup(setup):
                 ev = {"kind": "control", "t": ts, "bus": busnum, "dev": devnum,
-                      "out": bytes(data), "in": b""}
+                      "out": bytes(data), "in": b"", "_ri": [ri]}
                 ev.update(_setup_fields(setup))
                 pending[key] = ev
                 events.append(ev)
             elif typ == b"C":
                 ev = pending.pop(key, None)
+                if ev is not None:
+                    ev["_ri"].append(ri)
                 if ev is not None and (ev["rt"] & 0x80):
                     ev["in"] = bytes(data)
             continue
@@ -3138,7 +3150,7 @@ def _events_usbmon(recs, hdr_len: int) -> list:
             continue
         events.append({"kind": "data", "t": ts, "bus": busnum, "dev": devnum, "ep": epnum,
                        "type": _XFER_NAMES.get(xfer, f"type {xfer}"),
-                       "dir_in": dir_in, "data": bytes(data)})
+                       "dir_in": dir_in, "data": bytes(data), "_ri": [ri]})
     return events
 
 
@@ -3156,7 +3168,7 @@ def _events_darwin(recs) -> list:
     events = []
     pending = {}
     out_submits = {}                  # seq -> the event of a non-control OUT submit
-    for ts, d in recs:
+    for ri, (ts, d) in enumerate(recs):
         if len(d) < _DARWIN_HDR:
             continue
         direction = d[3]
@@ -3173,13 +3185,15 @@ def _events_darwin(recs) -> list:
             wlen = struct.unpack("<H", payload[6:8])[0]
             if len(payload) in (8, 8 + wlen):
                 ev = {"kind": "control", "t": ts, "bus": bus, "dev": dev,
-                      "out": bytes(payload[8:]), "in": b"", "vid": vid, "pid": pid}
+                      "out": bytes(payload[8:]), "in": b"", "vid": vid, "pid": pid,
+                      "_ri": [ri]}
                 ev.update(_setup_fields(payload))
                 pending[seq] = ev
                 events.append(ev)
                 continue
         if direction == 1 and seq in pending:
             ev = pending.pop(seq)
+            ev["_ri"].append(ri)
             body = bytes(payload[:dlen] if dlen else payload)
             if ev["rt"] & 0x80:
                 ev["in"] = body
@@ -3192,17 +3206,22 @@ def _events_darwin(recs) -> list:
             if direction == 0:
                 out_submits[seq] = {"kind": "data", "t": ts, "bus": bus, "dev": dev,
                                     "ep": ep, "type": etype, "dir_in": False,
-                                    "data": bytes(data), "vid": vid, "pid": pid}
+                                    "data": bytes(data), "vid": vid, "pid": pid,
+                                    "_ri": [ri]}
                 continue
             sub = out_submits.pop(seq, None)
             data = data or (sub["data"] if sub else b"")
-        elif direction != 1:
-            continue
+            ris = (sub["_ri"] if sub else []) + [ri]
+        else:
+            ris = [ri]
+        if dir_in or not (ep & 0x7f):
+            if direction != 1:
+                continue
         if not data:
             continue
         events.append({"kind": "data", "t": ts, "bus": bus, "dev": dev, "ep": ep,
                        "type": etype, "dir_in": dir_in, "data": bytes(data),
-                       "vid": vid, "pid": pid})
+                       "vid": vid, "pid": pid, "_ri": ris})
     # An OUT whose completion the recording did not catch (it was stopped in
     # between): keep its bytes if the submit had any, at the submit's time.
     leftovers = [ev for ev in out_submits.values() if ev["data"]]
@@ -3211,8 +3230,9 @@ def _events_darwin(recs) -> list:
     return events
 
 
-def capture_events(linktype: int, recs) -> list:
-    """The recording as a list of control and data events (see above)."""
+def _capture_events_ri(linktype: int, recs) -> list:
+    """capture_events(), each event with "_ri": the indices of the records
+    it was built from (1.6.2, for attribute_records())."""
     if linktype == LINKTYPE_USBPCAP:
         return _events_usbpcap(recs)
     if linktype == LINKTYPE_USB_LINUX:
@@ -3222,6 +3242,14 @@ def capture_events(linktype: int, recs) -> list:
     if linktype == LINKTYPE_USB_DARWIN:
         return _events_darwin(recs)
     return []
+
+
+def capture_events(linktype: int, recs) -> list:
+    """The recording as a list of control and data events (see above)."""
+    events = _capture_events_ri(linktype, recs)
+    for ev in events:
+        ev.pop("_ri", None)
+    return events
 
 
 def device_map(events) -> dict:
@@ -3282,6 +3310,481 @@ def xrite_devices(devices: dict, profile: str | None = None) -> list:
     """The devices of a device map an instrument-only copy keeps
     (instrument_selection)."""
     return instrument_selection(devices, profile)[0]
+
+
+# --------------------------------------------------------------------------
+# 1.6.2: which records belong to the instrument (attribute_records)
+#
+# Up to 1.6.1 a Windows or Linux record was kept when its bus and device
+# address were the instrument's. That is not enough. In a USBPcap recording
+# the address in a packet is a value the kernel driver cached when the device
+# was started (USBPcapHelperFunctions.c, USBPcapGetDeviceUSBInfo, called from
+# IRP_MN_START_DEVICE) or when its pipes were set up (USBPcapURB.c, the pipe
+# table filled at SELECT_CONFIGURATION). When the host controller gives a
+# device a new address later (after resume from hibernation or sleep, after a
+# port reset), the cached one goes stale, and another device can by then own
+# it (desowin/usbpcap issue 105). A real recording held a USB disk's SCSI
+# traffic at the instrument's address that way. Linux and macOS cannot share
+# an address between two live devices, but an address can come back after a
+# replug. So a record is kept only if all of these hold:
+#   1. its address was the instrument's at that moment (each device
+#      description at an address starts a new owner there; address 0, where
+#      every device is set up, is never kept);
+#   2. its endpoint is endpoint 0 or one of the instrument's own (from its
+#      configuration description in the recording, else the endpoints its
+#      family is known to have);
+#   3. it is not another kind of device's traffic: mass-storage commands,
+#      their data and status, mass-storage, HID or hub class requests,
+#      requests aimed at an endpoint or interface the instrument does not
+#      have, another device's configuration description;
+# and a transfer is kept or dropped whole. What is dropped at the
+# instrument's own address is counted by kind and never shown.
+# --------------------------------------------------------------------------
+
+# The endpoints of each family when the recording has no configuration
+# description: address -> transfer type, or None where the type is not
+# known for certain. i1Pro 2: the descriptor of a real one (bulk 0x82
+# readings, interrupt 0x84 button, bulk OUT 0x03 lights, bulk 0x85 ruler,
+# 0x01 unused). The others: the endpoints ArgyllCMS 3.5.0 uses for them
+# (i1pro_imp.c, i1pro3_imp.c, munki_imp.c; see FAMILIES) and the FTDI chip
+# of the i1iO table (bulk 0x81 in, 0x02 out).
+FAMILY_ENDPOINTS = {
+    "i1pro2": {0x01: None, 0x82: "bulk", 0x84: "interrupt", 0x03: "bulk", 0x85: "bulk"},
+    "i1pro": {0x01: None, 0x82: None, 0x84: None, 0x03: None},
+    "i1pro3": {0x81: None, 0x83: None, 0x84: None, 0x02: None},
+    "munki": {0x81: None, 0x83: None},
+    "io": {0x81: "bulk", 0x02: "bulk"},
+}
+
+_DESC_TYPES = {0: "control", 1: "isochronous", 2: "bulk", 3: "interrupt"}
+_EP_LINE_RE = re.compile(r"endpoint 0x([0-9a-f]{2}) \((?:IN|OUT)\), (\w+),")
+_IF_LINE_RE = re.compile(r"^interface (\d+) alt \d+: \d+ endpoints, class (\d+)")
+
+# What a dropped transfer looked like, in the words the checks print.
+LEFT_OUT_KINDS = {
+    "storage": "a USB disk or memory stick",
+    "hid": "a keyboard, mouse or other input device",
+    "hub": "a USB hub",
+    "description": "another device's USB description",
+    "endpoint": "an endpoint the instrument does not have",
+    "owner": "a time when that address belonged to another device",
+    "unattributed": "traffic that could not be attributed with certainty",
+}
+
+
+def config_endpoints(lines) -> dict:
+    """{endpoint address: transfer type} from parse_config_descriptor() lines."""
+    eps = {}
+    for line in lines or ():
+        m = _EP_LINE_RE.search(line)
+        if m:
+            eps[int(m.group(1), 16)] = m.group(2)
+    return eps
+
+
+def config_interfaces(lines) -> dict:
+    """{interface number: class} from parse_config_descriptor() lines."""
+    out = {}
+    for line in lines or ():
+        m = _IF_LINE_RE.match(line.strip())
+        if m:
+            out.setdefault(int(m.group(1)), int(m.group(2)))
+    return out
+
+
+def instrument_endpoints(info: dict):
+    """The endpoints a device may use: from its recorded configuration, else
+    its family's known set, else None (not known)."""
+    eps = config_endpoints(info.get("config"))
+    if eps:
+        return eps
+    vid, pid = info.get("vid"), info.get("pid")
+    if (vid, pid) == (XRITE_VID, IO_TABLE_PID):
+        return dict(FAMILY_ENDPOINTS["io"])
+    fam = info.get("guess_family")
+    if vid is not None:
+        fam = family_for(vid, pid, info.get("config"))
+    if fam in FAMILY_ENDPOINTS:
+        return dict(FAMILY_ENDPOINTS[fam])
+    return None
+
+
+def _record_fields(linktype: int, d: bytes):
+    """(key, endpoint, transfer type name, carries data, transaction id,
+    starts a transaction, ends it) of one record, or None when the record
+    cannot be read. The key is (bus, address) on Windows and Linux and
+    (vendor, product) on macOS."""
+    if linktype == LINKTYPE_USBPCAP:
+        if len(d) < 27:
+            return None
+        hlen, irp, _st, _fn, info, bus, dev, ep, xfer, dlen = struct.unpack_from(
+            "<HQIHBHHBBI", d, 0)
+        completion = bool(info & 1)
+        stage = d[27] if xfer == 2 and hlen >= 28 and len(d) > 27 else None
+        kind = {0: "isochronous", 1: "interrupt", 2: "control", 3: "bulk"}.get(
+            xfer, "info" if xfer == 0xFE else "unknown")
+        starts = not completion and (xfer != 2 or stage in (0, None))
+        ends = completion and (xfer != 2 or stage in (2, 3, None))
+        return (bus, dev), ep, kind, dlen > 0 and len(d) > hlen, (bus, irp), starts, ends
+    if linktype in (LINKTYPE_USB_LINUX, LINKTYPE_USB_LINUX_MMAPPED):
+        hdr = 48 if linktype == LINKTYPE_USB_LINUX else 64
+        if len(d) < hdr:
+            return None
+        uid, typ, xfer, ep, dev, bus = struct.unpack_from("<QcBBBH", d, 0)
+        kind = {0: "isochronous", 1: "interrupt", 2: "control", 3: "bulk"}.get(xfer, "unknown")
+        return ((bus, dev), ep, kind, len(d) > hdr, (bus, uid), typ == b"S",
+                typ in (b"C", b"E"))
+    if linktype == LINKTYPE_USB_DARWIN:
+        if len(d) < _DARWIN_HDR:
+            return None
+        ids = struct.unpack("<HH", d[0x24:0x28])
+        seq = struct.unpack("<I", d[0x10:0x14])[0]
+        kind = _DESC_TYPES.get(d[31] & 3, "unknown")
+        return (ids, d[30], kind, len(d) > _darwin_hdr_len(d), seq, d[3] == 0, d[3] == 1)
+    return None
+
+
+def _owner_windows(events) -> dict:
+    """(bus, address) -> [(time, identity)], where identity is (vid, pid)
+    from a device description fetched there, or "new" where SET_ADDRESS gave
+    the address to a device being set up. Consecutive equal owners merge."""
+    marks: dict = {}
+    for ev in events:
+        if ev["kind"] != "control":
+            continue
+        if ev["rt"] == 0x80 and ev["req"] == 6 and ev["wValue"] >> 8 == 1:
+            blob = ev["in"]
+            if len(blob) >= 12 and blob[1] == 1:
+                marks.setdefault((ev["bus"], ev["dev"]), []).append(
+                    (ev["t"], struct.unpack("<HH", blob[8:12])))
+        elif ev["rt"] == 0x00 and ev["req"] == 5 and 0 < (ev["wValue"] & 0x7F):
+            marks.setdefault((ev["bus"], ev["wValue"] & 0x7F), []).append((ev["t"], "new"))
+    out = {}
+    for key, items in marks.items():
+        items.sort(key=lambda x: x[0])
+        merged = []
+        for t, ident in items:
+            if not merged or merged[-1][1] != ident:
+                merged.append((t, ident))
+        out[key] = merged
+    return out
+
+
+def _owner_index(windows: list, t: float) -> int:
+    """Which owner window of an address a moment falls in: 0 before the
+    first mark, i for the i-th mark."""
+    n = 0
+    for i, (start, _ident) in enumerate(windows, 1):
+        if t >= start:
+            n = i
+    return n
+
+
+def _class_kind(ev) -> str:
+    """The kind of device a class request belongs to."""
+    rt, req = ev["rt"], ev["req"]
+    if rt & 0x1F == 3 or rt in (0x20, 0xA0, 0x23, 0xA3):
+        return "hub"
+    if rt in (0x21, 0xA1) and req in (0xFE, 0xFF):
+        return "storage"
+    if rt in (0x21, 0xA1) and req in (0x01, 0x02, 0x03, 0x09, 0x0A, 0x0B):
+        return "hid"
+    return "unattributed"
+
+
+def _config_kind(lines) -> str | None:
+    """The kind of a configuration description that is clearly not an
+    instrument's: mass storage, HID or hub interfaces."""
+    classes = set(config_interfaces(lines).values())
+    if 8 in classes:
+        return "storage"
+    if 9 in classes:
+        return "hub"
+    if 3 in classes:
+        return "hid"
+    return None
+
+
+def _bot_drops(events, keys) -> tuple:
+    """Mass-storage bulk-only transport at the instrument's address: the
+    31-byte "USBC" command, its data phase and the 13-byte "USBS" status.
+    Returns (ids of the events to drop, addresses where it was seen)."""
+    drop, seen = set(), set()
+    by_key: dict = {}
+    for ev in events:
+        if ev["kind"] == "data" and ev["type"] == "bulk" and (ev["bus"], ev["dev"]) in keys:
+            by_key.setdefault((ev["bus"], ev["dev"]), []).append(ev)
+    for key, evs in by_key.items():
+        windows = []                       # (start, end, endpoints or None = all bulk)
+        open_cbw = None
+        last_close = None
+        for ev in evs:
+            data = ev["data"]
+            if not ev["dir_in"] and len(data) == 31 and data[:4] == b"USBC":
+                if open_cbw is not None:
+                    windows.append((open_cbw[0], ev["t"], None))
+                open_cbw = (ev["t"], ev["ep"])
+            elif ev["dir_in"] and len(data) == 13 and data[:4] == b"USBS":
+                if open_cbw is not None:
+                    windows.append((open_cbw[0], ev["t"], {open_cbw[1], ev["ep"]}))
+                else:
+                    start = last_close if last_close is not None else float("-inf")
+                    windows.append((start, ev["t"], None))
+                open_cbw = None
+                last_close = ev["t"]
+        if open_cbw is not None:
+            windows.append((open_cbw[0], float("inf"), None))
+        if not windows:
+            continue
+        seen.add(key)
+        for ev in evs:
+            for start, end, eps in windows:
+                if start <= ev["t"] <= end and (eps is None or ev["ep"] in eps):
+                    drop.add(id(ev))
+                    break
+    return drop, seen
+
+
+def attribute_records(linktype: int, recs, profile: str | None = None) -> dict:
+    """1.6.2: THE decision which records of a recording are the instrument's.
+
+    Returns {"keep": [bool per record], "devices": {(bus, address) or
+    (vid, pid): info} of the instrument, "how": as instrument_selection(),
+    "left_out": {kind: transfers}, "undescribed": bool}. "left_out" counts
+    only what was dropped at the instrument's own address (or with its IDs),
+    never the other devices' own traffic."""
+    n = len(recs)
+    keep = [False] * n
+    result = {"keep": keep, "devices": {}, "how": "", "left_out": {},
+              "undescribed": False, "keys": set()}
+    if not n:
+        return result
+    events = _capture_events_ri(linktype, recs)
+    fields = [_record_fields(linktype, d) for _ts, d in recs]
+    darwin = linktype == LINKTYPE_USB_DARWIN
+
+    # 1. Who owned each address when.
+    if darwin:
+        devices = {}
+        for f in fields:
+            if f and (f[0][0] or f[0][1]):
+                devices[f[0]] = {"vid": f[0][0], "pid": f[0][1], "config": [],
+                                 "how": "from the recording's own header"}
+        for ev in events:
+            if (ev["kind"] == "control" and ev["rt"] == 0x80 and ev["req"] == 6
+                    and ev["wValue"] >> 8 == 2 and len(ev["in"]) >= 9 and ev["in"][1] == 2):
+                info = devices.get((ev.get("vid"), ev.get("pid")))
+                lines = parse_config_descriptor(ev["in"])
+                if info is not None and lines and not info["config"] \
+                        and _config_kind(lines) is None:
+                    info["config"] = lines
+        segs = {k: k for k in devices}
+        seg_of = [f[0] if f else None for f in fields]
+        wanted_keys, how = instrument_selection(devices, profile)
+        result["undescribed"] = False
+    else:
+        dmap = device_map([{k: v for k, v in ev.items() if k != "_ri"} for ev in events])
+        windows = _owner_windows(events)
+        rkeys = [f[0] if f else None for f in fields]
+        result["undescribed"] = undescribed_present(rkeys, dmap)
+        devices = {}
+        for key in list(windows):
+            idents = {ident for _t, ident in windows[key]}
+            if len(idents) == 1 and windows[key][0][1] != "new":
+                del windows[key]           # one owner all along: one window
+        for key, info in dmap.items():
+            marks = windows.get(key, [])
+            if not marks:
+                devices[key + (0,)] = dict(info, config=[])
+                continue
+            for i, (_t, ident) in enumerate(marks, 1):
+                if ident == "new":
+                    continue
+                devices[key + (i,)] = {"vid": ident[0], "pid": ident[1],
+                                       "how": "from its USB description", "config": []}
+        # The configuration descriptions, each to the owner of its time.
+        for ev in events:
+            if (ev["kind"] == "control" and ev["rt"] == 0x80 and ev["req"] == 6
+                    and ev["wValue"] >> 8 == 2 and len(ev["in"]) >= 9 and ev["in"][1] == 2):
+                key = (ev["bus"], ev["dev"])
+                idx = _owner_index(windows.get(key, []), ev["t"])
+                info = devices.get(key + (idx,))
+                lines = parse_config_descriptor(ev["in"])
+                # The first full description of the owner is its own; a
+                # different one later is another device's (step 3).
+                if info is not None and lines and not info.get("config") \
+                        and _config_kind(lines) is None:
+                    info["config"] = lines
+        seg_of = []
+        for (ts, _d), f in zip(recs, fields):
+            if not f:
+                seg_of.append(None)
+                continue
+            key = f[0]
+            idx = _owner_index(windows.get(key, []), ts)
+            seg_of.append(key + (idx,))
+        wanted_keys, how = instrument_selection(
+            {k: v for k, v in devices.items() if k[1] != 0}, profile, result["undescribed"])
+    wanted = set(wanted_keys)
+    result["how"] = how
+    addr = (lambda s: s) if darwin else (lambda s: s[:2])
+    inst_keys = {addr(s) for s in wanted}
+    result["keys"] = inst_keys
+    # macOS: only a recorded description narrows the endpoints; the IDs in
+    # every record's header already say whose it is.
+    allowed = {s: (config_endpoints(devices[s].get("config")) or None) if darwin
+               else instrument_endpoints(devices[s]) for s in wanted}
+    # The interfaces and classes of the instrument (for requests aimed at an
+    # interface, and for class requests).
+    ifaces = {s: config_interfaces(devices[s].get("config")) for s in wanted}
+    left: dict = {}
+    drop_reason = [None] * n
+
+    def mark(ri, kind):
+        if drop_reason[ri] is None:
+            drop_reason[ri] = kind
+
+    # 2. Per record: owner and endpoint.
+    for ri, f in enumerate(fields):
+        s = seg_of[ri]
+        if f is None or s is None:
+            continue
+        if s not in wanted:
+            if addr(s) in inst_keys and (darwin or s[1] != 0):
+                mark(ri, "owner")
+            continue
+        _key, ep, kind, has_data, _tid, _st, _en = f
+        eps = allowed[s]
+        if kind == "control" or (kind in ("info", "unknown") and ep & 0x7F == 0):
+            if kind == "unknown" and has_data:
+                mark(ri, "unattributed")
+                continue
+            keep[ri] = True
+            continue
+        if ep == 0xFF or kind == "unknown":
+            mark(ri, "unattributed")
+            continue
+        if eps is None:
+            if darwin:
+                keep[ri] = True            # the header's IDs are certain
+            else:
+                mark(ri, "unattributed")
+            continue
+        if ep not in eps or (kind != "info" and eps[ep] is not None and eps[ep] != kind):
+            mark(ri, "endpoint")
+            continue
+        keep[ri] = True
+
+    # 3. Per transfer: what the content says.
+    def seg_for_event(ev):
+        if darwin:
+            return (ev.get("vid"), ev.get("pid"))
+        ri = ev["_ri"][0]
+        return seg_of[ri]
+
+    mine = [ev for ev in events if seg_for_event(ev) in wanted]
+    bot_ids, bot_keys = _bot_drops(
+        mine, {(ev["bus"], ev["dev"]) for ev in mine})
+    conflict = set()                    # owners with another device's traffic in them
+    decisions = []
+    for ev in mine:
+        s = seg_for_event(ev)
+        kind = None
+        if id(ev) in bot_ids:
+            kind = "storage"
+        elif ev["kind"] == "control":
+            rt, req = ev["rt"], ev["req"]
+            rtype = (rt >> 5) & 3
+            recip = rt & 0x1F
+            classes = set(ifaces[s].values())
+            if rtype == 1:
+                kind = _class_kind(ev)
+                if kind == "hid" and 3 in classes:
+                    kind = None            # the instrument is itself a HID device
+                elif kind == "unattributed" and classes - {0, 0xFF, 8, 9, 3}:
+                    kind = None            # it has an interface of a standard class
+            elif rtype == 0:
+                eps = allowed[s]
+                if recip == 2 and (ev["wIndex"] & 0x7F) and eps is not None \
+                        and (ev["wIndex"] & 0xFF) not in eps:
+                    kind = "endpoint"
+                elif recip == 1 and ifaces[s] and (ev["wIndex"] & 0xFF) not in ifaces[s]:
+                    kind = "endpoint"
+                elif req == 6 and recip == 1 and (ev["wValue"] >> 8) in (0x21, 0x22) \
+                        and 3 not in classes:
+                    kind = "hid"
+                elif req == 6 and ev["wValue"] >> 8 == 2 and len(ev["in"]) >= 9 \
+                        and ev["in"][1] == 2:
+                    lines = parse_config_descriptor(ev["in"])
+                    own = devices[s].get("config")
+                    k2 = _config_kind(lines)
+                    if k2 or (own and lines and not set(lines) <= set(own)
+                              and not set(own) <= set(lines)):
+                        kind = k2 or "description"
+        if kind:
+            conflict.add(s)
+        decisions.append((ev, s, kind))
+    for s_key in bot_keys:
+        for s in wanted:
+            if addr(s) == s_key:
+                conflict.add(s)
+    for ev, s, kind in decisions:
+        if kind is None and s in conflict and ev["kind"] == "control" \
+                and ev["req"] == 6 and ev["rt"] & 0x80 and ev["wValue"] >> 8 not in (1, 2):
+            kind = "unattributed"           # a string or other description: whose?
+        if kind:
+            for ri in ev["_ri"]:
+                keep[ri] = False
+                drop_reason[ri] = kind
+
+    # 4. A transfer is kept or dropped whole.
+    inst: dict = {}
+    groups = []
+    for ri, f in enumerate(fields):
+        if f is None:
+            continue
+        tid, starts, ends = f[4], f[5], f[6]
+        g = inst.get(tid)
+        if g is None or starts:
+            g = []
+            groups.append(g)
+            inst[tid] = g
+        g.append(ri)
+        if ends:
+            inst.pop(tid, None)
+    for g in groups:
+        reasons = [drop_reason[ri] for ri in g if drop_reason[ri]]
+        if not reasons and all(keep[ri] for ri in g):
+            continue
+        if not any(keep[ri] for ri in g):
+            if reasons:
+                left[reasons[0]] = left.get(reasons[0], 0) + 1
+            continue
+        for ri in g:
+            keep[ri] = False
+        kind = reasons[0] if reasons else "unattributed"
+        left[kind] = left.get(kind, 0) + 1
+    result["left_out"] = left
+    result["devices"] = {addr(s): devices[s] for s in wanted}
+    return result
+
+
+def left_out_text(left: dict) -> str:
+    """The plain words for what attribute_records() left out, or ""."""
+    total = sum(left.values())
+    if not total:
+        return ""
+    kinds = [LEFT_OUT_KINDS.get(k, k) for k, _v in sorted(left.items(), key=lambda kv: -kv[1])]
+    word = "transfer" if total == 1 else "transfers"
+    return (f"Some traffic could not be attributed to the instrument and was left out: "
+            f"{total} {word} at the instrument's USB address that looked like "
+            + "; ".join(kinds) + ". Nothing of it is in any file the tool writes.")
+
+
+def kept_records(linktype: int, recs, profile: str | None = None) -> tuple:
+    """(the instrument's records, attribute_records() result)."""
+    att = attribute_records(linktype, recs, profile)
+    return [r for r, k in zip(recs, att["keep"]) if k], att
 
 
 # --------------------------------------------------------------------------
@@ -4186,13 +4689,18 @@ def _xrite_events(path: str, profile: str | None = None, plain: bool = False):
     check = check_capture(path, profile)
     if check["code"] == "unreadable":
         return [], {}, check
-    mine = set(instrument_selection(devices, profile, undescribed_present(
-        record_device_keys(linktype, recs), devices))[0])
-    if profile == "isis":
-        events = [e for e in events if (e["bus"], e["dev"]) in mine]
-        devices = {k: v for k, v in devices.items() if k in mine}
-    elif mine:
-        events = [e for e in events if (e["bus"], e["dev"]) in mine]
+    # 1.6.2: the analysis reads only the records attribute_records() gives
+    # the instrument, so it can never print another device's bytes or find
+    # "position data" in them. Before 1.6.2 a file in which no device could
+    # be identified was analysed whole.
+    mine_recs, att = kept_records(linktype, recs, profile)
+    events = capture_events(linktype, mine_recs)
+    if linktype == LINKTYPE_USB_DARWIN:
+        keys = set(att["devices"])
+        devices = {k: v for k, v in devices.items()
+                   if (v.get("vid"), v.get("pid")) in keys}
+    else:
+        devices = dict(att["devices"])
     return events, devices, check
 
 
