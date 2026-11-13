@@ -261,7 +261,7 @@ class TheFirstReportReplayed(unittest.TestCase):
 
     def test_a_recorded_session_ends_as_before(self):
         lines = probe.closing_words({"recorded": True})
-        self.assertIn("  Send it together with the session folder, as described above.", lines)
+        self.assertIn("  Please send the one SEND-THIS zip file named above. It holds the", lines)
         self.assertIn(probe.HANDHELD_SEND_WAYS, lines)
 
 
@@ -394,7 +394,7 @@ class TheI1Pro2Path(unittest.TestCase):
         self.assertFalse(outcome["recorded"])
         self.assertEqual(outcome["help"], [probe.DRIVER_HELP_TEXT])
         lines = "\n".join(probe.closing_words(outcome))
-        self.assertIn("No step of the session was recorded.", lines)
+        self.assertIn("You chose not to start the recording session.", lines)
         self.assertIn("THE WAY BACK", lines)
 
 

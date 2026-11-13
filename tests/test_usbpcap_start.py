@@ -168,7 +168,7 @@ class TheWindowsSessionReport(Base):
     def test_with_the_fix_the_session_records(self):
         _outcome, screen, report = self.run_step(self.START + ["", "", "", "q"], fail=False)
         self.assertNotIn("THE RECORDING DID NOT START", screen)
-        self.assertIn("RECORDING step 1", screen)
+        self.assertIn("RECORDING STEP 1 NOW", screen)
         self.assertIn("administrator: yes", report)
 
     def test_libwdi_winusb_is_not_called_x_rites_driver(self):
@@ -197,3 +197,102 @@ class EveryReportSaysAdministrator(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WhatTheTesterSees(Base):
+    """1.5.4, after a second real report: the tester measured in i1Profiler
+    without ever starting a step, then pressed q; he sent only the report."""
+
+    def test_the_step_box_says_the_order(self):
+        box = probe.step_box("  When the recording runs: scan the strip.")
+        self.assertIn("1. Press Enter HERE to start recording.", box)
+        self.assertIn("2. Then do this in the measuring program: scan the strip.", box)
+        self.assertIn("3. Come back to THIS window and press Enter to stop.", box)
+        self.assertEqual(len({len(l) for l in box.splitlines()}), 1)
+
+    def test_the_live_line(self):
+        rec = mock.Mock(files={"a": os.path.join(self.dir, "nothing-yet")})
+        line = probe.LiveLine(rec, 100.0)
+        self.assertIn("nothing captured yet", line.text(now=107.0))
+        with open(os.path.join(self.dir, "grows"), "wb") as fh:
+            fh.write(b"x" * 1234)
+        rec.files = {"a": os.path.join(self.dir, "grows")}
+        self.assertIn("1,234 bytes captured", line.text(now=103.0))
+        self.assertIn("your own recording runs", probe.LiveLine(None, 0.0).text(now=3.0))
+        # no terminal: no thread, nothing written
+        out = io.StringIO()
+        ticker = probe.LiveLine(rec, 0.0, stream=out, interval=0.01)
+        ticker.start()
+        ticker.stop()
+        self.assertEqual(out.getvalue(), "")
+
+    def run_session(self, answers):
+        it = iter(answers)
+        recorder = probe.UsbPcapRecorder(self.exe, ["\\\\.\\USBPcap1"], "")
+        folder = os.path.join(self.dir, "instrument-session-x")
+        with mock.patch.object(probe, "ask", lambda *_a, **_k: next(it, "")), \
+                redirect_stdout(io.StringIO()) as out:
+            session = probe.run_instrument_session(recorder, folder, "i1pro3", "i1Profiler", "")
+        return session, out.getvalue()
+
+    def test_q_with_nothing_recorded_asks_once(self):
+        session, screen = self.run_session(["q", "no", "q", "yes"])
+        self.assertIn("Nothing was recorded yet.", screen)
+        self.assertEqual(screen.count("Nothing was recorded yet."), 2)
+        self.assertEqual(session["ended"], "stopped by the operator")
+
+    def test_q_after_a_recorded_step_does_not_ask(self):
+        session, screen = self.run_session(["", "", "ok", "", "", "q"])
+        self.assertNotIn("Nothing was recorded yet.", screen)
+        self.assertEqual(session["ended"], "stopped by the operator")
+
+
+class OneFileToSend(Base):
+
+    def test_the_zip_holds_report_and_instrument_files_only(self):
+        import zipfile
+        folder = os.path.join(self.dir, "instrument-session-1")
+        os.makedirs(folder)
+        os.makedirs(folder + "-FULL-do-not-send")
+        for name in ("session.json", "analysis.txt", "step1-idle-take1-USBPcap1-instrument.pcap"):
+            with open(os.path.join(folder, name), "w") as fh:
+                fh.write("x")
+        with open(os.path.join(folder + "-FULL-do-not-send",
+                               "step1-idle-take1-USBPcap1-full.pcap"), "w") as fh:
+            fh.write("keyboard")
+        report = os.path.join(self.dir, "chromiq-io-probe-1.txt")
+        with open(report, "w") as fh:
+            fh.write("report")
+        dst = probe.make_send_zip(report, {"folder": folder})
+        self.assertTrue(os.path.basename(dst).startswith("SEND-THIS-"))
+        with zipfile.ZipFile(dst) as zf:
+            names = sorted(zf.namelist())
+        self.assertEqual(names, ["chromiq-io-probe-1.txt",
+                                 "instrument-session-1/analysis.txt",
+                                 "instrument-session-1/session.json",
+                                 "instrument-session-1/step1-idle-take1-USBPcap1-instrument.pcap"])
+        self.assertFalse(any("full" in n or os.path.expanduser("~") in n for n in names))
+
+    def test_report_top_line_when_nothing_was_recorded(self):
+        probe._END.clear()
+        self.addCleanup(probe._END.clear)
+        probe._END["no_recording"] = "You stopped the session before the first step was recorded."
+        text = probe.report_text(instrument=True)
+        self.assertIn("THIS REPORT CONTAINS NO RECORDING. You stopped the session", text)
+        self.assertLess(text.index("NO RECORDING"), 400)
+        probe._END["send"] = {"folder": self.dir}
+        self.assertNotIn("CONTAINS NO RECORDING", probe.report_text(instrument=True))
+
+    def test_finish_report_makes_the_zip_and_says_so(self):
+        probe._END.clear()
+        self.addCleanup(probe._END.clear)
+        folder = os.path.join(self.dir, "instrument-session-2")
+        os.makedirs(folder)
+        with open(os.path.join(folder, "session.json"), "w") as fh:
+            fh.write("{}")
+        probe._END["send"] = {"folder": folder}
+        ns = mock.Mock(output=os.path.join(self.dir, "chromiq-io-probe-2.txt"))
+        with redirect_stdout(io.StringIO()) as out:
+            probe.finish_report(ns, "Windows", instrument=True, outcome={"recorded": True})
+        self.assertIn("SEND THIS ONE FILE", out.getvalue())
+        self.assertTrue(any(f.startswith("SEND-THIS-") for f in os.listdir(self.dir)))

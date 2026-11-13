@@ -1976,6 +1976,8 @@ def annotate_session() -> None:
                 "[walkthrough skipped by operator, no recording running]")
         return
     io_timed_steps()
+    _END["no_recording"] = ("The recording was made with another program (for example "
+                            "Wireshark); please send that file together with this report.")
     print("\nStop your recording now and save the file.")
     print("Send BOTH the recording and this probe report.\n")
 
@@ -2297,6 +2299,8 @@ def finish_recordings(files: dict, record: list | None = None, ask_delete: bool 
             io3 += sum(1 for _t, d in recs if is_io3_record(d))
         except (OSError, ValueError):
             pass
+    if send:
+        _END["send"] = {"files": list(send)}
     if steps and io3:
         lines.append("")
         lines.append(_wrap(IO3_UNCHECKED.format(n=io3).replace("this step", "the steps")
@@ -5393,11 +5397,14 @@ def instrument_driver_checks(devices: list) -> list:
             # provider. So the name alone says nothing about who installed it.
             checks.append({"name": label, "level": "warning", "help": False, "text": (
                 f"{label}: Windows' standard USB driver (WinUSB), installed by a tool "
-                "built on libwdi (the driver's provider says \"libwdi\"), probably "
-                "not by X-Rite's own installer, even if its name sounds like X-Rite. "
-                "The i1Pro 3 asks for WinUSB anyway, so this may well work; whether "
+                "built on libwdi (the driver's provider says \"libwdi\"; Zadig and "
+                "ChromIQ's own driver installer are such tools), probably not by "
+                "X-Rite's own installer, even if its name sounds like X-Rite. The "
+                "i1Pro 3 asks for WinUSB anyway, so this may well work; whether "
                 "i1Profiler opens it like this is not known. If i1Profiler does not "
-                "find the instrument, reinstall (or repair) i1Profiler.")})
+                "find the instrument, give it X-Rite's entry back in Device Manager "
+                "(the steps in the report, \"YOUR INSTRUMENT IS ON THE WRONG "
+                "DRIVER\") or repair i1Profiler.")})
         elif state == "winusb" and dev["vid"] == 0x0765:
             checks.append({"name": label, "level": "ok", "help": False, "text": (
                 f"{label}: Windows' standard USB driver (WinUSB), which the "
@@ -5632,6 +5639,58 @@ class RecorderError(Exception):
     pass
 
 
+_JOB: list = []
+
+
+def _kill_with_us(proc) -> None:
+    """Windows: put a recorder into a job that ends it when this program
+    ends, also when its window is closed (review of 1.5.4: USBPcapCMD run
+    as administrator has no job of its own and would go on recording).
+    Best effort: any failure leaves things as in 1.5.3."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes                                     # noqa: PLC0415
+        from ctypes import wintypes                       # noqa: PLC0415
+        k32 = ctypes.windll.kernel32                      # type: ignore[attr-defined]
+        if not _JOB:
+            job = k32.CreateJobObjectW(None, None)
+            if not job:
+                return
+
+            class _Basic(ctypes.Structure):
+                _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64),
+                            ("PerJobUserTimeLimit", ctypes.c_int64),
+                            ("LimitFlags", wintypes.DWORD),
+                            ("MinimumWorkingSetSize", ctypes.c_size_t),
+                            ("MaximumWorkingSetSize", ctypes.c_size_t),
+                            ("ActiveProcessLimit", wintypes.DWORD),
+                            ("Affinity", ctypes.c_size_t),
+                            ("PriorityClass", wintypes.DWORD),
+                            ("SchedulingClass", wintypes.DWORD)]
+
+            class _Io(ctypes.Structure):
+                _fields_ = [(n, ctypes.c_uint64) for n in
+                            ("r", "w", "o", "rb", "wb", "ob")]
+
+            class _Ext(ctypes.Structure):
+                _fields_ = [("Basic", _Basic), ("Io", _Io),
+                            ("ProcessMemoryLimit", ctypes.c_size_t),
+                            ("JobMemoryLimit", ctypes.c_size_t),
+                            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                            ("PeakJobMemoryUsed", ctypes.c_size_t)]
+            info = _Ext()
+            info.Basic.LimitFlags = 0x2000                # KILL_ON_JOB_CLOSE
+            if not k32.SetInformationJobObject(job, 9, ctypes.byref(info),
+                                               ctypes.sizeof(info)):
+                k32.CloseHandle(job)
+                return
+            _JOB.append(job)
+        k32.AssignProcessToJobObject(_JOB[0], int(proc._handle))  # noqa: SLF001
+    except Exception:                                     # noqa: BLE001
+        pass
+
+
 class _ProcRecorder:
     """Shared start/stop logic: one recording process per interface per step.
 
@@ -5649,7 +5708,6 @@ class _ProcRecorder:
         self.outdir = outdir
         self.procs: dict = {}
         self.files: dict = {}
-        self.logs: list = []
         self.notes: list = []
         self.diag: list = []
 
@@ -5665,27 +5723,19 @@ class _ProcRecorder:
     def session_end(self) -> None:
         pass
 
-    def _popen(self, cmd, log_path=None):
-        """stdout and stderr go into a small log file next to the recording
-        (a pipe nobody reads could block a program that writes a lot)."""
-        log = open(log_path, "wb") if log_path else subprocess.DEVNULL
-        kwargs = {"stdin": subprocess.DEVNULL, "stdout": log, "stderr": subprocess.STDOUT
-                  if log_path else subprocess.DEVNULL}
+    def _popen(self, cmd):
+        """stdout and stderr into one pipe, read only when the program has
+        ended (it prints only on errors while it writes to a file). A pipe,
+        not a file: USBPcapCMD attaches to our console only when its output
+        is not redirected to a file (cmd.c attach_parent_console), and only
+        then does Ctrl-Break reach it (review of 1.5.4)."""
+        kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE,
+                  "stderr": subprocess.STDOUT}
         if os.name == "nt":
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        try:
-            return subprocess.Popen(cmd, **kwargs)
-        finally:
-            if log_path:
-                log.close()
-
-    @staticmethod
-    def _read_log(path) -> str:
-        try:
-            with open(path, "rb") as fh:
-                return fh.read(4000).decode("utf-8", "replace").strip()
-        except OSError:
-            return ""
+        proc = subprocess.Popen(cmd, **kwargs)
+        _kill_with_us(proc)
+        return proc
 
     def _prepare(self, path) -> None:
         if os.path.exists(path):
@@ -5697,24 +5747,37 @@ class _ProcRecorder:
         entry = {"interface": str(iface), "attempt": attempt, "command": " ".join(cmd),
                  "file": os.path.basename(path)}
         self.diag.append(entry)
-        log_path = path + "." + attempt.split()[0] + ".log"
+        if os.name == "nt":
+            try:
+                if path.encode("mbcs").decode("mbcs") != path:
+                    entry["path_note"] = ("the folder's path has characters that "
+                                          "USBPcapCMD (an ANSI program) cannot pass on")
+            except (LookupError, UnicodeError):
+                pass
         try:
             self._prepare(path)
-            self.procs[iface] = self._popen(cmd, log_path)
+            self.procs[iface] = self._popen(cmd)
         except OSError as exc:
             entry["result"] = f"could not be started: {exc}"
             self.notes.append(f"{iface}: could not start ({exc})")
             return entry
-        self.logs.append(log_path)
         time.sleep(RECORDER_STARTUP_WAIT)
         proc = self.procs[iface]
         size = os.path.getsize(path) if os.path.exists(path) else None
         entry["file_after_start"] = ("not created" if size is None else f"{size} bytes")
         if proc.poll() is None:
             entry["result"] = "running"
+            if size is None and not self.precreate:
+                entry["warning"] = "running, but it has not created its file yet"
+                self.notes.append(f"{iface}: running, but no recording file yet")
             return entry
-        out = self._read_log(log_path)
-        entry["result"] = f"stopped at once, exit code {proc.returncode}"
+        try:
+            out = (proc.stdout.read(4000) if proc.stdout else b"").decode(
+                "utf-8", "replace").strip()
+        except (OSError, ValueError):
+            out = ""
+        entry["result"] = f"stopped at once, exit code {proc.returncode}" + (
+            " (USBPcapCMD ends with 0 even when it fails)" if proc.returncode == 0 else "")
         entry["output"] = out or "(nothing)"
         self.notes.append(f"{iface}: stopped at once (exit code {proc.returncode})"
                           + (": " + " ".join(out.split())[:200] if out else ""))
@@ -5722,7 +5785,7 @@ class _ProcRecorder:
 
     def start(self, stem: str) -> list:
         """Start recording; returns the interfaces that really record."""
-        self.procs, self.files, self.logs = {}, {}, []
+        self.procs, self.files = {}, {}
         live = []
         for iface in self.interfaces:
             path = os.path.join(self.outdir, f"{stem}-{self.iface_label(iface)}-full.pcap")
@@ -5752,6 +5815,9 @@ class _ProcRecorder:
             lines.append(f"    command: {e['command']}")
             if "file_after_start" in e:
                 lines.append(f"    output file {e['file']}: {e['file_after_start']}")
+            for key in ("warning", "path_note"):
+                if key in e:
+                    lines.append(f"    note: {e[key]}")
             if "output" in e:
                 lines.append("    what the program said: "
                              + " | ".join(l.strip() for l in e["output"].splitlines() if l.strip()))
@@ -5781,11 +5847,12 @@ class _ProcRecorder:
                     pass
             except OSError:
                 pass
-        for path in self.logs:
-            try:
-                os.remove(path)
-            except OSError:
-                pass
+        for proc in self.procs.values():
+            if proc.stdout:
+                try:
+                    proc.stdout.close()
+                except OSError:
+                    pass
         files = []
         for path in self.files.values():
             if not os.path.exists(path):
@@ -5797,7 +5864,7 @@ class _ProcRecorder:
                     pass
                 continue
             files.append(path)
-        self.procs, self.files, self.logs = {}, {}, []
+        self.procs, self.files = {}, {}
         return files
 
 
@@ -6047,10 +6114,18 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
             print("-" * 68)
             print(step["before"])
             print()
-            print(step["during"])
-            answer = _session_ask("\n  Press Enter to START recording this step, or type  s  "
-                                  "to skip it,\n  or  q  to stop the session here: ").lower()
+            print(step_box(step["during"]))
+            answer = _session_ask("\n  Press Enter to START recording (s = skip this step, "
+                                  "q = stop): ").lower()
             if answer.startswith("q"):
+                if not any(s.get("files_xrite") or s.get("start_epoch")
+                           for s in session["steps"]):
+                    # 1.5.4: a real tester measured in the program, never
+                    # started a step here, and stopped with nothing recorded.
+                    print("\n  Nothing was recorded yet. A step is recorded only between your")
+                    print("  first Enter here and your second Enter here.")
+                    if not said_yes(_session_ask("  Stop anyway? (yes / no): ")):
+                        continue
                 session["ended"] = "stopped by the operator"
                 break
             entry = {"number": number, "key": step["key"], "title": step["title"],
@@ -6072,7 +6147,7 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                     recording = False
                     recorder.stop()
                     diag = recorder.diag_text() if hasattr(recorder, "diag_text") else ""
-                    session["recorder_failure"] = diag
+                    session["recorder_failure"] = scrub(diag)
                     print("\n  THE RECORDING DID NOT START")
                     print("  " + _wrap(recorder_failure_words(diag), 66, "  "))
                     print("  What the recording program said:")
@@ -6083,12 +6158,15 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                     break
             entry["start_epoch"] = time.time()
             where = ", ".join(recorder.iface_label(x) if recorder else str(x) for x in live)
-            print(f"\n  RECORDING step {number} ({where}).")
-            print("  Do the step in the program now. Press Enter here as soon as you have")
-            print("  finished (or type  q  to stop the whole session after this step).")
+            print(f"\n  RECORDING STEP {number} NOW ({where}).")
+            print("  Do the step in the measuring program now. Then come back to THIS")
+            print("  window and press Enter to stop (or type  q  to stop the whole")
+            print("  session after this step).")
             stop_after = False
             interrupted = None
+            ticker = LiveLine(recorder, entry["start_epoch"])
             try:
+                ticker.start()
                 done = _session_ask("  > ").lower()
                 stop_after = done.startswith("q")
             except _StopSession as exc:
@@ -6096,6 +6174,7 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
             except _Hangup:
                 interrupted = f"ended early (window closed or stop signal) during step {number}"
             finally:
+                ticker.stop()
                 entry["end_epoch"] = time.time()
                 if recorder is not None and recording:
                     entry["files_full"] = [os.path.basename(p) for p in recorder.stop()]
@@ -6170,20 +6249,103 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
     return session
 
 
+def step_box(during: str) -> str:
+    """1.5.4: the three things to do in one step, framed, so the order is
+    impossible to miss (a real tester measured in the program without ever
+    starting a step here)."""
+    text = " ".join(during.split())
+    for prefix in ("When the recording runs:", "When the recording runs"):
+        if text.startswith(prefix):
+            text = text[len(prefix):].strip()
+    rows = ["1. Press Enter HERE to start recording."]
+    rows += _wrap("2. Then do this in the measuring program: " + text, 60, "   ").split("\n")
+    rows += ["3. Come back to THIS window and press Enter to stop."]
+    width = max(len(r) for r in rows) + 4
+    line = "  +" + "-" * (width - 2) + "+"
+    return "\n".join([line] + ["  | " + r.ljust(width - 4) + " |" for r in rows] + [line])
+
+
+class LiveLine:
+    """1.5.4: while a step records, one line that shows it is running:
+    elapsed seconds and the bytes recorded so far. Only in a real terminal
+    window (it rewrites itself with a carriage return)."""
+
+    def __init__(self, recorder, start: float, stream=None, interval: float = 1.0):
+        self.recorder = recorder
+        self.start_t = start
+        self.stream = stream or sys.stdout
+        self.interval = interval
+        self._stop = threading.Event()
+        self._thread = None
+
+    def text(self, now: float | None = None) -> str:
+        secs = int((now or time.time()) - self.start_t)
+        size = None
+        if self.recorder is not None:
+            size = 0
+            for path in list(getattr(self.recorder, "files", {}).values()):
+                try:
+                    size += os.path.getsize(path)
+                except OSError:
+                    pass
+        if size is None:
+            what = "your own recording runs"
+        elif size == 0 and secs >= 5:
+            what = "nothing captured yet: is the instrument plugged into this PC?"
+        else:
+            what = f"{size:,} bytes captured"
+        return f"  RECORDING {secs:4d} s | {what} | Enter = stop "
+
+    def _run(self):
+        while not self._stop.wait(self.interval):
+            try:
+                self.stream.write("\r" + self.text())
+                self.stream.flush()
+            except (OSError, ValueError):
+                return
+
+    def start(self) -> None:
+        if _isatty(self.stream):
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+            try:
+                self.stream.write("\n")
+            except (OSError, ValueError):
+                pass
+
+
 def recorder_failure_words(diag: str) -> str:
-    """1.5.4: what a failed recorder start means, in plain words."""
+    """1.5.4: what a failed recorder start means, in plain words, from what
+    USBPcapCMD itself prints (it ends with exit code 0 even then)."""
     low = (diag or "").lower()
-    if "invalid write handle" in low or "file_exists" in low:
-        return ("USBPcap could not create its recording file. That was most likely "
-                "this tool's own mistake in version 1.5.3 (it made the file first, and "
-                "USBPcap refuses to write into a file that already exists); this "
-                "version no longer does that.")
+    if "invalid write handle" in low:
+        return ("USBPcap could not create its recording file. Version 1.5.3 of this "
+                "tool caused exactly this (it made the file first, and USBPcap refuses "
+                "to write into a file that already exists); this version no longer "
+                "does that. If it still happens, the folder may not be writable for "
+                "USBPcap, its path may hold characters USBPcap cannot handle, or "
+                "security software (for example Windows' \"Controlled folder "
+                "access\") may block it. Moving this tool into a plain folder such "
+                "as C:\\ChromIQ-probe usually helps.")
+    m = re.search(r"couldn't open device - (\d+)", low)
+    if m:
+        code = int(m.group(1))
+        if code == 2:
+            return ("USBPcap's recording device does not exist yet. Restart Windows "
+                    "once after installing USBPcap, then try again.")
+        if code in (5, 32):
+            return ("Another recording of this USB root hub is already running, for "
+                    "example Wireshark, or a USBPcapCMD left over from an earlier try "
+                    "(see Task Manager). Close it and try again.")
+        return f"USBPcap could not open its recording device (Windows error {code})."
     if "access" in low and "denied" in low:
         return ("Windows refused USBPcap access. Please start this tool as "
                 "administrator (right-click it, then \"Run as administrator\").")
-    if "couldn't open device" in low:
-        return ("USBPcap could not open its recording device. It may not be running "
-                "yet: restart Windows once after installing it.")
     return ("The recording program ended at once, and this tool does not know why. "
             "Everything it said is in the report.")
 
@@ -6267,16 +6429,41 @@ HANDHELD_SEND_WAYS = f"""\
 def session_send_text(folder: str) -> str:
     return f"""\
   WHAT TO SEND (only if you want to)
-  The folder  {os.path.basename(folder)}  next to this tool holds
-  everything we need: the instrument-only recordings, session.json (the
-  steps and your notes) and analysis.txt (the tool's own reading of it).
-  Make a zip file of that folder (Windows: right-click it, then "Send to",
-  then "Compressed (zipped) folder"; Mac: right-click, then "Compress").
-  Please add the report too (the chromiq-io-probe text file).
-  Remember: the zip contains your instrument's serial number and its
-  factory calibration data.
+  At the very end the tool puts everything we need into ONE file next to
+  it, named  SEND-THIS-<date>.zip : the report, the instrument-only
+  recordings, session.json (the steps and your notes) and analysis.txt.
+  That one file is all you send. It contains your instrument's serial
+  number and its factory calibration data.
 {HANDHELD_SEND_WAYS}
   Do NOT send the folder ending in -FULL-do-not-send."""
+
+
+def make_send_zip(report_path: str, send: dict) -> str | None:
+    """1.5.4: ONE file to send, next to the report: the report, and the
+    session folder's own files (instrument-only recordings, session.json,
+    analysis.txt) or the given recordings. Never a full recording, never a
+    sub-folder. Returns its path, or None."""
+    import zipfile                                        # noqa: PLC0415
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    dst = os.path.join(os.path.dirname(report_path) or ".", f"SEND-THIS-{stamp}.zip")
+    items = [report_path]
+    folder = send.get("folder")
+    if folder and os.path.isdir(folder):
+        for name in sorted(os.listdir(folder)):
+            full = os.path.join(folder, name)
+            if os.path.isfile(full) and "-full." not in name and not name.endswith(".tmp"):
+                items.append(full)
+    items += [f for f in send.get("files") or [] if os.path.isfile(f)]
+    try:
+        with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zf:
+            for item in items:
+                arc = os.path.basename(item)
+                if folder and os.path.dirname(os.path.abspath(item)) == os.path.abspath(folder):
+                    arc = os.path.basename(folder) + "/" + arc
+                zf.write(item, arc)
+    except (OSError, ValueError):
+        return None
+    return dst
 
 
 def manual_recording_text(folder: str, after_failure: bool = False) -> str:
@@ -6327,6 +6514,8 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
     print(f"\n  WHAT YOU WILL DO ({len(steps)} short steps, about 15 minutes)")
     for i, s in enumerate(steps, 1):
         print(f"    {i}. {s['title']}")
+    print("  IMPORTANT: use the measuring program for a step only AFTER you have")
+    print("  pressed Enter here to start that step. Before that, nothing is recorded.")
     print("  Each step is recorded into its own small file. You can skip or repeat")
     print("  any step and stop at any time; the steps you finished are kept.")
     print("  You need: the instrument, the program you normally measure with, and")
@@ -6414,6 +6603,8 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
             print("  route above works with the same instrument.")
             section("Instrument recording session",
                     "[not possible on this Mac: " + " ".join(readiness["reasons"]) + "]")
+            outcome["reason"] = ("A recording is not possible on this Mac right now: "
+                                 + " ".join(readiness["reasons"]))
             return outcome
     else:
         ifaces = linux_usbmon_interfaces()
@@ -6430,6 +6621,7 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
             return outcome
     if not said_yes(ask("\n  Start the session now? (yes / no): ")):
         print("\n  No problem at all. Nothing was recorded.\n")
+        outcome["reason"] = "You chose not to start the recording session."
         section("Instrument recording session", "[declined by the operator]")
         return outcome
     try:
@@ -6464,18 +6656,19 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
         print()
         print(manual_recording_text(folder, after_failure=True))
         if said_yes(ask("\n  Record by hand with Wireshark now, while this tool walks you "
-                        "through\n  the steps? (yes / no): ")):
+                        "through\n  the steps? (yes / no): ")) and \
+                said_yes(ask("  Is Wireshark recording now? (yes / no): ")):
             first = session
             folder = folder + "-by-hand"
             os.makedirs(folder, exist_ok=True)
             print(f"\n  The new session folder is  {os.path.basename(folder)}")
-            if said_yes(ask("  Is Wireshark recording now? (yes / no): ")):
-                manual = True
-                session = run_instrument_session(None, folder, profile, program, version,
-                                                 context)
-                session["first_try"] = {"ended": first.get("ended"),
-                                        "recorder_failure": first.get("recorder_failure")}
-                _write_session(session, folder)
+            print(f"  (save the recording there as  whole-session.pcapng)")
+            manual = True
+            session = run_instrument_session(None, folder, profile, program, version,
+                                             context)
+            session["first_try"] = {"ended": first.get("ended"),
+                                    "recorder_failure": first.get("recorder_failure")}
+            _write_session(session, folder)
     if manual:
         print("\n  Now stop Wireshark and save the recording into the folder")
         print(f"  {os.path.basename(folder)}  as  whole-session.pcapng  (File, then Save As).")
@@ -6487,6 +6680,19 @@ def instrument_session_step(pids: list, direct: bool) -> dict:
         verdict = analysis.split("DOES THIS RECORDING HOLD WHAT WE NEED?")[-1]
         print("\n  DOES THIS RECORDING HOLD WHAT WE NEED?" + verdict.replace("\n", "\n  "))
     outcome["recorded"] = bool(any(s.get("files_xrite") for s in session["steps"]) or manual)
+    if outcome["recorded"]:
+        _END["send"] = {"folder": folder}
+    else:
+        ended = session.get("ended") or ""
+        if "stopped at once" in ended:
+            outcome["reason"] = ("The recording program stopped at once, so nothing was "
+                                 "recorded. Everything needed to find out why is in the "
+                                 "section \"Instrument recording session\" below.")
+        elif ended == "stopped by the operator" and not any(
+                s.get("start_epoch") for s in session["steps"]):
+            outcome["reason"] = ("You stopped the session before the first step was "
+                                 "recorded. A step is recorded only between your first "
+                                 "and your second Enter in this tool's window.")
     if outcome["recorded"]:
         print()
         print(session_send_text(folder))
@@ -6929,9 +7135,10 @@ def closing_words(outcome: dict | None) -> list:
     the install steps scrolled away above them)."""
     outcome = outcome or {}
     if outcome.get("recorded"):
-        return ["  Send it together with the session folder, as described above.",
-                "  In the report the serial numbers are scrambled; in the zip's",
-                "  recordings they cannot be, as said above.", "", HANDHELD_SEND_WAYS]
+        return ["  Please send the one SEND-THIS zip file named above. It holds the",
+                "  report and the recordings. In the report the serial numbers are",
+                "  scrambled; in the recordings they cannot be, as said above.", "",
+                HANDHELD_SEND_WAYS]
     lines = ["  NOTHING WAS RECORDED THIS TIME",
              "  " + (outcome.get("reason") or "No step of the session was recorded."),
              "  There is no session folder to send. You do not need to send this",
@@ -6960,6 +7167,11 @@ def report_text(instrument: bool = False) -> str:
         f"Redaction: {'ON (serials hashed, paths stripped)' if REDACT else 'OFF, raw values included'}",
         "",
     ]
+    if not _END.get("send"):
+        # 1.5.4: said at the top, so nobody reads a report as if it held a
+        # recording (a real tester sent only this file).
+        body[3:3] = ["THIS REPORT CONTAINS NO RECORDING. "
+                     + (_END.get("no_recording") or "No recording was made in this run."), ""]
     for title, content in _SECTIONS:
         body.append("=" * 72)
         body.append(title)
@@ -6972,6 +7184,11 @@ def report_text(instrument: bool = False) -> str:
 def finish_report(args, system: str, instrument: bool = False,
                   outcome: dict | None = None, mode: str | None = None) -> int:
     """mode "report" (1.5.3): the user chose "nothing more, just the report"."""
+    if not _END.get("send"):
+        if instrument and (outcome or {}).get("reason"):
+            _END["no_recording"] = outcome["reason"]
+        elif mode == "report":
+            _END.setdefault("no_recording", "You chose to make only the report.")
     report = report_text(instrument)
     out_path = write_report(report, args.output)
     if out_path:
@@ -6985,6 +7202,7 @@ def finish_report(args, system: str, instrument: bool = False,
         return 1
 
     size_kb = os.path.getsize(out_path) / 1024
+    zip_path = make_send_zip(out_path, _END["send"]) if _END.get("send") else None
     recorded = (not instrument) or bool((outcome or {}).get("recorded"))
     print("\n" + "=" * 68)
     print("  ALL DONE. Thank you!" if recorded else "  FINISHED, BUT NOTHING WAS RECORDED YET")
@@ -6998,6 +7216,13 @@ def finish_report(args, system: str, instrument: bool = False,
     print("  a look first: you can see exactly what is being shared, and you")
     print("  can delete anything you are not comfortable with.")
     print()
+    if zip_path:
+        print("  " + "=" * 66)
+        print("  SEND THIS ONE FILE (it holds the report and the recordings):")
+        print()
+        print(f"      {zip_path}")
+        print("  " + "=" * 66)
+        print()
     if instrument and recorded:
         print("\n".join(closing_words(outcome)))
     elif mode == "report":

@@ -393,12 +393,13 @@ log = os.environ["FAKE_LOG"]
 args = sys.argv[1:]
 with open(log, "a") as fh:
     fh.write("usbpcapcmd " + " ".join(args) + "\n")
+# The real program's own lines and exit codes (thread.c 38; cmd.c getopt).
 if os.environ.get("FAKE_FAIL"):
-    sys.stderr.write("error: access denied\n")
-    sys.exit(1)
+    sys.stderr.write("Couldn't open device - " + os.environ["FAKE_FAIL"] + "\n")
+    sys.exit(0)
 if os.environ.get("FAKE_REJECT_INJECT") and "--inject-descriptors" in args:
-    sys.stderr.write("unknown option\n")
-    sys.exit(2)
+    sys.stderr.write("Try 'USBPcapCMD.exe --help' for more information.\n")
+    sys.exit(255)
 out = args[args.index("-o") + 1]
 # As the real USBPcapCMD 1.5.4.0 run as administrator: the output file is
 # opened with CREATE_NEW, so an existing file makes it stop at once
@@ -534,14 +535,14 @@ class SessionTests(TempDirCase):
         self.assertEqual(self.fake_log().count("usbpcapcmd stopped"), 1)
 
     def test_recorder_that_cannot_start(self):
-        os.environ["FAKE_FAIL"] = "1"
+        os.environ["FAKE_FAIL"] = "5"
         try:
             session, screen = self.run_session([""])
         finally:
             del os.environ["FAKE_FAIL"]
         self.assertEqual(session["ended"], "the recording program stopped at once")
-        self.assertIn("Windows refused USBPcap access", screen)
-        self.assertIn("access", screen)
+        self.assertIn("Another recording of this USB root hub is already running", screen)
+        self.assertIn("device - 5", screen)
         self.assertEqual(self.saved()["steps"], [])
 
     def test_retry_without_inject_option(self):
@@ -716,7 +717,8 @@ class TextRules15(unittest.TestCase):
         self.assertIn("https://github.com/itsab1989/ChromIQ/issues/new", text)
         self.assertIn("forum thread where you heard about this tool", text)
         self.assertIn("private message to itsab1989 on the forum", text)
-        self.assertIn("serial number and its\n  factory calibration data", text)
+        self.assertIn("serial\n  number and its factory calibration data", text)
+        self.assertIn("SEND-THIS-", text)
         self.assertIn("-FULL-do-not-send", text)
         with open(os.path.join(ROOT, "chromiq_io_probe.py"), encoding="utf-8") as fh:
             src = fh.read()
