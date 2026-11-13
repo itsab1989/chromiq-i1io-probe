@@ -382,8 +382,10 @@ class PlainFilesTogether(test_instrument.TempDirCase):
                     self.assertIn("These recordings come from different instruments:", report)
                     self.assertIn("a-i1pro2.pcap: i1Pro 2", report)
                     self.assertIn("b-isis.pcap: i1iSis chart reader", report)
-                    self.assertIn("--analyze a-i1pro2.pcap", report)
-                    self.assertIn("--analyze b-isis.pcap", report)
+                    # 1.6.2: the paths as given, so the commands work anywhere
+                    self.assertIn("with this tool:", report)
+                    self.assertIn("--analyze " + i1pro2, report)
+                    self.assertIn("--analyze " + isis, report)
                     # nothing is analysed as one instrument, nothing sent is shown
                     self.assertNotIn("instrument family:", report)
                     self.assertNotIn("I1PRO2-SERIAL", report)
@@ -391,6 +393,32 @@ class PlainFilesTogether(test_instrument.TempDirCase):
                     self.assertNotIn("\u2014", report)
                     # the 1.4 check still lists both files
                     self.assertIn("USB recording check", report)
+
+    def test_the_same_i1pro2_with_and_without_its_description_is_listed_once(self):
+        described = self.usbpcap("a.pcap", 0x0971, 0x2000, b"X", self.I1PRO2_EPS, True)
+        w = synth.UsbPcapWriter()
+        synth.i1pro2_calibration(w, describe=False)
+        bare = w.save(os.path.join(self.dir, "b.pcap"))
+        for files in ([described, bare], [bare, described]):
+            with self.subTest(first=os.path.basename(files[0])):
+                report = probe.analyze_paths(files)
+                detail = report.split("Instrument recording analysis")[1]
+                self.assertEqual(detail.count("instrument at bus 1, address 3"), 1, detail[:900])
+                self.assertIn("instrument at bus 1, address 3: 0971:2000", detail)
+
+    def test_the_refusal_ends_with_code_2_and_quotes_paths_with_spaces(self):
+        i1pro2, isis = self.pair("usbpcap")
+        spaced = os.path.join(self.dir, "my recordings")
+        os.makedirs(spaced)
+        moved = os.path.join(spaced, "b isis.pcap")
+        os.replace(isis, moved)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = probe.main(["--analyze", i1pro2, moved])
+        self.assertEqual(code, 2)
+        self.assertIn(f'--analyze "{moved}"', buf.getvalue())
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(probe.main(["--analyze", i1pro2]), 0)
 
     def test_each_file_alone_is_read_as_before(self):
         for fmt in ("usbpcap", "mac"):
@@ -843,6 +871,23 @@ class _Refusing:
         self._watch._refuse(f"{self._name}.{attr}")
 
 
+# 1.6.2: Windows also opens a device by a reserved name in any folder
+# ("COM3", "nul", "C:\\x\\aux.txt") and through \\?\\ paths that do not
+# name a drive or a share (\\?\\GLOBALROOT\\Device\\..., \\?\\USB#VID_...).
+_RESERVED = {"con", "prn", "aux", "nul", "conin$", "conout$", "clock$"} | \
+    {f"{p}{n}" for p in ("com", "lpt") for n in "123456789"}
+
+
+def is_windows_device_name(text):
+    norm = text.replace("/", "\\")
+    if norm.startswith("\\\\?\\") or norm.startswith("\\??\\"):
+        rest = norm[4:]
+        return not (re.match(r"[A-Za-z]:\\", rest) or rest.upper().startswith("UNC\\"))
+    base = norm.rstrip("\\").split("\\")[-1].split(":")[0]
+    stem = base.split(".")[0].strip().lower()
+    return stem in _RESERVED
+
+
 class DeviceWatch:
     """Watches, and blocks, the ways listed above. A violation is recorded and
     refused with an error, so a broken tool cannot touch anything here."""
@@ -869,7 +914,8 @@ class DeviceWatch:
             return    # subprocess opens /dev/null (Windows: nul) for unused input
         real = os.path.realpath(text)
         device = (real.startswith("/dev/") or text.startswith("/dev/")
-                  or text.startswith("\\\\.\\") or text.startswith("//./"))
+                  or text.startswith("\\\\.\\") or text.startswith("//./")
+                  or is_windows_device_name(text))
         if device:
             self._refuse(f"opened a device: {text}")
         if writing and not real.startswith(self.base):
@@ -1018,6 +1064,21 @@ MUTATION_ANCHOR = '    os.makedirs(folder, exist_ok=True)\n    _END["session_fol
 class ReadOnlyPromise(_IsisSessionBase):
     """The tool never opens a device, starts only the programs it names, and
     writes only into its own folders."""
+
+    def test_windows_device_names_are_seen_as_devices(self):
+        # 1.6.2: the reserved names and \\?\\ device paths, on every system.
+        for name in ("COM3", "nul", "NUL.txt", "C:\\x\\aux", "lpt1:", "CONOUT$",
+                     "\\\\?\\GLOBALROOT\\Device\\USBPDO-5",
+                     "\\\\?\\USB#VID_0971&PID_2000#X#{a5dcbf10}", "//?/usb#vid_0971"):
+            self.assertTrue(is_windows_device_name(name), name)
+        for name in ("report.txt", "\\\\?\\C:\\Users\\x\\a.pcap",
+                     "\\\\?\\UNC\\server\\share\\a", "console.log", "com10.txt",
+                     "/tmp/nullable"):
+            self.assertFalse(is_windows_device_name(name), name)
+        watch = DeviceWatch(self.dir, self.exe)
+        for name in ("COM3", "nul"):
+            with self.assertRaises(PermissionError):
+                watch._check_path(name, False)
 
     def watched_session(self, mod, only=None):
         answers = []

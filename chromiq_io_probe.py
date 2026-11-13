@@ -4933,13 +4933,15 @@ def session_steps(paths: list) -> tuple:
         try:
             lt, recs = _read_pcap(f)
         except (OSError, ValueError):
-            families.append((os.path.basename(f), "generic"))
+            families.append((f, "generic"))
             continue
         evs_all = capture_events(lt, recs)
         devs_all = device_map(evs_all)
         for key, info in devs_all.items():
             union[(i,) + tuple(key)] = info
-        families.append((os.path.basename(f), _family_of(
+        # 1.6.2: the path as given, so that the refusal's commands work from
+        # any folder
+        families.append((f, _family_of(
             devs_all, evs_all, plain_file_profile(devs_all))))
     plain = plain_file_profile(union)
     for i, f in enumerate(whole):
@@ -4963,6 +4965,19 @@ def distinct_devices(devinfo: dict) -> dict:
     merged: dict = {}
     for key, info in devinfo.items():
         merged[(key[0], key[1], info.get("vid"), info.get("pid"))] = (key, info)
+    # 1.6.2: the same instrument seen once without its USB description (only
+    # guessed from its commands) and once with it, at the same address, is
+    # one instrument, listed once with its description.
+    for (bus, addr, vid, _pid), (_key, info) in list(merged.items()):
+        if vid is not None or not info.get("guess_family"):
+            continue
+        guess = _SAME_INSTRUMENT.get(info["guess_family"], info["guess_family"])
+        for (b2, a2, v2, p2), (_k2, i2) in merged.items():
+            if (b2, a2) == (bus, addr) and v2 is not None:
+                fam = family_for(v2, p2, i2.get("config"))
+                if _SAME_INSTRUMENT.get(fam, fam) == guess:
+                    merged.pop((bus, addr, vid, _pid), None)
+                    break
     return {key: info for key, info in merged.values()}
 
 
@@ -5023,17 +5038,19 @@ def mixed_families_text(mixed: list) -> str:
            "  These recordings come from different instruments:"]
     for name, fam in mixed:
         label = FAMILIES[fam]["name"] if fam != "generic" else "no instrument this tool knows"
-        out.append(f"    {name}: {label}")
+        out.append(f"    {os.path.basename(name)}: {label}")
     out.append("")
     out.append("  " + _wrap(
         "The analysis reads one instrument at a time, so that nothing of one "
         "instrument ends up in the analysis of the other. Please analyse the "
-        "recordings of each instrument on their own, for example:", 64, "  "))
+        "recordings of each instrument on their own, for example with this tool:",
+        64, "  "))
     groups: dict = {}
     for name, fam in mixed:
         if fam != "generic":
             groups.setdefault(_SAME_INSTRUMENT.get(fam, fam), []).append(name)
     for names in groups.values():
+        # 1.6.2: each path as it was given, quoted when it holds a space
         out.append("      --analyze " + " ".join(f'"{n}"' if " " in n else n for n in names))
     out.append("")
     out.append("  " + _wrap(
@@ -8877,8 +8894,14 @@ def find_session_folders() -> list:
     return []
 
 
+_ANALYSIS_STATE: dict = {}
+
+
 def analyze_paths(paths: list) -> str:
-    """--analyze: the instrument analysis when it fits, else 1.4's summary."""
+    """--analyze: the instrument analysis when it fits, else 1.4's summary.
+    1.6.2: _ANALYSIS_STATE["refused"] says whether the files were refused as
+    recordings of different instruments (main() then ends with code 2)."""
+    _ANALYSIS_STATE["refused"] = False
     if any(os.path.isdir(p) or p.endswith(".json") for p in paths):
         return summarize_session(paths)
     # 1.5.4: a probe report named next to the recordings gives the i1iO
@@ -8902,6 +8925,7 @@ def analyze_paths(paths: list) -> str:
     except Exception:                                     # noqa: BLE001
         return text
     if mixed_families(plain):
+        _ANALYSIS_STATE["refused"] = True
         return text + "\n\n" + mixed_families_text(mixed_families(plain))
     if session_family(devinfo, steps, plain) != "generic":
         return text + "\n\n" + summarize_session(paths)
@@ -9012,7 +9036,8 @@ def main(argv: list | None = None) -> int:
                   "    --analyze path/to/instrument-session-folder")
             return 1
         print(analyze_paths(paths))
-        return 0
+        # 1.6.2: a refusal (recordings of different instruments) ends with 2
+        return 2 if _ANALYSIS_STATE.get("refused") else 0
 
     print("=" * 68)
     print("  ChromIQ X-Rite instrument probe " + PROBE_VERSION)
