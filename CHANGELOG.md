@@ -89,7 +89,12 @@ drive the table. There is still no recording from a handheld instrument.
   itself had stopped, and re-read the whole recording after every step; the
   big SIP box also appeared when nothing had been recorded; letters could
   land in i1Profiler (the steps now say to click into the tool's window
-  first); a few meanings were worded more firmly than our notes allow.
+  first); a few meanings were worded more firmly than our notes allow. A
+  second review of those fixes found, and this release fixes: an accidental
+  Ctrl-D ended the walk; a window closed during the last questions lost the
+  report; an i1iO 3 recording would have been called empty after every step
+  (its protocol is not known, so its steps are now marked "cannot be checked
+  here"); some step texts claimed more than we know.
 
 ## v1.5.3
 

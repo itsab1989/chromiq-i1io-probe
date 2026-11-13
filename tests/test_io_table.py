@@ -514,6 +514,44 @@ class Steps(TmpCase):
         self.assertIn("not one of the choices", out.getvalue())
         self.assertIn("still running", out.getvalue())
 
+    def test_ctrl_d_on_a_terminal_is_not_the_end_of_input(self):
+        tty = mock.Mock()
+        tty.isatty.return_value = True
+        with mock.patch.object(probe.sys, "stdin", tty), \
+                mock.patch("builtins.input", side_effect=[EOFError(), "x"]), \
+                redirect_stdout(io.StringIO()):
+            self.assertEqual(probe.ask("> "), "")
+            self.assertFalse(probe._INPUT_ENDED)
+            self.assertEqual(probe.ask("> "), "x")
+        pipe = mock.Mock()
+        pipe.isatty.return_value = False
+        with mock.patch.object(probe.sys, "stdin", pipe), \
+                mock.patch("builtins.input", side_effect=EOFError()), \
+                redirect_stdout(io.StringIO()):
+            probe.ask("> ")
+            self.assertTrue(probe._INPUT_ENDED)
+
+    def test_q_after_a_step_stops(self):
+        log = []
+        with mock.patch.object(probe, "ask", scripted(["", "e", "", "q"])), \
+                redirect_stdout(io.StringIO()):
+            self.assertEqual(probe.run_io_steps(probe.IO_STEPS, 0.0, log),
+                             "stopped by the operator")
+        self.assertTrue(log[-1].startswith("stopped by the operator after:"))
+
+    def test_an_i1io3_recording_is_not_called_a_failure(self):
+        w = sio.DarwinWriter(t0=1000.0)
+        w.seq += 1
+        w._rec(1, w.seq, 9, 0x81, 2, 0x0765, 0x30B0, b"\x01\x02\x03", 3)
+        path = w.save(self.path("io3-full.pcap"))
+        verdict = probe.io_live_check([path], 0, 2000)
+        self.assertIn("i1iO 3", verdict)
+        self.assertNotIn("please repeat", verdict)
+
+    def test_box_thanks_only_after_a_step(self):
+        self.assertIn("Thank you for recording", probe.sip_back_on_box(True))
+        self.assertNotIn("Thank you", probe.sip_back_on_box(True, thanks=False))
+
     def test_closed_input_ends_the_walk(self):
         with mock.patch.object(probe, "ask", scripted([])), redirect_stdout(io.StringIO()):
             self.assertEqual(probe.run_io_steps(probe.IO_STEPS, 0.0, []),

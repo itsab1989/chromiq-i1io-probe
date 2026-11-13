@@ -276,10 +276,15 @@ _INPUT_ENDED: list = []
 
 def ask(prompt: str, interruptible: bool = False) -> str:
     try:
-        return input(prompt).strip()
+        answer = input(prompt).strip()
+        _INPUT_ENDED.clear()
+        return answer
     except EOFError:
         print()
-        _INPUT_ENDED[:] = [True]
+        # A Ctrl-D typed on a terminal is not the end of the input (typing
+        # still works afterwards); only a closed or used-up pipe or file is.
+        if not _isatty(sys.stdin):
+            _INPUT_ENDED[:] = [True]
         return ""
     except KeyboardInterrupt:
         print()
@@ -882,7 +887,7 @@ SIP_OFF_REMINDER = """\
   "enabled"."""
 
 
-def sip_back_on_box(apple_silicon: bool) -> str:
+def sip_back_on_box(apple_silicon: bool, thanks: bool = True) -> str:
     """1.5.4: the last thing on the screen after a Mac session with SIP off:
     a friendly box with the exact steps to switch it back on, and the check."""
     if apple_silicon:
@@ -896,9 +901,10 @@ def sip_back_on_box(apple_silicon: bool) -> str:
                  "2. Straight away press and hold Command and R together, until",
                  "   the Apple logo appears, then let go.",
                  "3. If asked, choose your user and type your password."]
-    body = (["Thank you for recording! Your Mac is still less protected than",
-             "usual, because System Integrity Protection (SIP) is switched off.",
-             "Please switch it back on now, it only takes a few minutes:", ""]
+    body = ((["Thank you for recording! Your Mac is still less protected than"] if thanks
+             else ["Your Mac is still less protected than"])
+            + ["usual, because System Integrity Protection (SIP) is switched off.",
+               "Please switch it back on now, it only takes a few minutes:", ""]
             + start
             + ["4. In the menu bar choose Utilities > Terminal.",
                "5. Type   csrutil enable   and press Return. If asked, answer y",
@@ -1440,11 +1446,13 @@ IO_STEPS = [
     {"key": "row",
      "title": "One row of a chart that scans in one pass",
      "prepare": """\
-  Use a chart that i1Profiler reads in ONE pass per row, for example one
-  of i1Profiler's own test charts for the i1iO, freshly printed. (Your
-  earlier chart was most likely read three times and then patch by patch
-  on every row, which i1Profiler does when a scan fails.) Set up the
-  measurement up to the point just before you press Measure.""",
+  Use a chart that i1Profiler should read in one pass per row: one of
+  the test charts for the i1iO that come with i1Profiler (for example
+  "default-i1iO"), freshly printed, or a chart you know scans normally.
+  (i1Profiler's help says that when it cannot scan a row, it reads the
+  row again more slowly and then patch by patch; that is most likely
+  what happened with your earlier chart.) Set up the measurement up to
+  the point just before you press Measure.""",
      "do": """\
   Press Measure and let it calibrate as usual, then align the three
   corners. Watch the FIRST row closely and type a letter and Enter here
@@ -1453,7 +1461,8 @@ IO_STEPS = [
      l = the instrument's lamp lights up (if you can see it)
      d = the head goes down,  u = the head lifts
   When the arm starts along the SECOND row, press Cancel in i1Profiler
-  and wait until the arm stands still.""",
+  and wait until the arm stands still. If the arm goes along the first
+  row more than once, that is fine: carry on and say so afterwards.""",
      "arm": "When the arm started along the row, was the lamp already on? What "
             "did the head do? Was the row read once? What happened after Cancel?",
      "marks": True},
@@ -1462,8 +1471,9 @@ IO_STEPS = [
      "optional": True,
      "prepare": """\
   If i1Profiler offers to measure patch by patch (often called spot
-  mode) for the table, choose it and set up the measurement up to just
-  before Measure. If it does not, type  s  to skip this step.""",
+  mode) for the table, choose it and set up the measurement with the
+  chart from step 1, up to just before Measure. If it does not, type  s
+  to skip this step.""",
      "do": """\
   Press Measure, align the three corners, and let it measure about 5
   patches. Type  d  and Enter each time the head goes DOWN onto the
@@ -1508,8 +1518,7 @@ IO_STEPS = [
      "prepare": """\
   Only if you still have the chart from your first recordings printed:
   place it, with your usual settings. Otherwise type  s  to skip this
-  step. It shows us once more what i1Profiler does when a row cannot be
-  scanned.""",
+  step. It shows us once more what i1Profiler did with this chart.""",
      "do": """\
   Press Measure, align the three corners, and let it work on the FIRST
   row until it moves on to the second row. Then press Cancel and wait
@@ -1532,16 +1541,19 @@ IO_QUESTIONS = [
      "     left edge of its first patch to the right edge of its last patch, in\n"
      "     millimetres, and count its patches (for example: 190 mm, 20 patches)."),
     ("settings",
-     "Your usual i1Profiler settings for the table: the measuring mode\n"
-     "     (single scan, dual scan or spot), the measurement condition (M0, M1\n"
-     "     or M2), any accuracy or averaging option, and the patch size."),
+     "The i1Profiler settings you used in steps 1 and 3, and your usual ones\n"
+     "     if different: the measuring mode (single scan, dual scan or spot),\n"
+     "     the measurement condition (M0, M1 or M2), any accuracy or averaging\n"
+     "     option, and the patch size."),
     ("earlier chart",
      "Your earlier chart: was every row always read three times and then\n"
      "     patch by patch, also on other days?"),
     ("sheet hold",
-     "Do you use the button on the table's base plate that holds the sheet\n"
-     "     flat? When something goes wrong, what does the table do or show\n"
-     "     (a light, a sound, a message in i1Profiler)?"),
+     "Does your table have a way to hold the sheet flat (for example a\n"
+     "     button on the base plate)? Do you use it?"),
+    ("errors",
+     "When something goes wrong, what does the table do or show (a light,\n"
+     "     a sound, a message in i1Profiler)?"),
     ("head control",
      "Does i1Profiler have a button or menu that lowers or lifts the head on\n"
      "     its own, without measuring? If yes, where is it?"),
@@ -1552,11 +1564,12 @@ IO_QUESTIONS = [
 # Mac does it all in one round with SIP switched off. Shown once before the
 # recording starts, and in --rehearse.
 IO_READY_LIST = [
-    "i1Profiler (3.8.6 or older) is open and has found the table.",
+    "i1Profiler is open and has found the table (for an i1iO 2: version "
+    "3.8.6 or older).",
     "A chart that i1Profiler reads in one pass per row is printed (for "
     "example one of its own test charts for the i1iO). Steps 1, 2 and 4 use it.",
-    "A SMALL chart is printed: two rows (i1Profiler does not allow one row "
-    "on the table), 10 to 20 patches, on any paper size. Step 3 uses it.",
+    "A SMALL chart is printed: two rows (i1Profiler may not allow a single "
+    "row on the table), 10 to 20 patches, on any paper size. Step 3 uses it.",
     "If you still have it: the chart of your first recordings (step 5).",
     "You know where i1Profiler offers spot mode, its fastest setting, and "
     "dual scan or M1 / M2 for the table (if it offers them).",
@@ -1682,7 +1695,8 @@ def run_io_steps(steps: list, t0: float, log: list, check=None,
         print()
         print("  THEN:")
         print(step["do"])
-        answer = _ask_choice("\n  Press Enter to START this step, or type  s  to skip it,\n"
+        answer = _ask_choice("\n  (Click into this window first if you were in i1Profiler.)\n"
+                             "  Press Enter to START this step, or type  s  to skip it,\n"
                              "  or  q  to stop here: ", ("", "skip", "quit"),
                              on_end="quit")
         if answer == "quit":
@@ -1703,8 +1717,8 @@ def run_io_steps(steps: list, t0: float, log: list, check=None,
         if step.get("marks"):
             print("  Letters: a = arm starts moving, l = lamp lights up, d = head down,")
             print("  u = head lifts; anything else you type is kept as a note.")
-            print("  After clicking in i1Profiler, click once into this window again")
-            print("  before you type, so the letters land here and not in i1Profiler.")
+        print("  After clicking in i1Profiler, click once into this window again")
+        print("  before you type, so your keys land here and not in i1Profiler.")
         print("  When the step is finished, type  e  and press Enter.")
         marks = []
         try:
@@ -1760,9 +1774,13 @@ def run_io_steps(steps: list, t0: float, log: list, check=None,
                 log.append(f"  check: {verdict}")
                 entry["check"] = verdict
             changed()
-        again = _ask_choice("\n  Press Enter to go on, or type  r  to do this step again"
-                            + ("" if rehearse else "\n  (the recording keeps both tries)")
-                            + ": ", ("", "repeat"))
+        again = _ask_choice("\n  Press Enter to go on, type  r  to do this step again"
+                            + ("" if rehearse else " (the recording\n  keeps both tries)")
+                            + ", or  q  to stop here: ", ("", "repeat", "quit"))
+        if again == "quit":
+            log.append("stopped by the operator after: " + title)
+            changed()
+            return "stopped by the operator"
         if again == "repeat":
             take += 1
             continue
@@ -1776,7 +1794,8 @@ def ask_io_questions(log: list) -> None:
     print("\n" + "-" * 68)
     print("  LAST: A FEW QUESTIONS (nothing is recorded now)")
     print("-" * 68)
-    print("  Just press Enter to skip any of them.\n")
+    print("  Just press Enter to skip any of them (Ctrl-C is switched off here,")
+    print("  so that nothing recorded is lost).\n")
     for n, (key, question) in enumerate(IO_QUESTIONS, 1):
         answer = ask(f"  {n}. {question}\n     > ").strip()
         log.append(f"{key}: {answer or '[no answer]'}")
@@ -1822,6 +1841,15 @@ def rehearse_io() -> int:
     return 0
 
 
+IO3_UNCHECKED = ("the recording holds {n} packets from the i1iO 3. Its protocol is not "
+                 "known yet, so this step cannot be checked here: please just carry on")
+
+
+def is_io3_record(data: bytes) -> bool:
+    """A macOS record of the i1iO 3 (0765:30B0, from X-Rite's driver file)."""
+    return len(data) >= _DARWIN_HDR and struct.unpack("<HH", data[0x24:0x28]) == (0x0765, 0x30B0)
+
+
 class IoLiveReader:
     """While the recording runs: what the recording so far shows for one
     step. Reads only what tcpdump appended since the last look (tcpdump
@@ -1863,12 +1891,20 @@ class IoLiveReader:
             data = blob[off + 16:off + 16 + incl]
             if st["link"] != LINKTYPE_USB_DARWIN or _darwin_vid(data) in XRITE_VIDS:
                 st["recs"].append((ts_s + ts_u / (1e9 if st["nano"] else 1e6), data))
+                if st["link"] == LINKTYPE_USB_DARWIN and is_io3_record(data):
+                    st["io3"] = st.get("io3", 0) + 1
             off += 16 + incl
         st["off"] += off
 
     def check(self, start: float, end: float) -> str | None:
-        lines, table_on, unreadable = [], [], []
+        lines, table_on, unreadable, waiting = [], [], [], []
         for name in self.files:
+            try:
+                if os.path.getsize(self.files[name]) < 24:
+                    waiting.append(name)
+                    continue
+            except OSError:
+                pass
             try:
                 self._read_new(name)
             except (OSError, ValueError, struct.error):
@@ -1882,13 +1918,16 @@ class IoLiveReader:
             if keys:
                 table_on.append(name)
                 lines += io_table_lines(events, keys)
+        io3 = sum(self.state[n].get("io3", 0) for n in self.files)
         dead = [n for n, p in self.procs.items() if p is not None and p.poll() is not None]
         watch = [n for n in (table_on or list(self.files)) if n in dead]
         if watch:
             return (f"the recording on {', '.join(watch)} has stopped, so nothing more is "
-                    "being recorded. Please type  q  at the next step, and start the tool "
-                    "again for a new recording")
-        if not table_on and unreadable:
+                    "being recorded. Please type  q  now, and start the tool again for a "
+                    "new recording")
+        if not table_on and io3:
+            return IO3_UNCHECKED.format(n=io3)
+        if not table_on and (unreadable or waiting):
             return ("the recording could not be read just now, so this step was not checked "
                     "(the recording itself goes on)")
         if not table_on:
@@ -2136,8 +2175,11 @@ def macos_guided_recording(readiness: dict) -> None:
             keep = lambda: set_section("Stage 2: annotated capture timeline",  # noqa: E731
                                        "\n".join(log))
             keep()
-            log.append("walk: " + run_io_steps(
-                IO_STEPS, t0, log, record=record, check=reader.check, on_change=keep))
+            try:
+                log.append("walk: " + run_io_steps(
+                    IO_STEPS, t0, log, record=record, check=reader.check, on_change=keep))
+            finally:
+                _END["steps_done"] = any(not r.get("skipped") for r in record)
     except KeyboardInterrupt:
         ended_early = "Ctrl-C"
     except _Hangup:
@@ -2179,7 +2221,10 @@ def macos_guided_recording(readiness: dict) -> None:
         stop_keepalive.set()
         for sig, handler in old_handlers.items():
             try:
-                signal.signal(sig, handler)
+                # 1.5.4 review: a window closed during the questions must not
+                # kill the run before the report is written; with SIGHUP
+                # ignored, the questions just get no answer.
+                signal.signal(sig, signal.SIG_IGN if sig == signal.SIGHUP else handler)
             except (ValueError, OSError):
                 pass
         if brought_up:
@@ -2245,6 +2290,19 @@ def finish_recordings(files: dict, record: list | None = None, ask_delete: bool 
                 send.append(dst)
                 lines.append(f"  X-Rite-only copy ({kept} packets): {os.path.basename(dst)}")
     steps = [r for r in record or [] if not r.get("skipped")]
+    io3 = 0
+    for dst in send:
+        try:
+            _lt, recs = _read_pcap(dst)
+            io3 += sum(1 for _t, d in recs if is_io3_record(d))
+        except (OSError, ValueError):
+            pass
+    if steps and io3:
+        lines.append("")
+        lines.append(_wrap(IO3_UNCHECKED.format(n=io3).replace("this step", "the steps")
+                           .replace("please just carry on", "please send the recording "
+                                    "anyway") + ".", 66, ""))
+        steps = []
     if steps:
         table_lines = []
         for dst in send:
@@ -4768,7 +4826,7 @@ def recording_step(direct: bool) -> None:
     print()
     print("  There is a second, more advanced step: recording what i1Profiler")
     print("  says to the table. It is far more useful to us, but it needs the")
-    print("  free program Wireshark (on Windows) and about 15 minutes.")
+    print("  free program Wireshark (on Windows) and about 30 minutes.")
     print()
     print("  You do NOT need to do this. The report you already have is a")
     print("  genuinely valuable contribution on its own.")
@@ -6807,7 +6865,8 @@ def end_of_run_lines() -> list:
     lines = [""]
     if _IO_SUMMARY:
         lines += ["  " + l for l in _IO_SUMMARY] + [""]
-    lines += [sip_back_on_box(bool((_READINESS.get("cpu") or {}).get("apple_silicon"))), ""]
+    lines += [sip_back_on_box(bool((_READINESS.get("cpu") or {}).get("apple_silicon")),
+                              thanks=bool(_END.get("steps_done", True))), ""]
     return lines
 
 
