@@ -251,9 +251,16 @@ jobs:
               i1iSis seems to talk through a USB-to-serial chip like the
               i1iO, and shows the first lines the program sent. The
               i1iSis's answers are never shown, only their sizes.
-            - **Tested promise:** a test runs a whole simulated session and
-              fails if the tool opens any device, starts a program it does
-              not name, or writes outside its own folders.
+            - **The read-only promise, tested as far as a test can:** a test
+              runs a whole simulated session while it watches and blocks the
+              usual ways of opening files and starting programs (`open`,
+              `io.open`, `os.open`, `pathlib`, `subprocess`, `os.system`,
+              `os.popen`, `os.posix_spawn`, `os.spawn*`, `os.exec*`, and
+              libraries through `ctypes`). It fails if the tool opens a
+              device, writes outside its folders, or starts a program other
+              than the ones it names with their real arguments; fourteen
+              deliberately broken copies are all caught. A test cannot prove
+              that nothing could slip through some other way.
             - An independent review before the release found, and this
               release fixes: a device guessed from i1Pro commands could end
               up in the i1iSis copy when the recording had no USB

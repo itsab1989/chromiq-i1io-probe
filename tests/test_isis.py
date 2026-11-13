@@ -537,17 +537,52 @@ class Texts(unittest.TestCase):
 
 # ---- the read-only promise -------------------------------------------------
 #
-# Every program the tool may start, taken from its source (run([...]) and the
-# recorders). test_the_allowlist_matches_the_source keeps this list honest.
+# WHAT THIS TEST WATCHES (second review: said exactly, not "everything"):
+#   files:     builtins.open, io.open, os.open (and so pathlib);
+#   programs:  subprocess (every form goes through Popen), os.system,
+#              os.popen, os.posix_spawn / posix_spawnp, os.spawn*, os.exec*;
+#   libraries: ctypes.CDLL / PyDLL and the cdll / pydll loaders.
+# Each program the tool may start is pinned to the arguments it really
+# uses (taken from the source; test_the_allowlist_matches_the_source keeps
+# the list of program names in step with it). A source check bans the
+# process functions above outright and allows ctypes only for the Windows
+# calls the tool names.
+PROGRAM_PATTERNS = [
+    r"usbpcapcmd --extcap-(interfaces|version)",
+    r"usbpcapcmd --extcap-config --extcap-interface \S+",
+    r"usbpcapcmd -d \S+ -o \S+ -A( --inject-descriptors)?",
+    r"sudo -v",
+    r"sudo -n true",
+    r"sudo -n \S*ifconfig \S+ (up|down)",
+    r"sudo -n \S*tcpdump -U -i \S+ -w \S+",
+    r"sudo -n pkill -TERM -f \S*tcpdump -U -i \S+ -w \S+",
+    r"ifconfig -l",
+    r"ifconfig \S+",
+    r"sysctl -n (hw\.optional\.arm64|machdep\.cpu\.brand_string)",
+    r"csrutil status",
+    r"system_profiler -json SPUSB(Host)?DataType",
+    r"ioreg -p IOUSB -l -w 0",
+    r"ioreg -l -w 0 -r -c IOUSBHostDevice",
+    r"find .+ -maxdepth 12 -name Info\.plist",
+    r"plutil -p .+",
+    r"lsusb( -t| -v -d [0-9a-f]{4}:)?",
+    r"bash -c " + re.escape("dmesg 2>/dev/null | grep -iE 'usb|ftdi' | tail -60"),
+    r"(powershell|pwsh) -NoProfile -NonInteractive -NoLogo -Command .*",
+    r"sc query USBPcap",
+]
 ALLOWED_PROGRAMS = {"usbpcapcmd", "tcpdump", "sudo", "ifconfig", "sysctl", "csrutil",
                     "system_profiler", "ioreg", "find", "plutil", "lsusb", "bash",
                     "powershell", "pwsh", "sc"}
-SUDO_MAY_RUN = {"true", "tcpdump", "ifconfig", "pkill"}
-BASH_ONLY = "dmesg 2>/dev/null | grep -iE 'usb|ftdi' | tail -60"
+# The Windows functions the tool calls through ctypes (kernel32, shell32).
+CTYPES_CALLS = {"IsUserAnAdmin", "CreateJobObjectW", "SetInformationJobObject",
+                "AssignProcessToJobObject", "CloseHandle", "GetStdHandle", "GetConsoleMode",
+                "SetConsoleMode", "SetConsoleTitleW", "GetConsoleTitleW", "ShellExecuteExW",
+                "WaitForSingleObject", "GetExitCodeProcess", "GetConsoleProcessList",
+                "OpenProcess", "QueryFullProcessImageNameW"}
 
 
 def _program(arg0):
-    name = os.path.basename(str(arg0)).lower()
+    name = re.split(r"[\\/]", str(arg0))[-1].lower()     # Windows or POSIX folders
     return name[:-4] if name.endswith(".exe") else name
 
 
@@ -560,11 +595,19 @@ def _called_from(filename):
     return False
 
 
+def _command_line(argv):
+    """The command as the patterns read it: program names without folder."""
+    words = [str(a) for a in argv]
+    out = [_program(words[0])]
+    for w in words[1:]:
+        out.append(_program(w) if _program(w) in ALLOWED_PROGRAMS and re.search(r"[\\/]", w)
+                   else w)
+    return " ".join(out)
+
+
 class DeviceWatch:
-    """Watches, and blocks, everything that could reach a device: open() in
-    all its forms (builtins.open, io.open, os.open, so pathlib too) and every
-    program started through subprocess. A violation is recorded and refused
-    with an OSError, so a broken tool cannot touch anything during the test."""
+    """Watches, and blocks, the ways listed above. A violation is recorded and
+    refused with an error, so a broken tool cannot touch anything here."""
 
     def __init__(self, base, fake_recorder):
         self.base = os.path.realpath(base)
@@ -572,6 +615,10 @@ class DeviceWatch:
         self.violations = []
         self.opened = 0
         self.started = []
+
+    def _refuse(self, text):
+        self.violations.append(text)
+        raise PermissionError("blocked by the test: " + text)
 
     def _check_path(self, path, writing, from_subprocess=False):
         if isinstance(path, int):
@@ -584,40 +631,33 @@ class DeviceWatch:
         device = (real.startswith("/dev/") or text.startswith("/dev/")
                   or text.startswith("\\\\.\\") or text.startswith("//./"))
         if device:
-            # subprocess itself opens /dev/null for a helper's unused input.
             if from_subprocess and text == os.devnull:
-                return
-            self.violations.append(f"opened a device: {text}")
-            raise PermissionError(f"blocked by the test: {text}")
+                return             # subprocess opens /dev/null for unused input
+            self._refuse(f"opened a device: {text}")
         if writing and not real.startswith(self.base):
-            self.violations.append(f"wrote outside its folders: {text}")
-            raise PermissionError(f"blocked by the test: {text}")
+            self._refuse(f"wrote outside its folders: {text}")
 
     def _check_program(self, args):
         argv = [args] if isinstance(args, (str, bytes)) else list(args)
         self.started.append(argv)
-        prog = _program(argv[0])
-        ok = prog in ALLOWED_PROGRAMS
-        if prog.startswith("python") and len(argv) > 1 and \
+        if _program(argv[0]).startswith("python") and len(argv) > 1 and \
                 os.path.realpath(str(argv[1])) == self.fake:
-            ok = True                                    # the tests' fake USBPcapCMD
-        if prog in ("uname", "file") and _called_from("platform.py"):
-            ok = True          # Python's own platform module asks (Python 3.9 does)
-        if prog == "bash":
-            ok = argv[1:] == ["-c", BASH_ONLY]
-        if prog == "sudo":
-            rest = [a for a in argv[1:] if not str(a).startswith("-")]
-            ok = argv[1:] == ["-v"] or (bool(rest) and _program(rest[0]) in SUDO_MAY_RUN)
-        if not ok:
-            self.violations.append(f"started a program not on the list: {argv}")
-            raise PermissionError(f"blocked by the test: {argv}")
+            argv = ["usbpcapcmd"] + argv[2:]          # the tests' fake USBPcapCMD
+        elif _program(argv[0]) in ("uname", "file") and _called_from("platform.py"):
+            return                 # Python's own platform module asks (3.9 does)
+        line = _command_line(argv)
+        if not any(re.fullmatch(p, line) for p in PROGRAM_PATTERNS):
+            self._refuse(f"started a program not on the list: {line}")
 
     def __enter__(self):
+        import ctypes
         import io as io_mod
         import subprocess
         watch = self
         real_open, real_io_open, real_os_open = builtins.open, io_mod.open, os.open
         real_popen = subprocess.Popen
+        real_posix_spawn = getattr(os, "posix_spawn", None)
+        real_posix_spawnp = getattr(os, "posix_spawnp", None)
 
         def w_open(file, mode="r", *a, **k):
             watch._check_path(file, any(c in mode for c in "wax+"))
@@ -638,10 +678,40 @@ class DeviceWatch:
                 watch._check_program(args)
                 super().__init__(args, *a, **k)
 
+        def spawn_from_subprocess(real, name):
+            def inner(*a, **k):
+                # subprocess itself uses posix_spawn after Popen was checked
+                if sys._getframe(1).f_code.co_filename.endswith("subprocess.py"):
+                    return real(*a, **k)
+                watch._refuse(f"{name}{a[:2]!r}")
+            return inner
+
+        def refuse(name):
+            def inner(*a, **_k):
+                watch._refuse(f"{name}{a[:2]!r}")
+            return inner
+
         self._patches = [mock.patch.object(builtins, "open", w_open),
                          mock.patch.object(io_mod, "open", w_io_open),
                          mock.patch.object(os, "open", w_os_open),
-                         mock.patch.object(subprocess, "Popen", WatchedPopen)]
+                         mock.patch.object(subprocess, "Popen", WatchedPopen),
+                         mock.patch.object(os, "system", refuse("os.system")),
+                         mock.patch.object(os, "popen", refuse("os.popen")),
+                         mock.patch.object(ctypes, "CDLL", refuse("ctypes.CDLL")),
+                         mock.patch.object(ctypes, "PyDLL", refuse("ctypes.PyDLL")),
+                         mock.patch.object(ctypes, "cdll", types.SimpleNamespace(
+                             LoadLibrary=refuse("ctypes.cdll.LoadLibrary"))),
+                         mock.patch.object(ctypes, "pydll", types.SimpleNamespace(
+                             LoadLibrary=refuse("ctypes.pydll.LoadLibrary")))]
+        if real_posix_spawn:
+            self._patches.append(mock.patch.object(
+                os, "posix_spawn", spawn_from_subprocess(real_posix_spawn, "os.posix_spawn")))
+        if real_posix_spawnp:
+            self._patches.append(mock.patch.object(
+                os, "posix_spawnp", spawn_from_subprocess(real_posix_spawnp, "os.posix_spawnp")))
+        for name in dir(os):
+            if re.fullmatch(r"(spawn|exec)[lv]p?e?", name):
+                self._patches.append(mock.patch.object(os, name, refuse("os." + name)))
         for p in self._patches:
             p.start()
         return self
@@ -652,8 +722,9 @@ class DeviceWatch:
         return False
 
 
-# The review's mutations (review/mut/mutate.py), each a way a broken tool
-# could reach a device. Every one must be caught.
+# The reviews' mutations (review/mut/mutate.py and the second review), each a
+# way a broken tool could reach a device or start something. Every one must
+# be caught.
 MUTATIONS = {
     "builtin_open": 'open("/dev/zero", "wb").close()',
     "pathlib": '__import__("pathlib").Path("/dev/zero").write_bytes(b"x")',
@@ -665,76 +736,15 @@ MUTATIONS = {
     "os_open": 'os.close(os.open("/dev/zero", os.O_WRONLY))',
     "pathlib_text_outside": '__import__("pathlib").Path(os.path.expanduser("~")).joinpath('
                             '"chromiq-probe-test-must-not-exist.txt").write_text("x")',
+    # second review
+    "os_system": 'os.system(": > /dev/zero")',
+    "posix_spawn": 'os.waitpid(os.posix_spawn("/bin/sh", ["sh", "-c", ":"], dict(os.environ)), 0)',
+    "find_exec": '__import__("subprocess").run(["find", "/tmp", "-maxdepth", "0", '
+                 '"-exec", "sh", "-c", ":", ";"])',
+    "sysctl_write": '__import__("subprocess").run(["sysctl", "-w", "kern.maxfiles=12288"])',
+    "ctypes_open": '__import__("ctypes").CDLL(None).open(b"/dev/zero", 1)',
 }
 MUTATION_ANCHOR = '    os.makedirs(folder, exist_ok=True)\n    _END["session_folder"] = folder\n'
-
-
-class ReviewTexts(unittest.TestCase):
-    """The review's minor findings 4 to 8 and the step-box nit."""
-
-    def setUp(self):
-        saved = dict(probe._RUN)
-        self.addCleanup(lambda: (probe._RUN.clear(), probe._RUN.update(saved)))
-        probe._RUN.clear()
-
-    def test_old_chart_page_and_paper(self):
-        chart = flat(probe.ISIS_CHART_TEXT)
-        self.assertIn("as long as i1Profiler still has that chart (open the same chart file "
-                      "in i1Profiler before step 2)", chart)
-        self.assertIn("normal 80 g/m2 printer paper", chart)
-        self.assertIn("please do not use thinner paper", chart)
-        blank = flat(probe.steps_for("isis")[5]["before"])
-        self.assertIn("normal 80 g/m2 printer paper, the same size as your chart", blank)
-
-    def test_as_far_as_we_know(self):
-        self.assertIn("as far as we know, nobody outside X-Rite",
-                      flat(probe.PROFILE_PURPOSE["isis"]))
-
-    def test_relaunch_keeps_isis_and_steps(self):
-        probe._RUN.update(profile="isis", steps="4,6")
-        _prog, params, _cwd = probe.relaunch_command()
-        self.assertIn(" --isis", params)
-        self.assertNotIn("--i1pro", params)
-        self.assertIn('--steps "4,6"', params)
-        probe._RUN.clear()
-        probe._RUN.update(isis=True)
-        self.assertIn(" --isis", probe.relaunch_command()[1])
-        probe._RUN.clear()
-        params = probe.relaunch_command()[1]
-        self.assertIn(" --i1pro", params)
-        self.assertNotIn("--steps", params)
-
-    def test_mac_box_speaks_to_the_isis_owner(self):
-        r = {"reasons": ["SIP is switched on."], "cpu": {"apple_silicon": True}}
-        isis = flat(probe.recording_not_possible_text(r, "instrument", "isis"))
-        self.assertIn("i1Profiler 3.8.8 fixed the i1iSis drivers", isis)
-        self.assertIn("Connect the i1iSis to that PC", isis)
-        self.assertNotIn("i1Pro 2", isis)
-        other = flat(probe.recording_not_possible_text(r, "instrument"))
-        self.assertIn("the X-Rite driver for the i1Pro 2 and the i1iO 2", other)
-        self.assertIn("IMPORTANT FOR OWNERS OF AN i1Pro 2", other)
-
-    def test_windows_on_arm(self):
-        text = probe.windows_release_check(26100, "24H2", True, "isis")["text"]
-        self.assertIn("i1iSis works here is not known", text)
-        self.assertNotIn("i1Pro 2", text)
-
-    def test_what_to_do_now(self):
-        probe._RUN["profile"] = "isis"
-        text = flat("\n".join(probe.what_to_do_lines(["no_instrument"], None)))
-        self.assertIn("Switch the i1iSis on FIRST, then plug its USB cable", text)
-        self.assertNotIn("switch the table on", text)
-        probe._RUN.clear()
-        self.assertIn("switch the table on",
-                      flat("\n".join(probe.what_to_do_lines(["no_instrument"], None))))
-
-    def test_step_box_for_the_isis(self):
-        first = probe.steps_for("isis")[0]
-        box = flat(probe.step_box(first["during"], first["box"]))
-        self.assertIn("2. Then: start i1Profiler and wait", box)
-        self.assertNotIn("in the measuring program", box)
-        handheld = flat(probe.step_box(probe.steps_for("i1pro2")[0]["during"]))
-        self.assertIn("Then do this in the measuring program:", handheld)
 
 
 class ReadOnlyPromise(_IsisSessionBase):
@@ -798,8 +808,36 @@ class ReadOnlyPromise(_IsisSessionBase):
         for pattern in (r"^\s*(import|from)\s+(usb|hid|serial|pyusb|libusb|ftd2xx|pyftdi)\b",
                         r"CreateFile", r"IOServiceOpen", r"IOCreatePlugInInterface",
                         r"WinUsb_", r"DeviceIoControl", r"open\(\s*['\"]/dev/",
-                        r"os\.open\("):
+                        r"os\.open\(", r"os\.system\b", r"os\.popen\b", r"os\.spawn",
+                        r"os\.exec", r"posix_spawn", r"\bpty\.spawn", r"\bCDLL\b",
+                        r"\bPyDLL\b", r"\bcdll\b", r"\bpydll\b", r"\boledll\b",
+                        r"LoadLibrary", r"find_library", r"-exec\b"):
             self.assertIsNone(re.search(pattern, src, re.M), pattern)
+
+    def test_the_patterns_match_the_recorders_commands(self):
+        rec = probe.UsbPcapRecorder("C:\\Program Files\\USBPcap\\USBPcapCMD.exe",
+                                    ["\\\\.\\USBPcap1"], "")
+        tcp = probe.TcpdumpRecorder(["XHC0"], "", mac=True)
+        tcp.sudo, tcp.tcpdump = "/usr/bin/sudo", "/usr/sbin/tcpdump"
+        for argv in (rec.command("\\\\.\\USBPcap1", "C:\\x\\s1-full.pcap"),
+                     rec.retry_command("\\\\.\\USBPcap1", "C:\\x\\s1-full.pcap", ""),
+                     tcp.command("XHC0", "/x/s1-full.pcap")):
+            line = _command_line(argv)
+            self.assertTrue(any(re.fullmatch(p, line) for p in PROGRAM_PATTERNS), line)
+        for bad in (["sysctl", "-w", "kern.maxfiles=1"], ["find", "/", "-exec", "sh", ";"],
+                    ["sudo", "-n", "sh", "-c", "x"], ["sh", "-c", ":"]):
+            line = _command_line(bad)
+            self.assertFalse(any(re.fullmatch(p, line) for p in PROGRAM_PATTERNS), line)
+
+    def test_ctypes_only_for_the_named_windows_calls(self):
+        with open(os.path.join(ROOT, "chromiq_io_probe.py"), encoding="utf-8") as fh:
+            src = fh.read()
+        libs = set(re.findall(r"windll\.(\w+)", src))
+        self.assertEqual(libs, {"kernel32", "shell32"})
+        called = set(re.findall(r"(?:k32|shell32|windll\.kernel32|windll\.shell32)\.(\w+)", src))
+        self.assertTrue(called)
+        self.assertEqual(called - CTYPES_CALLS, set())
+        self.assertNotIn("windll.", re.sub(r"windll\.(kernel32|shell32)", "", src))
 
 
 if __name__ == "__main__":

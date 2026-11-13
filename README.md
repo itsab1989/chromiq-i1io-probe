@@ -595,6 +595,17 @@ has no decoder for). It ends with a checklist: real traffic, a page measured
 in single scan, a dual-scan page, a crooked page, a page that failed on
 purpose, and your notes on how the page moved.
 
+**How the read-only promise is tested (since 1.6):** a test runs a whole
+simulated i1iSis session while it watches, and blocks, the usual ways a Python
+program opens files and starts programs (`open`, `io.open`, `os.open` and so
+`pathlib`, `subprocess`, `os.system`, `os.popen`, `os.posix_spawn`,
+`os.spawn*`, `os.exec*`, and libraries loaded through `ctypes`). It fails if
+the tool opens a device, writes outside its own folders, or starts a program
+other than the ones it names, with the arguments it really uses; a check of
+the source bans those process functions outright and allows `ctypes` only for
+the Windows calls the tool names. A test cannot prove that nothing could slip
+through some other way, which is why the code is kept short and plain to read.
+
 **Where the facts come from:** the USB ID 0971:2006 from X-Rite's own i1iSis
 driver file (installed with i1Profiler 3.8.8) and ArgyllCMS's device list; the
 status light and how a page is fed from X-Rite's i1iSis quick start guide; the

@@ -31,12 +31,19 @@ The i1iSis chart readers (i1iSis, i1iSis XL, i1iSis 2, i1iSis 2 XL).
   (X-Rite's notes for i1Profiler 3.8.8); on Windows 11 25H2 i1Profiler
   3.8.8 or newer is needed for the i1iSis (X-Rite says that version fixed
   its drivers there). The i1Pro 2 warning is not shown to i1iSis owners.
-- **Tested promise:** a new test runs a whole simulated i1iSis session and
-  fails if the tool opens any device (through `open`, `io.open`, `os.open`
-  or `pathlib`), starts a program that is not on the list taken from its own
-  source, or writes anywhere outside its own folders. Nine deliberately
-  broken copies of the tool are run through it, and every one is caught. A
-  source check fails if the tool ever gains a way to talk to a USB device.
+- **The read-only promise, tested as far as a test can:** a new test runs a
+  whole simulated i1iSis session while it watches, and blocks, the ways a
+  Python program usually opens files and starts programs: `open`, `io.open`,
+  `os.open` (and so `pathlib`), `subprocess`, `os.system`, `os.popen`,
+  `os.posix_spawn`, `os.spawn*`, `os.exec*`, and loading a library through
+  `ctypes`. It fails if the tool opens a device, writes outside its own
+  folders, or starts a program other than the ones it names, each with the
+  arguments the tool really uses. Fourteen deliberately broken copies of
+  the tool are run through it, and every one is caught. A check of the
+  source bans those process functions and allows `ctypes` only for the
+  Windows calls the tool names. A test cannot prove that nothing could ever
+  slip through another way; the tool's code is short and plain to read for
+  that reason.
 - **Not yet tried with a real i1iSis.** Everything above was tested with
   invented recordings only.
 
