@@ -104,6 +104,9 @@ KNOWN_PIDS = {
 # 1.5: devices under X-Rite's newer vendor ID, named from ArgyllCMS's device
 # table (insttypes.c:439-450). Not yet seen in a report; said so.
 KNOWN_IDS_0765 = {
+    # 1.5.4: from X-Rite's own i1iO 3 driver plug-in (i1Profiler 3.8.8). Its
+    # protocol is not known: the analysis of the i1iO 2 is not applied to it.
+    0x30B0: "i1iO 3 table (per X-Rite's driver file; its protocol is not known yet)",
     0x6009: "i1Pro 3 or i1Pro 3 Plus (per ArgyllCMS's device table)",
     0x6008: "i1Studio (per ArgyllCMS's device table)",
 }
@@ -1389,7 +1392,15 @@ CAPTURE_HELP = {
 # tester who stops after the first one or two has still given the most
 # useful part. All in ONE round, because on a Mac every round costs the
 # tester two restarts with SIP switched off.
-#   1. One row in the usual setting, with the calibration, the operator
+# 1.5.4, later the same day: i1Profiler's own help says that a row it cannot
+# read is read again more slowly and then patch by patch. So the first
+# recordings (three scans and then spots on EVERY row) most likely show that
+# fallback: scanning failed on every row of that chart. A NORMAL scan, one
+# pass per row, has not been recorded yet; step 1 asks for it, with a chart
+# i1Profiler reads in one pass. The earlier chart gets one optional step at
+# the end, because it is printed already and costs only a minute.
+#   1. One row of a chart i1Profiler reads in one pass, with the
+#      calibration, the operator
 #      marking when the arm starts along the row (a), when the lamp lights
 #      (l) and when the head goes down and up (d, u), then Cancel while the
 #      arm moves along the second row. The marks separate the table from the
@@ -1410,6 +1421,7 @@ CAPTURE_HELP = {
 #   4. One row with dual scan (M1 or M2), if offered: the recording can show
 #      only what crosses the cable (the instrument settings of each pass);
 #      the M1 / M2 arithmetic most likely happens inside i1Profiler.
+#   5. One row of the earlier chart, optional: the fallback once more.
 # Left out on purpose:
 #   * Holding the arm back by hand, removing the instrument from the arm, or
 #     blocking the calibration, to see an error; and whether the table moves
@@ -1426,11 +1438,13 @@ CAPTURE_HELP = {
 # tester does in i1Profiler while the recording runs.
 IO_STEPS = [
     {"key": "row",
-     "title": "One row in your usual setting, watching closely",
+     "title": "One row of a chart that scans in one pass",
      "prepare": """\
-  In i1Profiler, set up a chart measurement for the table exactly as in
-  your first recordings, up to the point just before you press Measure.
-  Use your usual chart.""",
+  Use a chart that i1Profiler reads in ONE pass per row, for example one
+  of i1Profiler's own test charts for the i1iO, freshly printed. (Your
+  earlier chart was most likely read three times and then patch by patch
+  on every row, which i1Profiler does when a scan fails.) Set up the
+  measurement up to the point just before you press Measure.""",
      "do": """\
   Press Measure and let it calibrate as usual, then align the three
   corners. Watch the FIRST row closely and type a letter and Enter here
@@ -1441,7 +1455,7 @@ IO_STEPS = [
   When the arm starts along the SECOND row, press Cancel in i1Profiler
   and wait until the arm stands still.""",
      "arm": "When the arm started along the row, was the lamp already on? What "
-            "did the head do, and what happened after Cancel?",
+            "did the head do? Was the row read once? What happened after Cancel?",
      "marks": True},
     {"key": "spot",
      "title": "A few patches in spot mode, watching the head",
@@ -1460,7 +1474,7 @@ IO_STEPS = [
     {"key": "fast",
      "title": "A small chart to the end, fastest setting",
      "prepare": """\
-  Place the SMALL chart (one or two rows, 10 to 20 patches) somewhere
+  Place the SMALL chart (two rows, 10 to 20 patches) somewhere
   other than last time, for example near the right or the bottom edge of
   the area the arm can reach. In i1Profiler choose the FASTEST way it
   offers for the table (for example a single scan, with no extra checking
@@ -1476,7 +1490,7 @@ IO_STEPS = [
      "optional": True,
      "prepare": """\
   If i1Profiler offers dual scan, or the measurement condition M1 or M2,
-  for the table, choose it, with your usual chart. If it does not, type
+  for the table, choose it, with the chart from step 1. If it does not, type
   s  to skip this step. (Good to know: the recording shows only what
   travels over the cable. i1Profiler most likely does the M1 or M2
   arithmetic itself, so we will see how the instrument is asked to
@@ -1488,6 +1502,19 @@ IO_STEPS = [
      "arm": "What did the arm do this time? Was anything different from the "
             "first step? Which setting did you choose?",
      "marks": True},
+    {"key": "earlier",
+     "title": "One row of your earlier chart",
+     "optional": True,
+     "prepare": """\
+  Only if you still have the chart from your first recordings printed:
+  place it, with your usual settings. Otherwise type  s  to skip this
+  step. It shows us once more what i1Profiler does when a row cannot be
+  scanned.""",
+     "do": """\
+  Press Measure, align the three corners, and let it work on the FIRST
+  row until it moves on to the second row. Then press Cancel and wait
+  until the arm stands still.""",
+     "arm": "Was the first row again read three times and then patch by patch?"},
 ]
 
 # Asked after the steps, with no recording running. They prove the unit of
@@ -1495,19 +1522,26 @@ IO_STEPS = [
 # which i1Profiler setting gave the "three scans, then patch by patch" rows
 # seen in the first recordings.
 IO_QUESTIONS = [
-    ("chart file",
-     "The small chart from the step \"A small chart to the end\": if\n"
-     "     i1Profiler can save it (a .pxf or .txf file, or the workflow), please\n"
-     "     save it and send it with the recording. What is its file name?"),
-    ("paper size", "Which paper size was that chart printed on (for example A4)?"),
+    ("chart files",
+     "If i1Profiler can save them (a .pxf or .txf file, or the workflow),\n"
+     "     please save the chart of step 1, the small chart of step 3 and your\n"
+     "     earlier chart, and send them with the recording. Their file names?"),
+    ("paper size", "Which paper size was the small chart printed on (for example A4)?"),
     ("ruler",
-     "Please measure the first row of that chart with a ruler: from the left\n"
-     "     edge of its first patch to the right edge of its last patch, in\n"
+     "Please measure the first row of the small chart with a ruler: from the\n"
+     "     left edge of its first patch to the right edge of its last patch, in\n"
      "     millimetres, and count its patches (for example: 190 mm, 20 patches)."),
     ("settings",
-     "Your usual i1Profiler settings for the table (step 1): the measuring\n"
-     "     mode (single scan, dual scan or spot), the measurement condition\n"
-     "     (M0, M1 or M2), any accuracy or averaging option, and the patch size."),
+     "Your usual i1Profiler settings for the table: the measuring mode\n"
+     "     (single scan, dual scan or spot), the measurement condition (M0, M1\n"
+     "     or M2), any accuracy or averaging option, and the patch size."),
+    ("earlier chart",
+     "Your earlier chart: was every row always read three times and then\n"
+     "     patch by patch, also on other days?"),
+    ("sheet hold",
+     "Do you use the button on the table's base plate that holds the sheet\n"
+     "     flat? When something goes wrong, what does the table do or show\n"
+     "     (a light, a sound, a message in i1Profiler)?"),
     ("head control",
      "Does i1Profiler have a button or menu that lowers or lifts the head on\n"
      "     its own, without measuring? If yes, where is it?"),
@@ -1519,19 +1553,20 @@ IO_QUESTIONS = [
 # recording starts, and in --rehearse.
 IO_READY_LIST = [
     "i1Profiler (3.8.6 or older) is open and has found the table.",
-    "Your usual chart is printed (the same one as in your first recordings "
-    "is fine). Steps 1, 2 and 4 use it.",
-    "A SMALL chart is printed: one or two rows, 10 to 20 patches, on any "
-    "paper size. Step 3 uses it.",
+    "A chart that i1Profiler reads in one pass per row is printed (for "
+    "example one of its own test charts for the i1iO). Steps 1, 2 and 4 use it.",
+    "A SMALL chart is printed: two rows (i1Profiler does not allow one row "
+    "on the table), 10 to 20 patches, on any paper size. Step 3 uses it.",
+    "If you still have it: the chart of your first recordings (step 5).",
     "You know where i1Profiler offers spot mode, its fastest setting, and "
     "dual scan or M1 / M2 for the table (if it offers them).",
-    "You know where i1Profiler lets you save that small chart (a chart "
-    "file or the workflow), so you can send it.",
+    "You know where i1Profiler lets you save the charts (a chart file or "
+    "the workflow), so you can send them.",
     "A ruler is at hand (millimetres).",
     "You know your usual settings: measuring mode (single scan, dual scan "
     "or spot), measurement condition (M0, M1 or M2), any accuracy or "
     "averaging option, and the patch size.",
-    "About 25 minutes without interruption.",
+    "About 30 minutes without interruption.",
 ]
 
 
@@ -1748,16 +1783,16 @@ def ask_io_questions(log: list) -> None:
 
 
 def io_steps_overview(steps: list) -> list:
-    lines = [f"  WHAT YOU WILL DO ({len(steps)} short steps, about 25 minutes, then a few "
+    lines = [f"  WHAT YOU WILL DO ({len(steps)} short steps, about 30 minutes, then a few "
              "questions)"]
     for i, s in enumerate(steps, 1):
         lines.append(f"    {i}. {s['title']}")
     lines += ["  The first step is the most useful one. You can skip a step, do it",
               "  again, or stop after any step: the steps you finished are kept.",
-              "  Steps 2 and 4 depend on what i1Profiler offers; skip them if it",
-              "  does not. You need: the table with the i1Pro on it, i1Profiler, and",
-              "  two printed charts (your usual one, and a small one of one or two",
-              "  rows)."]
+              "  Steps 2, 4 and 5 depend on what i1Profiler offers and what you have;",
+              "  skip them if not. You need: the table with the i1Pro on it,",
+              "  i1Profiler, a chart it reads in one pass, and a small chart of two",
+              "  rows."]
     return lines
 
 
@@ -1996,7 +2031,7 @@ def macos_guided_recording(readiness: dict) -> None:
   2. The tool switches on the USB recording interfaces ({", ".join(interfaces)})
      and starts macOS's own tcpdump program on each of them. It only
      listens. It cannot move the arm.
-  3. You do four short steps in i1Profiler (about 25 minutes). After
+  3. You do up to five short steps in i1Profiler (about 30 minutes). After
      each one the tool checks that the table's commands were recorded.
   4. The tool stops recording, switches the interfaces off again, checks
      the recording, and makes a copy that holds only the X-Rite traffic.
@@ -6484,7 +6519,7 @@ def main(argv: list | None = None) -> int:
     print("-" * 68)
     print("STEP 3 of 3: three quick questions about your i1iO table")
     print("-" * 68)
-    if IO_ID not in here:
+    if not any(k in here for k in IO_IDS):
         print("\n  (No i1iO table is plugged in right now. The answers and the report")
         print("  still help.)")
     print("\n  Just press Enter to skip any of them.\n")
@@ -6508,6 +6543,8 @@ def main(argv: list | None = None) -> int:
 
 
 IO_ID = (XRITE_VID, 0x2004)
+IO3_ID = (0x0765, 0x30B0)               # 1.5.4: the i1iO 3 (X-Rite's driver file)
+IO_IDS = (IO_ID, IO3_ID)
 
 REPORT_SEND_WAYS = f"""\
   If you would like to share it with us, choose whichever suits you:
@@ -6535,9 +6572,10 @@ def suggest(here: list) -> dict:
     plugged in now only (1.5.3; before, a remembered i1iO could hide a
     plugged-in handheld instrument)."""
     hand = [k for k in here if k in PROFILE_IDS]
-    other = [k for k in here if k != IO_ID and k not in PROFILE_IDS]
-    choice = 1 if IO_ID in here else 2 if hand else 3
-    return {"choice": choice, "io": IO_ID in here, "hand": hand, "other": other,
+    other = [k for k in here if k not in IO_IDS and k not in PROFILE_IDS]
+    table = any(k in here for k in IO_IDS)
+    choice = 1 if table else 2 if hand else 3
+    return {"choice": choice, "io": table, "hand": hand, "other": other,
             "nothing": not here}
 
 
@@ -6563,6 +6601,8 @@ def _windows_driver_words() -> dict:
 def device_name(key) -> str:
     if key == IO_ID:
         return "i1iO table"
+    if key == IO3_ID:
+        return "i1iO 3 table (its protocol is not known yet)"
     if key in PROFILE_IDS:
         return PROFILE_NAMES[PROFILE_IDS[key]]
     return f"an X-Rite device this tool does not know ({key[0]:04x}:{key[1]:04x})"

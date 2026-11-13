@@ -395,7 +395,7 @@ class RecordingTests(unittest.TestCase):
     def test_full_recording_with_real_data(self):
         # yes to start; per step: start, stop, arm, go on (x4); notes; delete
         # the full recordings; the five questions (1.5.4)
-        answers = ["yes"] + ["", "e", "", ""] * 4 + [""] + ["yes"] + [""] * 5
+        answers = ["yes"] + ["", "e", "", ""] * 5 + [""] + ["yes"] + [""] * 7
         screen = self.run_recording(answers, io_records(), keyboard_only_records())
         log = self.fake_log()
         for iface in ("XHC0", "XHC2"):
@@ -437,7 +437,7 @@ class RecordingTests(unittest.TestCase):
                 time.sleep(max(0.0, w.t - time.time()) + 0.05)
                 return "e"
             return answers.pop(0) if answers else ""
-        answers = ["yes", ""] + ["", ""] + ["", "e", "", ""] * 3 + [""] + ["yes"] + [""] * 5
+        answers = ["yes", ""] + ["", ""] + ["", "e", "", ""] * 4 + [""] + ["yes"] + [""] * 7
         with open(os.path.join(self.pcaps, "XHC2.pcap"), "wb") as fh:
             fh.write(pcap_bytes(io_records()))
         readiness = probe.macos_recording_readiness([{"location": 0x02210000}])
@@ -450,7 +450,7 @@ class RecordingTests(unittest.TestCase):
         self.assertIn("CHECK: no table command was recorded in this step: please repeat it",
                       screen)
         result = dict(probe._SECTIONS)["Stage 2: macOS recording result"]
-        self.assertRegex(result, r"One row in your usual setting, watching closely: this step recorded \d+ "
+        self.assertRegex(result, r"One row of a chart that scans in one pass: this step recorded \d+ "
                                  r"commands to the table: good")
         glance = dict(probe._SECTIONS)["Stage 2: the steps at a glance"]
         self.assertIn("Still missing: A small chart to the end, fastest setting.", glance)
@@ -459,7 +459,7 @@ class RecordingTests(unittest.TestCase):
         self.assertIn("session start (UTC epoch seconds):", timeline)
 
     def test_all_zero_recording_is_reported_plainly(self):
-        answers = ["yes"] + ["", "e", "", ""] * 4 + [""] + ["no"] + [""] * 5
+        answers = ["yes"] + ["", "e", "", ""] * 5 + [""] + ["no"] + [""] * 7
         self.run_recording(answers, io_records(zero=True), keyboard_only_records())
         result = dict(probe._SECTIONS)["Stage 2: macOS recording result"]
         self.assertIn("ALL-ZERO", result)

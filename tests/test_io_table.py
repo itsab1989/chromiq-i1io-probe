@@ -276,25 +276,25 @@ class TableAnalysis(TmpCase):
         w, path, (start, end) = self.recording()
         t0 = w.records[0][0]
         rep = self.report(t0, [
-            f"One row in your usual setting, watching closely: t={start - t0:8.3f}s .. {end - t0:8.3f}s   (x)",
+            f"One row of a chart that scans in one pass: t={start - t0:8.3f}s .. {end - t0:8.3f}s   (x)",
             f"  mark: head down at t={start - t0 + 1:8.3f}s",
             "A small chart to the end, fastest setting: SKIPPED",
             f"A few patches in spot mode, watching the head: t={end - t0 + 5:8.3f}s .. {end - t0 + 9:8.3f}s"
             "   (x)"])
         text = probe.analyze_paths([path, rep])
         self.assertIn("(exact times)", text)
-        self.assertRegex(text, r"One row in your usual setting, watching closely: this step recorded \d+ "
+        self.assertRegex(text, r"One row of a chart that scans in one pass: this step recorded \d+ "
                                r"commands to the table: good")
         self.assertIn("A small chart to the end, fastest setting: skipped", text)
         self.assertIn("A few patches in spot mode, watching the head: no table command was recorded in "
                       "this step: please repeat it", text)
         self.assertIn(">>> OPERATOR: head down", text)
-        self.assertIn(">>> STEP: One row in your usual setting, watching closely", text)
+        self.assertIn(">>> STEP: One row of a chart that scans in one pass", text)
 
     def test_report_next_to_the_recording_is_found_by_name(self):
         w, path, (start, end) = self.recording()
         t0 = w.records[0][0]
-        self.report(t0, [f"One row in your usual setting, watching closely: t={start - t0:8.3f}s .. "
+        self.report(t0, [f"One row of a chart that scans in one pass: t={start - t0:8.3f}s .. "
                          f"{end - t0:8.3f}s   (x)"], mention=os.path.basename(path))
         text = probe.analyze_paths([path])
         self.assertIn("steps, from chromiq-io-probe-", text)
@@ -338,7 +338,7 @@ class TableAnalysis(TmpCase):
 class Steps(TmpCase):
 
     def test_three_steps_in_order_of_value(self):
-        self.assertEqual([s["key"] for s in probe.IO_STEPS], ["row", "spot", "fast", "dual"])
+        self.assertEqual([s["key"] for s in probe.IO_STEPS], ["row", "spot", "fast", "dual", "earlier"])
         for s in probe.IO_STEPS:
             for field in ("title", "prepare", "do", "arm"):
                 self.assertTrue(s[field].strip(), (s["key"], field))
@@ -349,7 +349,8 @@ class Steps(TmpCase):
                    "", "a", "l", "e", "", "",                                   # again
                    "x", "s",                                                     # step 2
                    "", "e", "", "",                                             # step 3
-                   "", "e", "", ""]                                             # step 4
+                   "", "e", "", "",                                             # step 4
+                   "s"]                                                          # step 5
         checks = []
         with mock.patch.object(probe, "ask", scripted(answers)), redirect_stdout(io.StringIO()) as out:
             how = probe.run_io_steps(probe.IO_STEPS, time.time(), log, record=record,
@@ -357,7 +358,8 @@ class Steps(TmpCase):
                                      "this step recorded 3 commands to the table: good")
         self.assertEqual(how, "all steps done")
         self.assertEqual([r["title"] for r in record],
-                         ["One row in your usual setting, watching closely", "One row in your usual setting, watching closely (take 2)", "A few patches in spot mode, watching the head", "A small chart to the end, fastest setting", "One row with dual scan (M1 or M2)"])
+                         ["One row of a chart that scans in one pass", "One row of a chart that scans in one pass (take 2)", "A few patches in spot mode, watching the head", "A small chart to the end, fastest setting", "One row with dual scan (M1 or M2)",
+                          "One row of your earlier chart"])
         self.assertTrue(record[2]["skipped"])
         self.assertEqual([m[0] for m in record[1]["marks"]],
                          ["arm starts moving", "lamp lights up"])
@@ -384,7 +386,7 @@ class Steps(TmpCase):
         with mock.patch.object(probe, "ask", scripted(answers)), redirect_stdout(io.StringIO()):
             with self.assertRaises(KeyboardInterrupt):
                 probe.run_io_steps(probe.IO_STEPS, time.time(), log)
-        self.assertTrue(any(l.startswith("One row in your usual setting, watching closely: t=")
+        self.assertTrue(any(l.startswith("One row of a chart that scans in one pass: t=")
                             for l in log))
         cut = [l for l in log if l.endswith("(interrupted)")]
         self.assertEqual(len(cut), 1)
@@ -398,11 +400,11 @@ class Steps(TmpCase):
                              "stopped by the operator")
 
     def test_timed_steps_write_the_log_and_the_answers(self):
-        answers = ["", "e", "", ""] * 4 + ["nothing odd", "small.pxf", "A4", "190 mm, 20 patches",
-                               "M2, scan", "no"]
+        answers = ["", "e", "", ""] * 5 + ["nothing odd", "small.pxf", "A4", "190 mm, 20 patches",
+                               "M2, scan", "yes, always", "yes, no light", "no"]
         with mock.patch.object(probe, "ask", scripted(answers)), redirect_stdout(io.StringIO()):
             record = probe.io_timed_steps()
-        self.assertEqual(len(record), 4)
+        self.assertEqual(len(record), 5)
         sections = dict(probe._SECTIONS)
         timeline = sections["Stage 2: annotated capture timeline"]
         self.assertIn("session start (UTC epoch seconds): ", timeline)
@@ -427,10 +429,11 @@ class Steps(TmpCase):
         self.assertEqual(probe._SECTIONS, [])
 
     def test_summary_table_says_what_is_missing(self):
-        rows = [("One row in your usual setting, watching closely", True, 14, 3),
+        rows = [("One row of a chart that scans in one pass", True, 14, 3),
                 ("A few patches in spot mode, watching the head", True, 0, 0),
                 ("A small chart to the end, fastest setting", None, 0, 0),
-                ("One row with dual scan (M1 or M2)", None, 0, 0)]
+                ("One row with dual scan (M1 or M2)", None, 0, 0),
+                ("One row of your earlier chart", None, 0, 0)]
         text = "\n".join(probe.io_summary_table(rows))
         self.assertIn("step", text)
         self.assertIn("recorded", text)
@@ -441,6 +444,12 @@ class Steps(TmpCase):
         self.assertNotIn("dual scan (M1 or M2);", text)
         full = [(s["title"], True, 9, 2) for s in probe.IO_STEPS]
         self.assertIn("Nothing important is missing", "\n".join(probe.io_summary_table(full)))
+
+    def test_the_i1io3_is_named_and_suggested_as_a_table(self):
+        self.assertIn("i1iO 3 table", probe.pid_label(0x30B0, 0x0765))
+        self.assertIn("protocol is not known", probe.pid_label(0x30B0, 0x0765))
+        self.assertEqual(probe.suggest([(0x0765, 0x30B0)])["choice"], 1)
+        self.assertIn("i1iO 3", probe.device_name((0x0765, 0x30B0)))
 
     def test_takes_stay_apart_in_the_table(self):
         title = probe.IO_STEPS[0]["title"]
@@ -458,8 +467,8 @@ class Steps(TmpCase):
         self.assertNotIn("\x1b", text)
 
     def test_a_repeat_that_worked_counts(self):
-        rows = [("One row in your usual setting, watching closely", True, 0, 0),
-                ("One row in your usual setting, watching closely (take 2)", True, 9, 2)]
+        rows = [("One row of a chart that scans in one pass", True, 0, 0),
+                ("One row of a chart that scans in one pass (take 2)", True, 9, 2)]
         rows += [(s["title"], True, 5, 1) for s in probe.IO_STEPS[1:]]
         self.assertIn("Nothing important is missing", "\n".join(probe.io_summary_table(rows)))
 

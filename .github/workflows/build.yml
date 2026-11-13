@@ -213,13 +213,16 @@ jobs:
             nothing is promised: ChromIQ cannot drive the table. There is
             still no recording from a handheld instrument.
 
-            - **Four new i1iO steps**, the most useful first: one row in your
-              usual setting while you mark when the arm starts (`a`), the lamp
-              lights (`l`) and the head goes down and up (`d`, `u`), then a
-              cancel; a few patches in spot mode (if offered); a small chart
-              to the end with the fastest setting; one row with dual scan (if
-              offered). Then a few questions (chart file, paper size, a ruler
-              measurement, the i1Profiler settings).
+            - **New i1iO steps**, the most useful first: one row of a chart
+              that i1Profiler scans in one pass, while you mark when the arm
+              starts (`a`), the lamp lights (`l`) and the head goes down and up
+              (`d`, `u`), then a cancel; a few patches in spot mode (if
+              offered); a small chart to the end with the fastest setting; one
+              row with dual scan (if offered); one row of the earlier chart (if
+              at hand). Then a few questions (chart files, paper size, a ruler
+              measurement, the settings, the sheet hold).
+            - The i1iO 3 (0765:30B0) is recognised as a table; its protocol is
+              not known yet.
             - **On a Mac, every step is checked straight away** ("this step
               recorded 14 commands to the table: good", or "please repeat
               it"), and a table at the end says what is still missing, all

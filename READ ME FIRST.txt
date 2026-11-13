@@ -35,10 +35,11 @@ That's it.  You're done.
 RECORDING THE i1iO TABLE (version 1.5.4)
 ----------------------------------------
 
-Version 1.5.4 asks for four short steps in i1Profiler that the first
-real recording did not have (one row watched closely, spot mode, a
-small chart to the end with the fastest setting, dual scan), plus a
-few questions. To see the steps first, without
+Version 1.5.4 asks for up to five short steps in i1Profiler that the
+first real recording did not have (one row of a chart that scans in
+one pass, spot mode, a small chart to the end with the fastest
+setting, dual scan, the earlier chart once more), plus a few
+questions. To see the steps first, without
 recording anything, start the tool with  --rehearse  (on a Mac in the
 Terminal:  ./chromiq-io-probe-macos --rehearse ). On a Mac a recording
 needs System Integrity Protection switched off; the tool says how, and

@@ -32,12 +32,16 @@ drive the table. There is still no recording from a handheld instrument.
   timeline. On the two real recordings it finds exactly the same 1,125 and
   1,350 lines as our separate decoder, all with a correct check number.
 - **New i1iO steps**, exactly what the first recordings lack, the most useful
-  first: (1) one row in the usual setting with the calibration, marking `a`
+  first: (1) one row of a chart that i1Profiler scans in one pass (the first
+  recordings most likely show its fallback: its help says a row that cannot
+  be scanned is read again more slowly and then patch by patch, which
+  happened on every row), with the calibration, marking `a`
   (the arm starts along the row), `l` (the lamp lights up), `d` and `u` (the
   head goes down and up) as it happens, then a cancel during the second row;
   (2) a few patches in spot mode, if offered; (3) a small chart measured to
   the end with the fastest setting, letting the arm park by itself; (4) one
-  row with dual scan (M1 or M2), if offered. Step 1 matters most: the first
+  row with dual scan (M1 or M2), if offered; (5) one row of the earlier
+  chart, if it is still printed. Step 1 matters most: the first
   recordings suggest that the table waits for the instrument before it
   moves, without being told, and the marks are how we can tell the two
   apart. Then a few questions with no recording running: the
@@ -66,6 +70,9 @@ drive the table. There is still no recording from a handheld instrument.
 - **Switch SIP back on:** a mac session now ends with a box holding the
   exact steps for this Mac (Apple Silicon or Intel) and how to check it
   (`csrutil status`). The earlier reminders stay.
+- **The i1iO 3 (0765:30B0, from X-Rite's own driver file) is recognised**
+  and named as a table in the detection and the report; its protocol is
+  not known, so the i1iO 2 analysis is not applied to it.
 - **Windows on ARM, worded as far as the evidence goes:** for the i1Pro 3 the
   tool no longer says the vendor program cannot talk to it (its firmware
   asks Windows for Microsoft's own USB driver, and nobody knows yet whether

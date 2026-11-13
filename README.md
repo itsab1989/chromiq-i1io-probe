@@ -25,7 +25,7 @@ It takes about **two minutes**, and you do **not** need to be technical.
 > still unknown (what lowers and lifts the head, how a job is stopped, how
 > the table reports a problem), and nothing is promised: ChromIQ cannot drive
 > the table. 1.5.4 asks for exactly what is missing, in
-> [four short steps](#the-i1io-steps-in-154). There is still no recording
+> [up to five short steps](#the-i1io-steps-in-154). There is still no recording
 > from a handheld instrument.
 
 > **Important for owners of an i1Pro 2 or an i1iO 2:** i1Profiler **3.8.7**
@@ -199,7 +199,7 @@ ways to make one (below).
 2. It switches on the `XHC` interfaces that were off (`sudo ifconfig XHC2 up`
    and so on) and starts the system's own `tcpdump` on every one of them,
    because which bus the table is on is only a guess.
-3. You do four short steps in i1Profiler, about 25 minutes (see
+3. You do up to five short steps in i1Profiler, about 30 minutes (see
    [the i1iO steps](#the-i1io-steps-in-154) below). The recording runs the
    whole time; after each step the tool checks the recording so far and says
    whether the table's commands are in it ("this step recorded 14 commands to
@@ -223,28 +223,35 @@ The first recordings already hold the connection, the calibration, the hand
 alignment of the corners and the row scans. These steps ask for what is
 missing, the most useful first, so stopping after one or two still helps:
 
-1. **One row in your usual setting, watching closely.** With the calibration.
+1. **One row of a chart that scans in one pass**, for example one of
+   i1Profiler's own i1iO test charts. With the calibration.
    You type a letter (and Enter) the moment you see something: `a` when the arm starts
    along the row, `l` when the instrument's lamp lights up, `d` and `u` when
    the head goes down and up. Then Cancel during the second row. The first
-   recordings suggest that the table waits for the instrument before it
-   moves, without being told; these marks are how we can tell the two apart,
-   and learn which command lowers the head.
+   recordings most likely show i1Profiler's fallback (its help says a row
+   that cannot be scanned is read again more slowly and then patch by
+   patch, and that happened on every row), so a normal one-pass scan has
+   not been recorded yet. They also suggest that the table waits for the
+   instrument before it moves, without being told; the marks are how we can
+   tell the two apart, and learn which command lowers the head.
 2. **A few patches in spot mode, watching the head**, if i1Profiler offers
    spot mode for the table.
 3. **A small chart to the end, with the fastest setting** i1Profiler offers
-   (one or two rows, 10 to 20 patches, placed somewhere else on the table),
+   (two rows, 10 to 20 patches, placed somewhere else on the table),
    letting the arm park by itself.
 4. **One row with dual scan (M1 or M2)**, if offered. The recording shows only
    how the instrument is asked to measure; i1Profiler most likely does the M1
    or M2 arithmetic itself.
+5. **One row of the earlier chart**, if it is still printed: the fallback
+   once more, now that we know what it is.
 
-Then a few questions with no recording running: the chart file, the paper
+Then a few questions with no recording running: the chart files, the paper
 size, a ruler measurement of the first row (this proves the unit of length),
-the i1Profiler settings, and whether i1Profiler can lower or lift the head on
-its own. A step starts with Enter and ends when you type `e` and Enter, so a stray key
-cannot cut it short. Each step can be skipped or done again; steps 2 and 4
-only make sense if i1Profiler offers them.
+the i1Profiler settings, whether the earlier chart always fell back, the
+sheet hold and what the table shows when something goes wrong, and whether
+i1Profiler can lower or lift the head on its own. A step starts with Enter and ends when you type `e` and Enter, so a stray key
+cannot cut it short. Each step can be skipped or done again; steps 2, 4 and 5
+are only for when i1Profiler offers them or the chart is at hand.
 
 Left out on purpose: provoking an error by holding the arm back or removing
 the instrument, or trying whether the table moves without the instrument
