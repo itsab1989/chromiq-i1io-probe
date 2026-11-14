@@ -568,8 +568,8 @@ class Session(_IsisSessionBase):
         synth.keyboard_noise(w)
         w.save(os.path.join(self.pcaps, "idle.pcap"))
         session, screen = self.run_session(["", "e", "", "q"], profile="isis")
-        self.assertIn("EMPTY: nothing was recorded in this step, please repeat it.",
-                      flat(screen))
+        self.assertIn("EMPTY: only the instrument's USB description was recorded in this "
+                      "step, none of its requests or data. Please repeat it.", flat(screen))
         self.assertIn("Type  r  and press Enter to record this step again",
                       "\n".join(self.prompts))
         step = self.saved()["steps"][0]

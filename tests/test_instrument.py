@@ -572,7 +572,9 @@ class SessionTests(TempDirCase):
         synth.keyboard_noise(w, 3)
         w.save(os.path.join(self.pcaps, "idle.pcap"))
         _session, screen = self.run_session(["", "e", "", "q"])
-        self.assertIn("no instrument traffic was found in this", " ".join(screen.split()))
+        flat = " ".join(screen.split())
+        self.assertIn("NOTHING KEPT: this step's recording holds 12 records", flat)
+        self.assertIn("The i1Pro 2's USB id (0971:2000) was not seen", flat)
         self.assertEqual(self.saved()["steps"][0]["files_xrite"], [])
 
     def test_whole_session_then_finish_analysis_and_delete(self):

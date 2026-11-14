@@ -170,7 +170,8 @@ class EmptyStepsAndChecks(Base):
     def test_an_empty_step_is_called_empty(self):
         console = FakeConsole(["", "e", "", "", "", "q"])
         session, screen = self.run_session(console, recording=descriptor_only())
-        self.assertIn("EMPTY: nothing was recorded in this step, please repeat it",
+        self.assertIn("EMPTY: only the instrument's USB description was recorded in this "
+                      "step, none of its requests or data. Please repeat it",
                       " ".join(screen.split()))
         self.assertTrue(session["steps"][0]["empty"])
         path = os.path.join(self.tmp.name, "d.pcap")

@@ -2875,6 +2875,259 @@ def check_capture(path: str, profile: str | None = None) -> dict:
             "left_out": left_out, "explained": att.get("explained", False)}
 
 
+# --------------------------------------------------------------------------
+# 1.6.3: what a recording held when nothing of it could be kept
+#
+# A tester's public screenshot showed a nine-step i1Pro 3 session (tool 1.5.5,
+# Windows) with every step "EMPTY: nothing recorded", although the same PC
+# recorded fine before and after. No file from that run reached us, so the
+# cause is NOT known. The tool still keeps nothing it cannot attribute; it now
+# says what the recording did hold, in counts, device classes and USB ids
+# only (never contents), and what to try.
+# --------------------------------------------------------------------------
+
+# The USB ids of each session's own instrument family (1.6.3, also the
+# handheld rule in instrument_selection). The i1Pro and i1Pro 2 are one family.
+FAMILY_IDS = {
+    "i1pro2": frozenset({(0x0971, 0x2000)}),
+    "i1pro": frozenset({(0x0971, 0x2000)}),
+    "i1pro3": frozenset({(0x0765, 0x6009)}),
+    "munki": frozenset({(0x0971, 0x2007), (0x0765, 0x6008)}),
+    "isis": frozenset(ISIS_IDS),
+    "io": frozenset({(0x0971, 0x2004)}),
+    "generic": frozenset(),
+}
+FAMILY_WORDS = {"i1pro2": "i1Pro 2", "i1pro": "i1Pro", "i1pro3": "i1Pro 3",
+                "munki": "ColorMunki or i1Studio", "isis": "i1iSis", "io": "i1iO table",
+                "generic": "instrument"}
+
+_CLASS_WORDS = {
+    1: "audio device", 2: "modem, network or serial adapter", 3: "keyboard, mouse or other input device",
+    6: "camera or scanner (still image)", 7: "printer", 8: "USB disk or memory stick",
+    9: "USB hub", 0x0A: "modem, network or serial adapter", 0x0B: "smart card reader",
+    0x0E: "camera (video)", 0xE0: "Bluetooth or other wireless adapter",
+    0xFF: "device with its own (vendor) protocol",
+}
+
+
+def _seen_class(info: dict | None, dev_class, profile: str | None) -> str:
+    """The plain-words class of one device of a recording (for counts)."""
+    info = info or {}
+    vid, pid = info.get("vid"), info.get("pid")
+    if vid is None:
+        fam = info.get("guess_family")
+        if fam:
+            return (f"device without a USB description that uses the "
+                    f"{FAMILY_WORDS.get(fam, fam)}'s commands")
+        return "device whose USB description the recording does not hold"
+    if vid in XRITE_VIDS:
+        ids = (vid, pid)
+        if ids in FAMILY_IDS.get(profile or "", ()):
+            return f"the {FAMILY_WORDS.get(profile, 'instrument')} ({vid:04x}:{pid:04x})"
+        if ids in CALIBRATOR_IDS:
+            return f"X-Rite monitor calibrator ({vid:04x}:{pid:04x})"
+        if ids in OTHER_INSTRUMENT_IDS or ids in PROFILE_IDS:
+            return f"another X-Rite instrument ({vid:04x}:{pid:04x})"
+        return f"X-Rite device this tool does not know ({vid:04x}:{pid:04x})"
+    classes = set(config_interfaces(info.get("config")).values())
+    for code in (9, 8, 3):                      # the clear kinds first
+        if dev_class == code or code in classes:
+            return _CLASS_WORDS[code]
+    if dev_class in _CLASS_WORDS:
+        return _CLASS_WORDS[dev_class]
+    for code in sorted(classes):
+        if code in _CLASS_WORDS:
+            return _CLASS_WORDS[code]
+    return "other USB device"
+
+
+def recording_facts(path: str, profile: str | None = None) -> dict:
+    """1.6.3: what one recording holds, in counts and ids only: records per
+    device class, where the session's instrument family's USB id was seen
+    and what it did there, and records on that family's endpoint numbers
+    (with their transfer types) at other addresses. Never any contents.
+    Returns {"records", "classes": {class: [devices, records]},
+    "family_ids": {"vvvv:pppp": [addresses, records, own activity]},
+    "family_eps": {class: records}, "readable": bool}."""
+    facts = {"records": 0, "classes": {}, "family_ids": {}, "family_eps": {},
+             "readable": True}
+    try:
+        linktype, recs = _read_pcap(path)
+    except (OSError, ValueError):
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            size = 0
+        # an empty file (not even a recording's header) holds nothing
+        facts["readable"] = size == 0
+        return facts
+    facts["records"] = len(recs)
+    if not recs:
+        return facts
+    events = capture_events(linktype, recs)
+    darwin = linktype == LINKTYPE_USB_DARWIN
+    if darwin:
+        devices = {}
+        for ev in events:
+            ids = (ev.get("vid"), ev.get("pid"))
+            if ids[0] or ids[1]:
+                devices.setdefault(ids, {"vid": ids[0], "pid": ids[1], "config": []})
+        for ev in events:
+            if (ev["kind"] == "control" and ev["rt"] == 0x80 and ev["req"] == 6
+                    and ev["wValue"] >> 8 == 2 and len(ev["in"]) >= 9 and ev["in"][1] == 2):
+                info = devices.get((ev.get("vid"), ev.get("pid")))
+                if info is not None and not info["config"]:
+                    info["config"] = parse_config_descriptor(ev["in"])
+    else:
+        devices = device_map(events)
+    dev_class: dict = {}
+    activity: dict = {}
+    for ev in events:
+        key = (ev.get("vid"), ev.get("pid")) if darwin else (ev["bus"], ev["dev"])
+        if (ev["kind"] == "control" and ev["rt"] == 0x80 and ev["req"] == 6
+                and ev["wValue"] >> 8 == 1 and len(ev["in"]) >= 5 and ev["in"][1] == 1):
+            dev_class.setdefault(key, ev["in"][4])
+        if (ev["kind"] == "control" and (ev["rt"] >> 5) & 3 in (1, 2)) \
+                or (ev["kind"] == "data" and ev["ep"] & 0x7F):
+            activity[key] = activity.get(key, 0) + 1
+    per_key: dict = {}
+    fields = [_record_fields(linktype, d) for _ts, d in recs]
+    for f in fields:
+        if f is None:
+            continue
+        per_key[f[0]] = per_key.get(f[0], 0) + 1
+    own_ids = FAMILY_IDS.get(profile or "", frozenset())
+    own_keys = set()
+    for key, count in per_key.items():
+        info = devices.get(key)
+        if not darwin and key[1] == 0:
+            word = "device being set up (address 0)"
+        else:
+            word = _seen_class(info, dev_class.get(key), profile)
+        slot = facts["classes"].setdefault(word, [0, 0])
+        slot[0] += 1
+        slot[1] += count
+        ids = (info.get("vid"), info.get("pid")) if info else (None, None)
+        if ids in own_ids:
+            own_keys.add(key)
+            tag = f"{ids[0]:04x}:{ids[1]:04x}"
+            got = facts["family_ids"].setdefault(tag, [0, 0, 0])
+            got[0] += 1
+            got[1] += count
+            got[2] += activity.get(key, 0)
+    eps = FAMILY_ENDPOINTS.get(profile or "")
+    if eps and not darwin:
+        for f in fields:
+            if f is None or f[0] in own_keys or f[0][1] == 0:
+                continue
+            _key, ep, kind, _data, _tid, _st, _en = f
+            if not ep & 0x7F or ep not in eps:
+                continue
+            want = eps[ep]
+            if (kind == want) if want else kind in ("bulk", "interrupt"):
+                word = _seen_class(devices.get(f[0]), dev_class.get(f[0]), profile)
+                facts["family_eps"][word] = facts["family_eps"].get(word, 0) + 1
+    return facts
+
+
+def merge_facts(items: list) -> dict:
+    """The facts of several recordings (one per root hub) of one step."""
+    out = {"records": 0, "classes": {}, "family_ids": {}, "family_eps": {},
+           "files": len(items), "unreadable": 0}
+    for f in items:
+        out["records"] += f.get("records", 0)
+        if not f.get("readable", True):
+            out["unreadable"] += 1
+        for word, (n, r) in f.get("classes", {}).items():
+            slot = out["classes"].setdefault(word, [0, 0])
+            slot[0] += n
+            slot[1] += r
+        for tag, vals in f.get("family_ids", {}).items():
+            slot = out["family_ids"].setdefault(tag, [0, 0, 0])
+            for i, v in enumerate(vals):
+                slot[i] += v
+        for word, r in f.get("family_eps", {}).items():
+            out["family_eps"][word] = out["family_eps"].get(word, 0) + r
+    return out
+
+
+def _n(count: int, one: str, many: str) -> str:
+    return f"{count:,} {one if count == 1 else many}"
+
+
+def facts_lines(facts: dict, profile: str | None) -> list:
+    """1.6.3: the facts of an empty step in plain words, lines of at most 76
+    columns (they are printed with two more spaces in front)."""
+    hubs = facts.get("files", 1)
+    where = _n(hubs, "recorded USB bus", "recorded USB buses")
+    lines = ["WHAT THE RECORDING HELD (counts only, never contents):"]
+    if not hubs:
+        lines.append("  nothing: the recording program wrote no file for this step.")
+        return lines
+    if not facts.get("records"):
+        lines.append(f"  nothing at all: 0 records on {where}.")
+        if facts.get("unreadable"):
+            lines.append("  " + _wrap(f"{_n(facts['unreadable'], 'file was', 'files were')} "
+                                      "not a readable recording.", 72, "  "))
+        return [part for line in lines for part in line.split("\n")]
+    lines.append(f"  {_n(facts['records'], 'record', 'records')} on {where}:")
+    for word, (n, r) in sorted(facts["classes"].items(), key=lambda kv: -kv[1][1]):
+        lines.append("  - " + _wrap(f"{word}: {_n(n, 'device', 'devices')}, "
+                                    f"{_n(r, 'record', 'records')}", 70, "    "))
+    name = FAMILY_WORDS.get(profile or "", "instrument")
+    if profile in FAMILY_IDS and FAMILY_IDS[profile]:
+        if facts["family_ids"]:
+            for tag, (n, r, act) in sorted(facts["family_ids"].items()):
+                did = ("none of them its own requests or data" if not act else
+                       _n(act, "request or data transfer of its own",
+                          "requests and data transfers of its own"))
+                lines.append(_wrap(f"The {name}'s USB id ({tag}) was seen at "
+                                   f"{_n(n, 'address', 'addresses')}: "
+                                   f"{_n(r, 'record', 'records')} there, {did}.", 74, "  "))
+        else:
+            ids = ", ".join(f"{v:04x}:{p:04x}" for v, p in sorted(FAMILY_IDS[profile]))
+            lines.append(_wrap(f"The {name}'s USB id ({ids}) was not seen in this "
+                               "recording.", 74, "  "))
+    if profile in FAMILY_ENDPOINTS:
+        eps = ", ".join(f"0x{e:02x}" for e in sorted(FAMILY_ENDPOINTS[profile]))
+        total = sum(facts["family_eps"].values())
+        if total:
+            lines.append(_wrap(f"On the {name}'s endpoint numbers ({eps}) at other "
+                               f"addresses: {_n(total, 'record', 'records')}, by kind of "
+                               "device:", 74, "  "))
+            for word, r in sorted(facts["family_eps"].items(), key=lambda kv: -kv[1]):
+                lines.append("  - " + _wrap(f"{word}: {_n(r, 'record', 'records')}", 70, "    "))
+        else:
+            lines.append(_wrap(f"On the {name}'s endpoint numbers ({eps}) at other "
+                               "addresses: no records.", 74, "  "))
+    return [part for line in lines for part in line.split("\n")]
+
+
+def empty_help_lines(system: str | None = None) -> list:
+    """1.6.3: what to try when a step kept nothing, one action per line.
+    The cause of the all-empty case is not known; this is what may help."""
+    system = system or platform.system()
+    lines = ["WHAT YOU CAN TRY (the cause is not known yet):",
+             "  1. Unplug the instrument's USB cable.",
+             "  2. Wait five seconds.",
+             "  3. Plug it back in.",
+             "  4. Start this tool again.",
+             "If the steps are still empty:"]
+    if system == "Windows":
+        lines += ["  1. Restart Windows with \"Restart\" (not \"Shut down\" and then",
+                  "     switching on again: with Windows' Fast Startup, which is on",
+                  "     by default, that does not start the USB drivers afresh).",
+                  "  2. Plug the instrument in after Windows has started.",
+                  "  3. Start this tool again."]
+    else:
+        lines += ["  1. Restart the computer.",
+                  "  2. Plug the instrument in after it has started.",
+                  "  3. Start this tool again."]
+    lines += ["The small text report and session.json hold no recording. If you",
+              "send them to us, they help us find out why this happened."]
+    return lines
+
+
 def record_device_keys(linktype: int, recs) -> list:
     """(bus, device address) of each record, or None, in the same order."""
     keys = []
@@ -8041,6 +8294,7 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
             pass
     lights = profile in PROFILES_WITH_LIGHTS
     recording = False
+    helped = 0                  # 1.6.3: the step after which "what to try" was shown
     restore_console = quick_edit_off()
     try:
         if recorder is not None and not recorder.session_start():
@@ -8167,16 +8421,34 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                                 | set(entry.get("kept_unknown", [])))
             if recorder is not None and (not entry["files_xrite"] or zero):
                 entry["empty"] = True
+            if recorder is not None and not entry["files_xrite"] and not zero \
+                    and not entry.get("unidentified"):
+                # 1.6.3: nothing kept: what the recording DID hold, in counts
+                # and ids only, for the screen, session.json and the report.
+                entry["seen"] = merge_facts([
+                    recording_facts(os.path.join(full_dir, name), profile)
+                    for name in entry.get("files_full", [])])
             session["steps"].append(entry)
             _write_session(session, folder)
             if recorder is not None:
                 print("  CHECK: " + _wrap(handheld_step_verdict(entry, activity, empty, zero),
                                           64, "  "))
+                if entry.get("seen") is not None:
+                    print()
+                    for line in facts_lines(entry["seen"], profile):
+                        print("  " + line)
+                    print()
+                    if not helped:
+                        for line in empty_help_lines():
+                            print("  " + line)
+                        helped = number
+                    else:
+                        print(f"  (What you can try is listed above, after step {helped}.)")
             seconds = entry["end_epoch"] - entry["start_epoch"]
             question = None
             if recorder is not None and entry.get("empty"):
-                question = ("\n  Type  r  and press Enter to record this step again, or press "
-                            "Enter to go on: ")
+                question = ("\n  Type  r  and press Enter to record this step again, q to stop "
+                            "the session,\n  or just press Enter to go on: ")
             elif seconds < SHORT_STEP_SECONDS and not stop_after:
                 question = (f"\n  That was very short ({seconds:.1f} s). Was it on purpose? "
                             "Type  r  to record\n  this step again, or press Enter to keep it: ")
@@ -8193,7 +8465,7 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                     # Nothing to describe: go on without the notes questions.
                     entry["kept"] = True
                     _write_session(session, folder)
-                    if stop_after:
+                    if stop_after or again.startswith("q"):
                         session["ended"] = "stopped by the operator"
                         break
                     index += 1
@@ -8304,6 +8576,17 @@ def handheld_step_verdict(entry: dict, activity: int, empty: bool, zero: bool = 
             # 1.6.2: traffic at the instrument's address that was not its own.
             text += " " + left_out_text(entry["left_out"], entry.get("explained", False))
         return text
+    seen = entry.get("seen")
+    if seen is not None and not entry.get("files_xrite"):
+        # 1.6.3: said exactly as it is; what the recording held follows.
+        if not seen.get("records"):
+            return "EMPTY: nothing at all was recorded in this step (0 records). Please repeat it."
+        if empty:
+            return ("EMPTY: only the instrument's USB description was recorded in this step, "
+                    "none of its requests or data. Please repeat it.")
+        return (f"NOTHING KEPT: this step's recording holds {_n(seen['records'], 'record', 'records')}, "
+                "but none of them could be attributed to the instrument with certainty, so "
+                "the tool kept none of them. Please repeat it.")
     if entry.get("unidentified"):
         return ("NOTHING KEPT: this recording does not show which device is the i1iSis "
                 "(it holds no USB description), so the tool kept nothing rather than risk "
@@ -8495,9 +8778,11 @@ def finish_session(session: dict, folder: str) -> tuple:
             s.get("kept") is False else (
             ", ".join(s.get("files_xrite") or [])
             or ("cut from whole-session-instrument.pcap" if s.get("cut_from_whole_recording")
-                else "EMPTY: nothing recorded, please repeat this step" if s.get("empty")
+                else "EMPTY: nothing kept, please repeat this step" if s.get("empty")
                 else "no instrument traffic"))
-        lines.append(f"  step {s['number']} {s['title']} (take {s.get('take', 1)}): {state}")
+        # 1.6.3: wrapped for an 80-column window
+        lines.append(_wrap(f"  step {s['number']} {s['title']} (take {s.get('take', 1)}): "
+                           f"{state}", 74, "      "))
     analysis = None
     if done:
         try:
@@ -8569,23 +8854,27 @@ def is_sendable(name: str) -> bool:
             or low.endswith("-instrument.pcap") or low.endswith("-xrite.pcap"))
 
 
-def make_send_zip(report_path: str, send: dict) -> str | None:
+def make_send_zip(report_path: str, send: dict, report_only: bool = False) -> str | None:
     """1.5.4: ONE file to send, next to the report: the report, and the
     session folder's own files (instrument-only recordings, session.json,
     analysis.txt) or the given recordings. Never a full recording, never a
-    sub-folder. Returns its path, or None."""
+    sub-folder. Returns its path, or None. report_only (1.6.3, a session
+    that kept nothing): the report and session.json only, named so."""
     import zipfile                                        # noqa: PLC0415
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    dst = os.path.join(os.path.dirname(report_path) or ".", f"SEND-THIS-{stamp}.zip")
+    tail = "-report-only" if report_only else ""
+    dst = os.path.join(os.path.dirname(report_path) or ".", f"SEND-THIS-{stamp}{tail}.zip")
     items = [report_path]
     folder = send.get("folder")
     if folder and os.path.isdir(folder):
         for name in sorted(os.listdir(folder)):
             full = os.path.join(folder, name)
-            if os.path.isfile(full) and is_sendable(name):
+            if os.path.isfile(full) and (name.lower() == "session.json" if report_only
+                                         else is_sendable(name)):
                 items.append(full)
-    items += [f for f in send.get("files") or [] if os.path.isfile(f)
-              and is_sendable(os.path.basename(f))]
+    if not report_only:
+        items += [f for f in send.get("files") or [] if os.path.isfile(f)
+                  and is_sendable(os.path.basename(f))]
     try:
         with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zf:
             for item in items:
@@ -9240,8 +9529,17 @@ def instrument_session_step(pids: list, direct: bool, only: list | None = None,
         verdict = analysis.split("DOES THIS RECORDING HOLD WHAT WE NEED?")[-1]
         print("\n  DOES THIS RECORDING HOLD WHAT WE NEED?" + verdict.replace("\n", "\n  "))
     outcome["recorded"] = bool(any(s.get("files_xrite") for s in session["steps"]) or manual)
+    seen_steps = [s for s in session["steps"] if s.get("seen") is not None]
     if outcome["recorded"]:
         _END["send"] = {"folder": folder}
+    elif seen_steps:
+        # 1.6.3: every recorded step kept nothing. The cause is not known;
+        # the report and session.json (counts and ids, no recording) are
+        # what can help, so they go into one small file to send.
+        outcome["all_empty"] = True
+        outcome["reason"] = ALL_EMPTY_REASON
+        outcome["help"].append("\n".join("  " + l for l in empty_help_lines()))
+        _END["report_only"] = folder
     else:
         ended = session.get("ended") or ""
         if "stopped at once" in ended:
@@ -9260,6 +9558,11 @@ def instrument_session_step(pids: list, direct: bool, only: list | None = None,
         print()
         print(SIP_OFF_REMINDER)
     body = "\n".join(lines)
+    if seen_steps:
+        body += "\n\nWHAT THE STEPS THAT KEPT NOTHING HELD (counts and USB ids only)"
+        for s in seen_steps:
+            body += (f"\n  step {s['number']} (take {s.get('take', 1)}):\n"
+                     + "\n".join("    " + l for l in facts_lines(s["seen"], profile)))
     if system == "Windows":
         body += "\n\n" + windows_checks_text(checks) + "\n\n" + win_diag
     failure = session.get("recorder_failure") or (session.get("first_try") or {}).get(
@@ -9591,6 +9894,16 @@ REPORT_SEND_WAYS = f"""\
         {NEW_ISSUE_URL}"""
 
 
+# 1.6.3: the report-only file holds no recording, so no serial number
+# (the report's are scrambled): no private-message advice needed.
+REPORT_ONLY_SEND_WAYS = f"""\
+  To send it, choose whichever suits you:
+    - attach it in the forum thread where you heard about this tool, or
+    - open a new issue at
+        {NEW_ISSUE_URL}
+      and attach it there."""
+
+
 def plugged_in_now(ids: list) -> tuple:
     """(known, here): the X-Rite devices plugged in right now.
 
@@ -9728,6 +10041,11 @@ def choose_what_to_do(args, summary: str) -> tuple:
     return 3, summary
 
 
+ALL_EMPTY_REASON = ("Every step was recorded, but no step held traffic that the tool could "
+                    "attribute to the instrument with certainty, so nothing was kept. Why "
+                    "this happens is not known yet.")
+
+
 def closing_words(outcome: dict | None) -> list:
     """1.5.1: the end of a handheld run, as lines. When nothing was recorded,
     say so plainly and repeat what to do, so it is the last thing on screen
@@ -9744,6 +10062,22 @@ def closing_words(outcome: dict | None) -> list:
         return first + ["  In the report the serial numbers are scrambled; in the",
                         "  recordings they cannot be, as said above.", "",
                         HANDHELD_SEND_WAYS]
+    if outcome.get("all_empty"):
+        # 1.6.3: one small file to send, and what to try, last on screen.
+        lines = ["  NOTHING WAS KEPT THIS TIME",
+                 "  " + _wrap(outcome.get("reason") or ALL_EMPTY_REASON, 66, "  "), ""]
+        if _END.get("zip"):
+            lines += ["  Please send the one file named above. It ends in -report-only.zip",
+                      "  and holds only the small text report and session.json, no",
+                      "  recording. It helps us find out why this happened."]
+        else:
+            lines += ["  The tool could not make the one file to send. If you like, send",
+                      "  the report and the session.json from the session folder."]
+        lines += ["", REPORT_ONLY_SEND_WAYS]
+        for text in outcome.get("help") or []:
+            lines += ["", "  " + "-" * 66, "", text]
+        lines += ["", "  Thank you for trying!"]
+        return lines
     lines = ["  NOTHING WAS RECORDED THIS TIME",
              "  " + _wrap(outcome.get("reason") or "No step of the session was recorded.",
                           66, "  "),
@@ -9815,11 +10149,15 @@ def finish_report(args, system: str, instrument: bool = False,
         return 1
 
     size_kb = os.path.getsize(out_path) / 1024
-    zip_path = make_send_zip(out_path, _END["send"]) if _END.get("send") else None
+    report_only = not _END.get("send") and bool(_END.get("report_only"))
+    zip_path = make_send_zip(out_path, _END["send"]) if _END.get("send") else (
+        make_send_zip(out_path, {"folder": _END["report_only"]}, report_only=True)
+        if report_only else None)
     _END["zip"] = zip_path
     recorded = (not instrument) or bool((outcome or {}).get("recorded"))
     print("\n" + "=" * 68)
-    print("  ALL DONE. Thank you!" if recorded else "  FINISHED, BUT NOTHING WAS RECORDED YET")
+    print("  ALL DONE. Thank you!" if recorded else "  FINISHED, BUT NOTHING WAS KEPT"
+          if report_only else "  FINISHED, BUT NOTHING WAS RECORDED YET")
     print("=" * 68)
     print()
     print("  Your report was saved here:")
@@ -9830,7 +10168,14 @@ def finish_report(args, system: str, instrument: bool = False,
     print("  a look first: you can see exactly what is being shared, and you")
     print("  can delete anything you are not comfortable with.")
     print()
-    if zip_path:
+    if zip_path and report_only:
+        print("  " + "=" * 66)
+        print("  SEND THIS ONE FILE (the report and session.json, no recording):")
+        print()
+        print(f"      {zip_path}")
+        print("  " + "=" * 66)
+        print()
+    elif zip_path:
         print("  " + "=" * 66)
         print("  SEND THIS ONE FILE (it holds the report and the recordings):")
         print()
