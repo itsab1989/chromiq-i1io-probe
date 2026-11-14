@@ -4973,7 +4973,7 @@ def _analyze_step(events: list, family: str, show_raw: bool) -> dict:
               "timeline": [], "features": set(), "first_t": t0,
               "last_t": events[-1]["t"] if events else 0.0, "nsen": nsen,
               "odd_sizes": [], "ruler_like": [], "events": [], "codes": set(),
-              "motion": None}
+              "motion": None, "zebra_motion": None}
     context = None
     pending_led = False
     current = None
@@ -5067,7 +5067,12 @@ def _analyze_step(events: list, family: str, show_raw: bool) -> dict:
         if family == "i1pro2" and ep == I1PRO2_RULER_EP and ev["dir_in"]:
             result["motion"] = ruler_motion(ev["data"], result["motion"])
         if ep == fam["zebra_ep"] and ev["dir_in"]:
+            # 1.6.3: the ruler's travel, from its 2-bit samples (four to a
+            # byte, lowest bits first: i1pro3_imp.c:13133-13140)
+            samples = bytes((b >> sh) & 3 for b in ev["data"] for sh in (0, 2, 4, 6))
+            result["zebra_motion"] = ruler_motion(samples, result.get("zebra_motion"))
             if current is not None:
+                current["zebra"] = ruler_motion(samples, current.get("zebra"))
                 current["zebra_bytes"] += size
             note = ruler_like(ev["data"], packed=True)
             if note:
@@ -5186,6 +5191,16 @@ def motion_text(st: dict) -> str:
             f"{secs:.2f} s{extra}")
 
 
+def zebra_words(st: dict) -> str:
+    """1.6.3: the i1Pro 3's ruler travel in words: position changes and the
+    net count (no seconds: the sample clock is not printed in the recording)."""
+    if not st["steps"]:
+        return f"none ({st['samples']:,} samples, the position never changed)"
+    extra = f", {st['illegal']} impossible jumps" if st["illegal"] else ""
+    return (f"{st['steps']:,} position changes (net {st['net']:+,}) in "
+            f"{st['samples']:,} samples{extra}")
+
+
 # Kept for 1.5's own callers and tests: the i1Pro 2 is the default family.
 def analyze_i1pro_step(events: list) -> dict:
     return analyze_step(events, "i1pro2")
@@ -5224,7 +5239,7 @@ def withhold(res: dict) -> dict:
     sizes stay, everything decoded from the bytes goes."""
     res = dict(res)
     res.update(measurements=[], ruler=[], leds=[], timeline=[], unknown=[], events=[],
-               ruler_like=[], odd_sizes=[], motion=None, withheld=True,
+               ruler_like=[], odd_sizes=[], motion=None, zebra_motion=None, withheld=True,
                features={f for f in res["features"] if f.startswith(("request ", "data on "))})
     res["requests"] = {(k if not k.startswith("UNKNOWN") else k): v
                        for k, v in res["requests"].items()}
@@ -5271,6 +5286,8 @@ def format_step(name: str, res: dict, notes: dict | None = None) -> list:
             asked = f", asked for {m['nummeas']}" if m["nummeas"] is not None else ""
             ints = f", integration {m['intclocks']} clocks" if m["intclocks"] is not None else ""
             zeb = f", ruler data {m['zebra_bytes']} bytes" if m.get("zebra_bytes") else ""
+            if m.get("zebra"):
+                zeb += ", ruler travel " + zebra_words(m["zebra"])
             out.append(f"    {m['t']:8.3f}s  {m['flag_text']}{asked}{ints}: "
                        f"{m['readings']} readings in {m['transfers']} transfers, "
                        f"{m['bytes']:,} bytes over {m['duration']:.2f} s"
@@ -5284,6 +5301,9 @@ def format_step(name: str, res: dict, notes: dict | None = None) -> list:
     if res.get("motion"):
         out.append("  ruler (0x85, by the i1Pro 2's position samples): "
                    + motion_text(res["motion"]))
+    if res.get("zebra_motion"):
+        out.append("  ruler (0x84, by the i1Pro 3's zebra samples): "
+                   + zebra_words(res["zebra_motion"]))
     if res["ruler"]:
         out.append("  RULER COMMANDS:")
         out.extend(f"    {rel:8.3f}s  {text}" for rel, text in res["ruler"])
@@ -5744,18 +5764,23 @@ def summarize_session(paths: list) -> str:
         # 1.6.2: the commands alone can hide the main result (a real control
         # step used the same ruler bits, but its position never changed).
     if controls:
-        moved = [(name, res["motion"], control) for name, res, _n, control, _k in results
-                 if res.get("motion")]
+        moved = [(name, res.get("motion") or res.get("zebra_motion"), control)
+                 for name, res, _n, control, _k in results
+                 if res.get("motion") or res.get("zebra_motion")]
         if moved or hidden:
             out.append("  THE RULER'S POSITION, STEP BY STEP:")
             for name, res, _n, control, key in results:
                 st = res.get("motion")
+                zst = res.get("zebra_motion")
                 if name in hidden and ("scan" in key or control):
                     out.append("    " + _wrap(f"{name}{'  [CONTROL]' if control else ''}: "
                                               f"{HIDDEN_CELL}", 72, "      "))
                 elif st:
                     out.append(f"    {name}{'  [CONTROL]' if control else ''}: "
                                f"{motion_text(st)}")
+                elif zst:
+                    out.append("    " + _wrap(f"{name}{'  [CONTROL]' if control else ''}: "
+                                              f"{zebra_words(zst)}", 72, "      "))
             still = [name for name, st, control in moved if control and not st["steps"]]
             if still:
                 out.append("    " + _wrap(
@@ -5827,6 +5852,29 @@ def summarize_session(paths: list) -> str:
                        f"({spm:.0f} against {fpm:.0f} per swipe), so it was most likely not "
                        "slower. Please repeat the slow step, taking about twice as long as "
                        "the normal scan.")
+        out.append("")
+
+    # 1.6.3: every swipe by the time its readings took, in every step: a
+    # tester's genuinely slow rescan sat in the fail-on-purpose step, where
+    # the step names alone never looked.
+    swipes = [(name, m) for name, res, _n, _c, _k in results if name not in hidden
+              for m in res["measurements"] if m["readings"] > 50]
+    if swipes:
+        out.append("  EVERY SWIPE, BY HOW LONG ITS READINGS TOOK:")
+        for step_name in dict.fromkeys(n for n, _m in swipes):
+            out.append(f"    {step_name}:")
+            for n, m in swipes:
+                if n != step_name:
+                    continue
+                travel = (", ruler " + f"{m['zebra']['steps']:,} changes, net "
+                          f"{m['zebra']['net']:+,}") if m.get("zebra") else ""
+                out.append(f"      {m['duration']:.2f} s ({m['readings']} readings{travel})")
+        secs = sorted(m["duration"] for _n, m in swipes)
+        if not (fast and slow) and len(swipes) > 1 and secs[0] > 0 and secs[-1] >= 2 * secs[0]:
+            longest = max(swipes, key=lambda x: x[1]["duration"])[0]
+            out.append("    " + _wrap(
+                f"There is no fast and slow step pair here, but these swipes took from "
+                f"{secs[0]:.2f} s to {secs[-1]:.2f} s (the longest in {longest}).", 72, "    "))
         out.append("")
 
     out.append("  THE LIGHTS' LANGUAGE (light commands per step, in order):")
@@ -8531,9 +8579,16 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
             if step.get("page"):
                 entry["page"] = _session_ask(f"  {_question(step['page'])}\n  > ")
             if lights:
+                # 1.6.3: a tester's answer "no" could not be read (no lights
+                # seen, or nothing different?): the hint names both.
                 entry["lights"] = _session_ask(
-                    f"  {_question(step['lights'])}\n  (colours, blinking, when; Enter if you "
-                    "did not notice)\n  > ")
+                    f"  {_question(step['lights'])}\n  (colours, blinking, when; type  no change  "
+                    "if nothing changed, or press\n  Enter if you did not look)\n  > ")
+                if entry["lights"].strip().lower() in ("no", "n", "nein", "none", "nothing"):
+                    again = _session_ask(
+                        "  Does that mean the lights did not change? Type  no change , describe "
+                        "them,\n  or press Enter if you did not look:\n  > ")
+                    entry["lights"] = again.strip() or "did not look"
             _write_session(session, folder)
             if stop_after:
                 session["ended"] = "stopped by the operator"
