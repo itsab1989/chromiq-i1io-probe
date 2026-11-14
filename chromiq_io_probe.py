@@ -2560,6 +2560,8 @@ def annotate_session() -> None:
         # 1.6.5: the table's driver stack, as for the handheld session
         verdict = recorder_verdict(windows_driver_devices(), SESSION_TABLE)
         print("\n  " + recorder_line(verdict))
+        for line in recorder_detail_lines(verdict):
+            print("  " + line)
         section("Stage 2: USB recorder", recorder_line(verdict) + "\n" + "\n".join(
             f"  {d['name']} ({d['ids']}): {RECORDER_WORDS[d['state']]}"
             for d in verdict["devices"]))
@@ -8162,13 +8164,37 @@ def recorder_verdict(devices: list, profile: str | None) -> dict:
             mine.append({"name": dev.get("name") or f"{key[0]:04x}:{key[1]:04x}",
                          "ids": f"{key[0]:04x}:{key[1]:04x}", "state": recorder_attached(dev)})
     states = {d["state"] for d in mine}
-    verdict = "no" if "no" in states else "yes" if states == {"yes"} else "unknown"
-    return {"verdict": verdict, "devices": mine}
+    not_seen = []
+    if not ids:
+        # 1.6.5 (review): "another X-Rite instrument": which device is the one
+        # recorded is not known, so one device the recorder sees is enough;
+        # the others are named, without stopping anything
+        verdict = "yes" if "yes" in states else "no" if "no" in states else "unknown"
+        if verdict == "yes":
+            not_seen = [d for d in mine if d["state"] == "no"]
+    else:
+        verdict = "no" if "no" in states else "yes" if states == {"yes"} else "unknown"
+    return {"verdict": verdict, "devices": mine, "not_seen": not_seen}
 
 
 def recorder_line(v: dict | None) -> str:
     return ("USB recorder attached to your instrument: "
             + RECORDER_WORDS[(v or {}).get("verdict", "unknown")])
+
+
+def recorder_detail_lines(v: dict | None) -> list:
+    """1.6.5 (review): each checked device's state when more than one was
+    checked, and a plain note on a device the recorder does not see when
+    another one is seen (another X-Rite instrument session: no stop)."""
+    v = v or {}
+    out = []
+    if len(v.get("devices") or []) > 1:
+        out += [f"  {d['name']} ({d['ids']}): {RECORDER_WORDS[d['state']]}"
+                for d in v["devices"]]
+    for d in v.get("not_seen") or []:
+        out.append(_wrap(f"The recorder does not see {d['name']} ({d['ids']}). That is fine "
+                         "if it is not the instrument you record.", 74, ""))
+    return [part for line in out for part in line.split("\n")]
 
 
 def recorder_advice_lines() -> list:
@@ -8465,6 +8491,7 @@ def windows_checks_text(c: dict) -> str:
     if "recorder" in c:
         # 1.6.5: whether USBPcap is in the instrument's driver stack
         lines += ["", "  " + recorder_line(c["recorder"])]
+        lines += ["  " + l for l in recorder_detail_lines(c["recorder"])]
     return "\n".join(lines)
 
 
@@ -10498,6 +10525,7 @@ def instrument_session_step(pids: list, direct: bool, only: list | None = None,
     seen_lines = []
     if system == "Windows":
         seen_lines.append(recorder_line(checks.get("recorder")))
+        seen_lines += [l.strip() for l in recorder_detail_lines(checks.get("recorder"))]
     if session.get("first_step_descriptor_only"):
         seen_lines.append("The first recorded step held only the instrument's USB "
                           "description, nothing it did (the measuring program did not talk "

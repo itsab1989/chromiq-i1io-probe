@@ -244,3 +244,39 @@ class TheTableSession(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnotherXriteInstrument(unittest.TestCase):
+    """1.6.5 (review): in an "another X-Rite instrument" session the device
+    recorded is not known; an unrelated X-Rite device without the recorder
+    must not stop a session whose instrument has it."""
+
+    def test_mixed_is_yes_with_a_note(self):
+        devices = [dev(0x0765, 0xD020, ATTACHED, name="DTP20"),
+                   dev(0x0971, 0x2000, MISSING, name="i1 Pro")]
+        v = probe.recorder_verdict(devices, "generic")
+        self.assertEqual(v["verdict"], "yes")
+        lines = probe.recorder_detail_lines(v)
+        self.assertIn("  DTP20 (0765:d020): yes", lines)
+        self.assertIn("  i1 Pro (0971:2000): no", lines)
+        self.assertIn("The recorder does not see i1 Pro (0971:2000). That is fine if it is "
+                      "not the instrument you record.", " ".join(lines))
+        for line in lines:
+            self.assertLessEqual(len("    " + line), 79, line)
+
+    def test_no_yes_at_all_still_stops(self):
+        devices = [dev(0x0765, 0xD020, MISSING, name="DTP20"),
+                   dev(0x0971, 0x2000, "", name="i1 Pro")]
+        self.assertEqual(probe.recorder_verdict(devices, "generic")["verdict"], "no")
+        self.assertEqual(probe.recorder_verdict(devices[1:], "generic")["verdict"], "unknown")
+
+    def test_the_checks_text_names_each_device(self):
+        v = probe.recorder_verdict([dev(0x0765, 0xD020, ATTACHED, name="DTP20"),
+                                    dev(0x0971, 0x2000, MISSING, name="i1 Pro")], "generic")
+        c = {"windows": {"level": "ok", "text": "x"}, "i1profiler": {"level": "ok", "text": "x"},
+             "programs": {}, "service": {"installed": True, "running": True},
+             "usbpcapcmd": "u", "drivers": [], "admin": True, "hubs": [], "recorder": v}
+        text = probe.windows_checks_text(c)
+        self.assertIn("USB recorder attached to your instrument: yes", text)
+        self.assertIn("i1 Pro (0971:2000): no", text)
+        self.assertIn("The recorder does not see i1 Pro", text)
