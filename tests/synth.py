@@ -207,7 +207,7 @@ I1PRO3_ENDPOINTS = [(0x81, 2), (0x83, 3), (0x84, 2), (0x02, 2)]
 def i1pro3_scan(w, readings=100, zebra=True):
     w.describe(I1PRO, 0x0765, 0x6009, I1PRO3_ENDPOINTS)
     w.vendor_in(I1PRO, 0x20, bytes([1, 23]) + le32(5) + b"1.23x" + bytes(10))
-    w.vendor_out(I1PRO, 0x3B, bytes([2, 255]))          # never sent by the open driver
+    w.vendor_out(I1PRO, 0x3B, bytes([2, 255]))          # the open driver sends it too
     w.vendor_out(I1PRO, 0x29, le32(3))
     w.bulk_out(I1PRO, 0x02, bytes([0x0A, 0x14, 0x02]))  # two green pulses
     w.vendor_out(I1PRO, 0x22, le32(0) + le32(0x13 if zebra else 0x03))

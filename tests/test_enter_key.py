@@ -248,7 +248,9 @@ class Texts(unittest.TestCase):
         self.assertIn("meaning unknown (guess", probe.decode_i1pro3_led(
             bytes.fromhex("01fa04"))["text"])
         self.assertTrue(probe.I1PRO3_REQUESTS[0x3A][3])
-        self.assertFalse(probe.I1PRO3_REQUESTS[0x3B][3])
+        # 1.6.3: ArgyllCMS sends 0x3B in every measurement (i1pro3_imp.c:12865,
+        # 12871, through i1pro3_setscanstartind)
+        self.assertTrue(probe.I1PRO3_REQUESTS[0x3B][3])
 
     def test_flush_on_windows_reads_all_waiting_keys(self):
         keys = ["\r", "\r", "\r"]
@@ -395,3 +397,27 @@ class RealTerminalFlush(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AfterTheSinglePatch(Base):
+    """1.6.3: after the single-patch step the tool says to switch the program
+    back to strip scanning (a tester's next scan ran in the spot mode)."""
+
+    def test_the_reminder_comes_after_the_spot_step_only(self):
+        # step 8 (spot): start, e, notes, setting, lights, go on; step 9 likewise
+        console = FakeConsole(["", "e", "one patch", "M0", "green", "",
+                               "", "e", "no ruler", "M0", "red", ""])
+        _session, screen = self.run_session(console, only=[8, 9])
+        flat = " ".join(screen.split())
+        reminder = ("Before the next step: please switch the program back to scanning "
+                    "strips (its chart page), if you changed it for the single patch.")
+        self.assertEqual(flat.count(reminder), 1)
+        self.assertLess(flat.index("STEP 8 of 9"), flat.index(reminder))
+        self.assertLess(flat.index(reminder), flat.index("STEP 9 of 9"))
+        self.assertIn("1. Switch the program back to scanning strips, if you set it to "
+                      "single patches for the last step.", flat)
+
+    def test_no_reminder_when_the_spot_step_is_the_last(self):
+        console = FakeConsole(["", "e", "one patch", "M0", "green", ""])
+        _session, screen = self.run_session(console, only=[8])
+        self.assertNotIn("Before the next step", screen)

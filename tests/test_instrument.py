@@ -194,8 +194,9 @@ class OtherFamilyTests(TempDirCase):
         self.assertIn("compare the vendor program with what the open driver sends", report)
         self.assertIn("0x22 measure (reflective): 0 readings (scan: until released), "
                       "flags 0x13 = lamp (all LEDs) + RULER (zebra) read", report)
-        self.assertIn("requests the open driver never sends: 0x3B (set scan-start "
-                      "indicator timing)", report)
+        # 1.6.3: ArgyllCMS does send 0x3B (in every measurement)
+        self.assertIn("requests the open driver never sends: none", report)
+        self.assertRegex(report, r"requests both know: [0-9A-Fx, ]*0x3B")
         self.assertIn("2-bit samples packed four to a byte", report)
         self.assertIn("green pulse (likely, from a real recording), timing 0x14, 2 times", report)
         self.assertIn("100 readings", report)                # 564 bytes each

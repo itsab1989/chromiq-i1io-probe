@@ -4682,8 +4682,12 @@ I1PRO3_REQUESTS = {          # i1pro3_imp.h:1206-1220
     # 1.5.5: 0x3A IS used, by every reflective measurement
     # (i1pro3_do_measure, i1pro3_imp.c:12773); 1.5.4 listed it as unused.
     0x3A: ("set tint multiplier", "i1pro3_imp.c:5398", _raw, True),
-    # Defined in Argyll but never called (i1pro3_imp.c:5317).
-    0x3B: ("set scan-start indicator timing", "i1pro3_imp.c:5343", _d3_scanind, False),
+    # 1.6.3: SENT in every measurement, through i1pro3_setscanstartind()
+    # (i1pro3_imp.c:5317) from i1pro3_do_measure: with the green light's
+    # timings for a scan (:12865), with 0 and 0 otherwise (:12871), whenever
+    # the instrument has the indicator light. 1.5.4 to 1.6.2 said "never
+    # called": a search for the request's name misses the helper.
+    0x3B: ("set scan-start indicator timing", "i1pro3_imp.c:5343", _d3_scanind, True),
     0x66: ("start event reports on 0x83", "i1pro3_imp.c:5881", _raw, True),
 }
 
@@ -6965,21 +6969,30 @@ SESSION_STEPS = [
        measurement).
     2. If the program has none, or you cannot find it, type  s  and press
        Enter to skip this step.
-    3. If the program wants a calibration first, do it now.""",
+    3. If the program wants a calibration first, do it now.
+    4. If you read the patch on the chart page instead (the program may
+       count it as the chart's next patch), say so in the notes.""",
      "during": """\
   When the recording runs:
     1. Put the instrument on one patch.
     2. Read it the way the program asks (usually one press of the
        instrument's button).
     3. Wait until the program shows the result.""",
+     # 1.6.3: a tester's next step was a strip scan with the program still
+     # set to single patches.
+     "after": ("Before the next step: please switch the program back to "
+               "scanning strips (its chart page), if you changed it for the "
+               "single patch."),
      "lights": "What did the lights do?"},
     {"key": "noruler", "title": "the same strip without the ruler (control)",
      "families": ("i1pro2", "i1pro3"), "setting": SETTING_QUESTION, "control": True,
      "before": """\
   Before you press Enter:
-    1. Switch back to the single-pass mode, if you changed it.
-    2. Take the ruler away.
-    3. If the program does not let you scan without the ruler, or you are
+    1. Switch the program back to scanning strips, if you set it to single
+       patches for the last step.
+    2. Switch back to the single-pass mode, if you changed it.
+    3. Take the ruler away.
+    4. If the program does not let you scan without the ruler, or you are
        not sure, type  s  and press Enter to skip this step.""",
      "during": """\
   When the recording runs:
@@ -8525,6 +8538,8 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
             if stop_after:
                 session["ended"] = "stopped by the operator"
                 break
+            if step.get("after") and index + 1 < len(steps):
+                print("\n  " + _wrap(step["after"], 74, "  "))
             again = _session_ask("\n  Press Enter to go on to the next step, or type  r  to\n  "
                                  "record this step again: ").lower()
             if again.startswith("r"):
