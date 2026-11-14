@@ -6102,6 +6102,14 @@ def summarize_session(paths: list) -> str:
                 out.append("    " + _wrap(f"{name}: not compared ({HIDDEN_CELL})", 72,
                                           "      "))
                 continue
+            if "dual" in key:
+                # 1.6.3: a dual scan differs from the single-scan control in
+                # more than the ruler (its own commands and flags), so its
+                # differences say nothing about the ruler
+                out.append("    " + _wrap(f"{name}: not compared (a dual scan differs from "
+                                          "the single-scan control in more than the ruler)",
+                                          72, "      "))
+                continue
             extra = sorted(f for f in res["features"] - base if not f.startswith("light "))
             if extra:
                 anything = True

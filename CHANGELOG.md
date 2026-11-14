@@ -22,11 +22,11 @@ older.**
   that recording), when it is another kind of device's traffic (disk
   commands with their data and status; disk, keyboard, mouse and hub
   requests; other devices' USB descriptions; a keyboard's typed keys on
-  the instrument's own button or event endpoint), and when the address belonged to another device at
-  that time. No session keeps a monitor calibrator (such as an i1Display)
-  any more. When that traffic is fully explained as one USB disk on
-  two endpoints the instrument does not have (the case in that
-  recording), the analysis shows the instrument's step with its decoded
+  the instrument's own button or event endpoint), and when the address
+  belonged to another device at that time. No session keeps a monitor
+  calibrator (such as an i1Display) any more. When that traffic is fully
+  explained as one USB disk on two endpoints the instrument does not have
+  (the case in that recording), the analysis shows the instrument's step with its decoded
   values (readings, ruler, lights, counts, sizes, times) but no raw bytes,
   and says that another device's traffic was removed. When another device's
   traffic was also seen on one of the instrument's own endpoints, or could
@@ -41,8 +41,8 @@ older.**
   phone or a USB-serial adapter, and so can another device's vendor
   requests. On a ColorMunki's or i1Studio's event endpoint an empty or
   modifier-only keyboard report (no key pressed) cannot be told apart; it
-  carries no typed key. If the tool sees nothing else of that device, the analysis can
-  show some of it too.
+  carries no typed key. If the tool sees nothing else of that device, the
+  analysis can show some of it too.
 - **What to do:** update to 1.6.2. Clean what you already made with
   `--clean SEND-THIS-....zip` (or the session folder), or delete the old
   files. While you record, unplug every other USB device you can from that
@@ -446,8 +446,9 @@ see the release notes for exactly what was and was not tested there.
   temporary folder) and checks its SHA-256 fingerprint against the one
   written into the tool (the same one Wireshark's build pins), after the
   download and again just before starting it; on any difference it deletes
-  the file and starts nothing. A cut-off download says so. A second question comes before the installer starts, normally
-  and visibly, with Windows' own permission question and USBPcap's licence.
+  the file and starts nothing. A cut-off download says so. A second
+  question comes before the installer starts, normally and visibly, with
+  Windows' own permission question and USBPcap's licence.
   Afterwards it checks whether USBPcap is installed and says so, asks you to
   restart Windows (it does not restart anything itself), and offers to
   delete the downloaded file. Not offered on Windows on ARM.

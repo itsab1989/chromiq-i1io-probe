@@ -90,6 +90,11 @@ class I1Pro2AnalysisTests(TempDirCase):
         block = r.split("ONLY WITH THE RULER")[1].split("FAST AGAINST SLOW")[0]
         self.assertIn("scan-single.pcap: data on 0x85 bulk IN; request 0xD7", block)
         self.assertNotIn("noruler.pcap", block)
+        # 1.6.3: the dual scan's own commands are not "only with the ruler"
+        flat = " ".join(block.split())
+        self.assertIn("scan-dual.pcap: not compared (a dual scan differs from the "
+                      "single-scan control in more than the ruler)", flat)
+        self.assertNotIn("scan-dual.pcap: data on", flat)
         self.assertIn("noruler.pcap  [CONTROL: no ruler]", r)
 
     def test_measurement_sizes_counts_and_rates(self):
