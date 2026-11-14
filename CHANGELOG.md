@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.6.5
+
+From a tester's Windows session: nine steps over 42 minutes kept nothing,
+because USBPcap, the recorder, was not attached to the instrument. This
+happens when Windows sets the instrument up again without it being plugged
+in afresh, for example after its driver was changed. The tool now notices
+this early.
+
+- **Before the first step (Windows):** the check of the PC now says
+  "USB recorder attached to your instrument: yes", "no" or "could not
+  tell". If it is "no", the tool explains it and lists what to do: close
+  the tool, unplug the instrument, restart Windows with "Restart" (not
+  "Shut down"), plug the instrument in afterwards, and start the tool
+  again. Pressing Enter stops there; typing "go on" records anyway. "Could
+  not tell" never stops anything. The i1iO table session checks the same.
+- **After the first step:** if it recorded only the instrument's USB
+  description and nothing the instrument did, the tool says so right away,
+  instead of after all nine steps. Two things look exactly alike here, and
+  the tool says both: the measuring program did not talk to the
+  instrument, or the recorder did not see it. It tells you what to check
+  and offers to stop (Enter), to record the step again (r), or to go on.
+- **The report** (and the small report-only zip) says what was seen: the
+  recorder line and, if it happened, that the first step held only the
+  USB description.
+
 ## v1.6.4
 
 Three small follow-ups to 1.6.3, all about what the report shows.

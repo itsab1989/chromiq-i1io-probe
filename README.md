@@ -454,6 +454,14 @@ more. When no step of a session kept anything, the tool still writes ONE
 small file, `SEND-THIS-<date>-report-only.zip`, with only the report and
 `session.json`. They hold no recording, and they help us find out why.
 
+**On Windows, if the check says "USB recorder attached to your instrument:
+no" (since 1.6.5):** USBPcap joins a USB device only when Windows sets it up.
+Close the tool, unplug the instrument, restart Windows with "Restart" (not
+"Shut down"), plug the instrument in afterwards and start the tool again.
+If the first step records only the instrument's USB description, the tool
+says so at once and asks you to check that the measuring program shows the
+instrument as connected.
+
 ### What it needs
 
 - **Windows (the main route):** the free USBPcap, which comes with

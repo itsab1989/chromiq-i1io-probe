@@ -221,6 +221,18 @@ jobs:
             recording only listens (on Windows through the free USBPcap, which
             you install yourself if you want to record).
 
+            ### What's new in 1.6.5
+
+            - **Windows: "USB recorder attached to your instrument: yes /
+              no / could not tell"** is checked before the first step. If
+              the recorder (USBPcap) is not attached, the tool says what to
+              do (restart Windows with "Restart", then plug the instrument
+              in) before you spend time on the steps.
+            - **After the first step**, if only the instrument's USB
+              description was recorded, the tool says so at once and offers
+              to stop, instead of after all nine steps.
+            - The report says what was seen.
+
             ### What's new in 1.6.4
 
             **About older reports:** reports made with a version before
