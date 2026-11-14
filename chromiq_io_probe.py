@@ -3263,7 +3263,7 @@ def _seen_class(info: dict | None, dev_class, profile: str | None) -> str:
     for code in sorted(classes):
         if code in _CLASS_WORDS:
             return _CLASS_WORDS[code]
-    return "other USB device"
+    return f"other USB device ({vid:04x}:{pid or 0:04x})"
 
 
 def recording_facts(path: str, profile: str | None = None) -> dict:
@@ -3291,6 +3291,9 @@ def recording_facts(path: str, profile: str | None = None) -> dict:
         return facts
     events = capture_events(linktype, recs)
     darwin = linktype == LINKTYPE_USB_DARWIN
+    # macOS names the device in every record: no record sits "under another
+    # address" there, so that part is left out
+    facts["by_ids"] = darwin
     if darwin:
         devices = {}
         for ev in events:
@@ -3368,6 +3371,8 @@ def merge_facts(items: list) -> dict:
            "files": len(items), "unreadable": 0, "other_instruments": {}}
     for f in items:
         out["records"] += f.get("records", 0)
+        if f.get("by_ids"):
+            out["by_ids"] = True
         if not f.get("readable", True):
             out["unreadable"] += 1
         for word, (n, r) in f.get("classes", {}).items():
@@ -3436,7 +3441,7 @@ def facts_lines(facts: dict, profile: str | None) -> list:
                            ". If that is the one you measure with, please start this tool "
                            "again and choose it when it asks which instrument you use.",
                            74, "  "))
-    if profile in FAMILY_ENDPOINTS:
+    if profile in FAMILY_ENDPOINTS and not facts.get("by_ids"):
         eps = ", ".join(f"0x{e:02x}" for e in sorted(FAMILY_ENDPOINTS[profile]))
         total = sum(facts["family_eps"].values())
         if total:

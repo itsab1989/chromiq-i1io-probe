@@ -459,3 +459,21 @@ class TheCheckNamesTheOtherInstrument(unittest.TestCase):
         # the table session and a caller without a type: as before
         self.assertEqual(probe.check_capture(path, "io")["code"], "ok")
         self.assertEqual(probe.check_capture(path)["code"], "ok")
+
+
+class OnAMac(unittest.TestCase):
+
+    def test_facts_name_each_device_and_skip_other_addresses(self):
+        import synth_io
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, tmp, True)
+        w = synth_io.DarwinWriter()
+        for n in range(3):
+            w._rec(1, 10 + n, 7, 0x81, 3, 0x046D, 0xC31C, b"\x00\x00\x04" + KEY_MARK, 18)
+        path = w.save(os.path.join(tmp, "m.pcap"))
+        facts = probe.merge_facts([probe.recording_facts(path, "i1pro3")])
+        text = "\n".join(probe.facts_lines(facts, "i1pro3"))
+        self.assertIn("- other USB device (046d:c31c): 1 device, 3 records", text)
+        self.assertIn("The i1Pro 3's USB id (0765:6009) was not seen", " ".join(text.split()))
+        self.assertNotIn("other addresses", text)
+        self.assertNotIn(KEY_MARK.decode(), text)
