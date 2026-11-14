@@ -74,6 +74,7 @@ import os
 import platform
 import plistlib
 import re
+import secrets
 import shutil
 import signal
 import struct
@@ -280,6 +281,8 @@ def pid_label(pid, vid=XRITE_VID) -> str:
 
 
 REDACT = True
+# 1.6.3 (review): said on screen and in the report when --no-redact is used
+NO_REDACT_LINE = "Nothing is hidden in this report (--no-redact). Do not post it publicly."
 _SECTIONS: list = []
 # 1.5.2: why this run could not do its job ("usbpcap_missing", "not_admin",
 # "wrong_driver", "no_instrument"), for the WHAT TO DO NOW box printed as the
@@ -397,16 +400,38 @@ _SERIAL_RULES = [
 ]
 
 
-def _hash_secret(match) -> str:
-    """Replace the secret with a stable short hash, keeping any key prefix.
+# 1.6.3 (review): every short code in the report, a session's files and the
+# analysis is a SALTED hash. The salt is made once per run of the tool, kept
+# only in memory and never written anywhere, so a code is the same for the
+# same value within one report or zip, but cannot be reversed by trying all
+# serial numbers, nor compared between two people or two runs. (Up to 1.6.2
+# it was an unsalted SHA-256 cut to 8 hex characters: a 7-digit serial could
+# be found by trying every number.)
+_SALT = [secrets.token_bytes(16)]
 
-    Stable so that the same device mentioned in two different sections still
-    obviously refers to one device, without revealing the real value.
+
+def new_salt() -> None:
+    """A fresh salt (each run of the tool has its own; tests call this)."""
+    _SALT[0] = secrets.token_bytes(16)
+
+
+def salted_code(data) -> str:
+    """8 hex characters of a salted SHA-256 of data (str or bytes)."""
+    if isinstance(data, str):
+        data = data.encode("utf-8", "replace")
+    return hashlib.sha256(_SALT[0] + data).hexdigest()[:8]
+
+
+def _hash_secret(match) -> str:
+    """Replace the secret with a short code, keeping any key prefix.
+
+    Stable within one run, so that the same device mentioned in two
+    different sections still obviously refers to one device, without
+    revealing the real value (salted, see _SALT).
     """
     prefix = match.group(1) if match.lastindex and match.lastindex >= 1 else ""
     secret = match.group(2) if match.lastindex and match.lastindex >= 2 else match.group(0)
-    digest = hashlib.sha256(secret.encode("utf-8", "replace")).hexdigest()[:8]
-    return f"{prefix}<redacted:{digest}>"
+    return f"{prefix}<redacted:{salted_code(secret)}>"
 
 
 def scrub(text: str) -> str:
@@ -491,7 +516,7 @@ def inventory_name(name: str, xrite: bool = False) -> str:
 def _hash_token(token: str) -> str:
     if _REDACTED_RE.match(token):
         return token
-    return f"<redacted:{hashlib.sha256(token.encode('utf-8', 'replace')).hexdigest()[:8]}>"
+    return f"<redacted:{salted_code(token)}>"
 
 
 def _instance_id(value: str) -> str:
@@ -4628,7 +4653,7 @@ def _le(data: bytes, start: int, size: int):
 
 
 def _short_hash(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()[:8]
+    return salted_code(data)
 
 
 # 1.6.2: False while a step is analysed whose recording had another device's
@@ -10144,7 +10169,9 @@ def main(argv: list | None = None) -> int:
     parser.add_argument("--skip-annotate", action="store_true",
                         help="never offer the recording step")
     parser.add_argument("--no-redact", action="store_true",
-                        help="keep serial numbers and paths as-is")
+                        help="hide nothing: keep serial numbers, paths and every other USB "
+                             "device's name as they are (do not post such a report "
+                             "publicly)")
     parser.add_argument("--capture-setup", action="store_true",
                         help="(macOS) say whether this Mac can record USB traffic, "
                              "and how, then exit. Changes nothing.")
@@ -10176,6 +10203,9 @@ def main(argv: list | None = None) -> int:
                              "piped or redirected runs never wait anyway)")
     args = parser.parse_args(argv)
     REDACT = not args.no_redact
+    new_salt()                  # 1.6.3: every run its own (see _SALT)
+    if args.no_redact:
+        print("\n  " + NO_REDACT_LINE)
     _END.clear()
     _IO_SUMMARY.clear()
     _INPUT_ENDED.clear()
@@ -10365,14 +10395,16 @@ REPORT_SEND_WAYS = f"""\
         {NEW_ISSUE_URL}"""
 
 
-# 1.6.3: the report-only file holds no recording, so no serial number
-# (the report's are scrambled): no private-message advice needed.
+# 1.6.3: the report-only file holds no recording; sending it privately is
+# offered all the same (review).
 REPORT_ONLY_SEND_WAYS = f"""\
   To send it, choose whichever suits you:
     - attach it in the forum thread where you heard about this tool, or
     - open a new issue at
         {NEW_ISSUE_URL}
-      and attach it there."""
+      and attach it there.
+  If you would rather not post it in public, send it in a private message
+  to itsab1989 on the forum instead."""
 
 
 def plugged_in_now(ids: list) -> tuple:
@@ -10575,7 +10607,7 @@ def report_text(instrument: bool = False) -> str:
         "ChromIQ X-Rite instrument probe report, version " + PROBE_VERSION,
         ("Made by the handheld-instrument session" if instrument
          else f"Generated for {ISSUE_URL}"),
-        f"Redaction: {'ON (serials hashed, paths stripped)' if REDACT else 'OFF, raw values included'}",
+        f"Redaction: {'ON (serials as codes, paths stripped, other devices unnamed)' if REDACT else 'OFF, raw values included. ' + NO_REDACT_LINE}",
         "",
     ]
     if not _END.get("send"):
