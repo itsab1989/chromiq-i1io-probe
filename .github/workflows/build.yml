@@ -221,6 +221,17 @@ jobs:
             recording only listens (on Windows through the free USBPcap, which
             you install yourself if you want to record).
 
+            ### What's new in 1.6.4
+
+            - **Linux:** a USB stick plugged into the instrument's old port
+              later no longer shows its name in the report: a port counts
+              as the instrument's only until it is unplugged.
+            - **Known instruments are named** (for example a DTP20 or an
+              i1iO 3 table) instead of "unknown X-Rite device".
+            - **macOS:** the few details kept for other USB devices (ids,
+              version, speed) are kept only when they look like numbers of
+              that kind; anything else is not shown.
+
             ### What's new in 1.6.3
 
             - **When a step keeps nothing:** a tester's screenshot showed a
