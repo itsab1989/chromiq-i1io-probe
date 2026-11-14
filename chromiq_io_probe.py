@@ -4296,6 +4296,23 @@ def _hex_or_size(blob: bytes) -> str:
     return blob.hex() if _RAW_OK[0] else f"<{len(blob)} bytes, not shown>"
 
 
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def safe_text(text: str) -> str:
+    """1.6.3: a string decoded from a device without control characters
+    (a terminal would act on them, and NUL padding means nothing)."""
+    return _CONTROL_RE.sub("", text).replace("\ufffd", "?").strip()
+
+
+def _quoted_or_size(text: str) -> str:
+    """1.6.3: a decoded string in quotes, or only its length in a step whose
+    raw contents are not shown (it could be another device's text)."""
+    if _RAW_OK[0]:
+        return f"'{text}'"
+    return f"<{len(text)} character{'' if len(text) == 1 else 's'}, not shown>"
+
+
 # ---- i1Pro (Rev A to D) and i1Pro 2 (Rev E) ------------------------------
 
 I1PRO2_FLAG_SCAN = 0x0001          # i1pro_imp.h:1078
@@ -4579,8 +4596,8 @@ def _d3_fw(out, inn):
     if len(inn) < 6:
         return _raw(out, inn)
     n = _le(inn, 2, 4) or 0
-    text = inn[6:6 + min(n, 49)].decode("ascii", "replace").strip("\x00")
-    return f"firmware {inn[0]}.{inn[1]} '{text}'"
+    text = safe_text(inn[6:6 + min(n, 49)].decode("ascii", "replace"))
+    return f"firmware {inn[0]}.{inn[1]} {_quoted_or_size(text)}"
 
 
 def _d3_params(out, inn):
@@ -4720,8 +4737,7 @@ def _dm_eeprom(out, inn):
 def _dm_version(out, inn):
     if not inn:
         return ""
-    text = inn.split(b"\x00")[0].decode("ascii", "replace")
-    return f"'{text}'"
+    return _quoted_or_size(safe_text(inn.split(b"\x00")[0].decode("ascii", "replace")))
 
 
 def _dm_firmware(out, inn):
