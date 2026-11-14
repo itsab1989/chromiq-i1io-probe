@@ -280,3 +280,43 @@ class AnotherXriteInstrument(unittest.TestCase):
         self.assertIn("USB recorder attached to your instrument: yes", text)
         self.assertIn("i1 Pro (0971:2000): no", text)
         self.assertIn("The recorder does not see i1 Pro", text)
+
+
+class TheTableAndItsInstrument(unittest.TestCase):
+    """1.6.5 (review): the i1iO table session checks the table AND the
+    instrument riding on it, so a yes for the table cannot hide a no for the
+    instrument; one line per device."""
+
+    def test_instrument_without_recorder(self):
+        devices = [dev(0x0971, 0x2004, ATTACHED, name="Eye-One iO"),
+                   dev(0x0971, 0x2000, MISSING, name="i1 Pro")]
+        v = probe.recorder_verdict(devices, "io")
+        self.assertEqual(v["verdict"], "no")
+        self.assertEqual([d["name"] for d in v["devices"]], ["Eye-One iO", "i1 Pro"])
+        lines = probe.recorder_detail_lines(v)
+        self.assertIn("  Eye-One iO (0971:2004): yes", lines)
+        self.assertIn("  i1 Pro (0971:2000): no", lines)
+
+    def test_i1io3_with_i1pro3(self):
+        devices = [dev(0x0765, 0x30B0, ATTACHED, name="i1iO 3"),
+                   dev(0x0765, 0x6009, ATTACHED, name="i1Pro3")]
+        self.assertEqual(probe.recorder_verdict(devices, "io")["verdict"], "yes")
+
+    def test_the_session_section_lists_both(self):
+        probe._SECTIONS.clear()
+        self.addCleanup(probe._SECTIONS.clear)
+        answers = iter([""])
+        with mock.patch.object(probe.platform, "system", lambda: "Windows"), \
+                mock.patch.object(probe, "windows_is_arm", lambda: False), \
+                mock.patch.object(probe, "windows_driver_devices", lambda: [
+                    dev(0x0971, 0x2004, ATTACHED, name="Eye-One iO"),
+                    dev(0x0971, 0x2000, MISSING, name="i1 Pro")]), \
+                mock.patch.object(probe, "ask", lambda *_a, **_k: next(answers)), \
+                mock.patch.object(probe, "io_timed_steps",
+                                  side_effect=AssertionError("walkthrough started")), \
+                redirect_stdout(io.StringIO()) as out:
+            probe.annotate_session()
+        self.assertIn("THE USB RECORDER IS NOT ATTACHED", out.getvalue())
+        section = dict(probe._SECTIONS)["Stage 2: USB recorder"]
+        self.assertIn("Eye-One iO (0971:2004): yes", section)
+        self.assertIn("i1 Pro (0971:2000): no", section)

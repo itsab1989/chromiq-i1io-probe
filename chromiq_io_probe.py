@@ -8156,7 +8156,10 @@ def recorder_verdict(devices: list, profile: str | None) -> dict:
     X-Rite instrument every X-Rite device but a monitor calibrator)."""
     ids = FAMILY_IDS.get(profile or "", frozenset())
     if profile == SESSION_TABLE:
-        ids = frozenset({(XRITE_VID, IO_TABLE_PID), (0x0765, 0x30B0)})
+        # 1.6.5 (review): the table AND the instrument riding on it (an i1Pro
+        # or i1Pro 2 on an i1iO 2, an i1Pro 3 on an i1iO 3): both must be seen
+        ids = frozenset({(XRITE_VID, IO_TABLE_PID), (0x0765, 0x30B0)}
+                        | FAMILY_IDS["i1pro2"] | FAMILY_IDS["i1pro3"])
     mine = []
     for dev in devices or []:
         key = (dev.get("vid"), dev.get("pid"))
