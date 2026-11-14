@@ -3082,6 +3082,7 @@ def check_capture(path: str, profile: str | None = None) -> dict:
                 "code": "unreadable", "verdict": f"not a readable recording: {exc}"}
     identified = True
     unidentified_isis = False
+    other_instrument = []           # 1.6.3: X-Rite devices of another family
     # 1.6.2: the instrument's records are decided in one place
     # (attribute_records): its address at that moment, its endpoints, and
     # nothing that is another device's kind of traffic.
@@ -3093,6 +3094,10 @@ def check_capture(path: str, profile: str | None = None) -> dict:
         mine = [d for _ts, d in mine_recs]
         xrite = len(mine)
         mine_events = capture_events(linktype, mine_recs)
+        if not mine and profile in HANDHELD_PROFILES:
+            other_instrument = sorted({f"{i[0]:04x}:{i[1]:04x}" for i in
+                                       (_darwin_ids(d) for _ts, d in recs)
+                                       if i and i[0] in XRITE_VIDS})
     else:
         # 1.5: Windows and Linux records carry a bus and device address but no
         # vendor ID, so the X-Rite device is found from its USB description
@@ -3116,6 +3121,19 @@ def check_capture(path: str, profile: str | None = None) -> dict:
             mine = []
             mine_events = []
             unidentified_isis = how == "unidentified"
+        elif profile in HANDHELD_PROFILES and any(
+                v.get("vid") in XRITE_VIDS or (not v.get("vid") and v.get("guess_family"))
+                for v in devices.values()):
+            # 1.6.3: only another instrument's traffic (a handheld session
+            # keeps its own family only)
+            mine = []
+            mine_events = []
+            other_instrument = sorted(
+                {f"{v['vid']:04x}:{v['pid']:04x}" for v in devices.values()
+                 if v.get("vid") in XRITE_VIDS}
+                | {f"a device without USB description that uses the "
+                   f"{FAMILY_WORDS.get(v['guess_family'], v['guess_family'])}'s commands"
+                   for v in devices.values() if not v.get("vid") and v.get("guess_family")})
         elif any(v.get("vid") for v in devices.values()):
             mine = []
             mine_events = []
@@ -3140,6 +3158,11 @@ def check_capture(path: str, profile: str | None = None) -> dict:
         nonzero += len(payload) - payload.count(0)
     if not recs:
         code, verdict = "empty", "EMPTY: nothing at all was recorded on this bus."
+    elif other_instrument:
+        code, verdict = "other-instrument", (
+            "NOTHING KEPT: no traffic of the instrument this session is for; the X-Rite "
+            "traffic on this bus is another instrument's (" + "; ".join(other_instrument)
+            + "), so it was not kept.")
     elif unidentified_isis:
         code, verdict = "unidentified", (
             "NOTHING KEPT: this recording does not say which device is the i1iSis "

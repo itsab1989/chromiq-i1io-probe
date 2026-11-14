@@ -442,3 +442,20 @@ class TheWrongInstrumentChosen(unittest.TestCase):
         # and the right session keeps it
         self.assertTrue(probe.filter_xrite_capture(path, os.path.join(tmp, "c.pcap"),
                                                    "i1pro3"))
+
+
+class TheCheckNamesTheOtherInstrument(unittest.TestCase):
+
+    def test_check_code_other_instrument(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, tmp, True)
+        w = synth.UsbPcapWriter()
+        synth.i1pro3_scan(w)
+        path = w.save(os.path.join(tmp, "a.pcap"))
+        check = probe.check_capture(path, "munki")
+        self.assertEqual(check["code"], "other-instrument")
+        self.assertIn("another instrument's (0765:6009)", check["verdict"])
+        self.assertEqual(probe.check_capture(path, "i1pro3")["code"], "ok")
+        # the table session and a caller without a type: as before
+        self.assertEqual(probe.check_capture(path, "io")["code"], "ok")
+        self.assertEqual(probe.check_capture(path)["code"], "ok")
