@@ -661,7 +661,9 @@ class LinuxRecorderTests(TempDirCase):
                 mock.patch.object(probe, "ask", lambda *_a, **_k: next(answers)), \
                 redirect_stdout(io.StringIO()):
             recorder = probe.TcpdumpRecorder(["usbmon1"], "", mac=False)
-            session = probe.run_instrument_session(recorder, folder, "munki")
+            # 1.6.3: an i1Pro 2 recording, so an i1Pro 2 session (a ColorMunki
+            # session keeps only the ColorMunki family now)
+            session = probe.run_instrument_session(recorder, folder, "i1pro2")
         with open(log) as fh:
             text = fh.read()
         self.assertIn("sudo -v", text)

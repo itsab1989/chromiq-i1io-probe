@@ -418,3 +418,27 @@ class TheWholeSession(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheWrongInstrumentChosen(unittest.TestCase):
+    """1.6.3: a handheld session keeps only its own family, so a session
+    started for the wrong instrument keeps nothing, and the facts say so."""
+
+    def test_an_i1pro3_recorded_in_an_i1pro2_session(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, tmp, True)
+        w = synth.UsbPcapWriter()
+        synth.i1pro3_scan(w)
+        path = w.save(os.path.join(tmp, "a.pcap"))
+        self.assertEqual(probe.filter_xrite_capture(path, os.path.join(tmp, "b.pcap"),
+                                                    "i1pro2"), 0)
+        facts = probe.merge_facts([probe.recording_facts(path, "i1pro2")])
+        text = " ".join(" ".join(probe.facts_lines(facts, "i1pro2")).split())
+        self.assertIn("Another X-Rite instrument was at work in this recording: 0765:6009 "
+                      "(i1Pro 3 or i1Pro 3 Plus)", text)
+        self.assertIn("choose it when it asks which instrument you use", text)
+        self.assertIn("another X-Rite instrument (0765:6009): 1 device", text)
+        self.assertIn("The i1Pro 2's USB id (0971:2000) was not seen", text)
+        # and the right session keeps it
+        self.assertTrue(probe.filter_xrite_capture(path, os.path.join(tmp, "c.pcap"),
+                                                   "i1pro3"))

@@ -163,6 +163,8 @@ def instrument_selection(devices: dict, profile: str | None = None,
     1.5.5 kept (second review of 1.6: a table recording with an i1iSis on
     the same bus must keep the table). A plain file in --analyze becomes
     "isis" only through plain_file_profile()."""
+    if profile in HANDHELD_PROFILES:
+        return _handheld_selection(devices, profile)
     if profile != "isis":
         # 1.6.2: never a monitor calibrator (an i1Display beside an i1Pro is
         # common, and it is not the instrument being recorded).
@@ -184,6 +186,41 @@ def instrument_selection(devices: dict, profile: str | None = None,
 
 
 SESSION_TABLE = "io"           # the session type of the i1iO table recording
+
+# 1.6.3: a handheld session keeps only its own instrument family, as the
+# i1iSis rule does: the family's USB ids (the i1Pro and the i1Pro 2 are one
+# family, 0971:2000), or a device without a USB description that uses the
+# family's commands; when the recording shows none of them, an X-Rite device
+# the tool does not know (with a note after the step, how = "unknown"); never
+# another instrument the tool knows. "generic" (another X-Rite instrument)
+# keeps every X-Rite device except the monitor calibrators and the
+# instruments that have a session type of their own.
+HANDHELD_PROFILES = ("i1pro2", "i1pro", "i1pro3", "munki", "generic")
+
+
+def known_xrite_ids() -> frozenset:
+    """Every X-Rite USB id the tool knows to be a particular device."""
+    return frozenset(OTHER_INSTRUMENT_IDS | CALIBRATOR_IDS | set(PROFILE_IDS)
+                     | set(ISIS_IDS) | {(XRITE_VID, IO_TABLE_PID)})
+
+
+def _handheld_selection(devices: dict, profile: str) -> tuple:
+    if profile == "generic":
+        other_sessions = set(PROFILE_IDS) | set(ISIS_IDS) | {(XRITE_VID, IO_TABLE_PID)}
+        return ([k for k, v in devices.items() if v.get("vid") in XRITE_VIDS
+                 and (v["vid"], v.get("pid")) not in CALIBRATOR_IDS | other_sessions],
+                "generic")
+    ids = FAMILY_IDS[profile]
+    guesses = {"i1pro2", "i1pro"} if profile in ("i1pro2", "i1pro") else {profile}
+    own = [k for k, v in devices.items()
+           if (v.get("vid"), v.get("pid")) in ids
+           or (not v.get("vid") and v.get("guess_family") in guesses)]
+    if own:
+        return own, "family"
+    known = known_xrite_ids()
+    unknown = [k for k, v in devices.items()
+               if v.get("vid") in XRITE_VIDS and (v["vid"], v.get("pid")) not in known]
+    return unknown, ("unknown" if unknown else "")
 
 
 def undescribed_present(keys, devices: dict) -> bool:
@@ -3215,7 +3252,7 @@ def recording_facts(path: str, profile: str | None = None) -> dict:
     "family_ids": {"vvvv:pppp": [addresses, records, own activity]},
     "family_eps": {class: records}, "readable": bool}."""
     facts = {"records": 0, "classes": {}, "family_ids": {}, "family_eps": {},
-             "readable": True}
+             "readable": True, "other_instruments": {}}
     try:
         linktype, recs = _read_pcap(path)
     except (OSError, ValueError):
@@ -3280,6 +3317,13 @@ def recording_facts(path: str, profile: str | None = None) -> dict:
             got[0] += 1
             got[1] += count
             got[2] += activity.get(key, 0)
+        elif ids[0] in XRITE_VIDS and ids not in CALIBRATOR_IDS and ids in known_xrite_ids() \
+                and activity.get(key):
+            # 1.6.3: another instrument the tool knows was at work: perhaps
+            # the session was started for the wrong instrument
+            tag = f"{ids[0]:04x}:{ids[1]:04x}"
+            facts["other_instruments"][tag] = facts["other_instruments"].get(tag, 0) \
+                + activity[key]
     eps = FAMILY_ENDPOINTS.get(profile or "")
     if eps and not darwin:
         for f in fields:
@@ -3298,7 +3342,7 @@ def recording_facts(path: str, profile: str | None = None) -> dict:
 def merge_facts(items: list) -> dict:
     """The facts of several recordings (one per root hub) of one step."""
     out = {"records": 0, "classes": {}, "family_ids": {}, "family_eps": {},
-           "files": len(items), "unreadable": 0}
+           "files": len(items), "unreadable": 0, "other_instruments": {}}
     for f in items:
         out["records"] += f.get("records", 0)
         if not f.get("readable", True):
@@ -3313,7 +3357,16 @@ def merge_facts(items: list) -> dict:
                 slot[i] += v
         for word, r in f.get("family_eps", {}).items():
             out["family_eps"][word] = out["family_eps"].get(word, 0) + r
+        for tag, n in f.get("other_instruments", {}).items():
+            out["other_instruments"][tag] = out["other_instruments"].get(tag, 0) + n
     return out
+
+
+def _instrument_label(tag: str) -> str:
+    vid, pid = (int(x, 16) for x in tag.split(":"))
+    if (vid, pid) in PROFILE_IDS:
+        return PROFILE_NAMES[PROFILE_IDS[(vid, pid)]]
+    return pid_label(pid, vid).split(" (")[0]
 
 
 def _n(count: int, one: str, many: str) -> str:
@@ -3353,6 +3406,13 @@ def facts_lines(facts: dict, profile: str | None) -> list:
             ids = ", ".join(f"{v:04x}:{p:04x}" for v, p in sorted(FAMILY_IDS[profile]))
             lines.append(_wrap(f"The {name}'s USB id ({ids}) was not seen in this "
                                "recording.", 74, "  "))
+    for tag, act in sorted(facts.get("other_instruments", {}).items()):
+        lines.append(_wrap(f"Another X-Rite instrument was at work in this recording: {tag} "
+                           f"({_instrument_label(tag)}), "
+                           f"{_n(act, 'request or data transfer', 'requests and data transfers')}"
+                           ". If that is the one you measure with, please start this tool "
+                           "again and choose it when it asks which instrument you use.",
+                           74, "  "))
     if profile in FAMILY_ENDPOINTS:
         eps = ", ".join(f"0x{e:02x}" for e in sorted(FAMILY_ENDPOINTS[profile]))
         total = sum(facts["family_eps"].values())
@@ -8592,8 +8652,12 @@ def privacy_text(profile: str) -> str:
   - While a step records, the recording program also sees the other USB
     devices on the same USB port group, such as a keyboard. Please do not
     type anything private during a step. After each step the tool makes a
-    copy that holds ONLY the instrument's traffic (its device address and
-    nothing else), and that copy is the only thing to send.
+    copy that holds ONLY the instrument's traffic, and that copy is the
+    only thing to send. It never keeps a keyboard or another instrument
+    this tool knows, such as a monitor calibrator. If a step's recording
+    does not show your instrument at all, the copy holds an X-Rite device
+    this tool does not know instead (in case that is yours), and the tool
+    tells you so right after the step.
   - Your short notes for each step.
   Nothing is uploaded, ever. You decide whether to send the files, and you
   send them yourself. At the end the tool offers to delete the full
@@ -8780,8 +8844,8 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
             session["steps"].append(entry)
             _write_session(session, folder)
             if recorder is not None:
-                print("  CHECK: " + _wrap(handheld_step_verdict(entry, activity, empty, zero),
-                                          64, "  "))
+                print("  CHECK: " + _wrap(handheld_step_verdict(entry, activity, empty, zero,
+                                                                profile), 64, "  "))
                 if entry.get("seen") is not None:
                     print()
                     for line in facts_lines(entry["seen"], profile):
@@ -8913,7 +8977,8 @@ def _question(text: str) -> str:
     return _wrap(" ".join(text.split()), 74, "  ")
 
 
-def handheld_step_verdict(entry: dict, activity: int, empty: bool, zero: bool = False) -> str:
+def handheld_step_verdict(entry: dict, activity: int, empty: bool, zero: bool = False,
+                          profile: str = "isis") -> str:
     """1.5.5: the per-step check of a handheld session, as the Mac table
     session has it."""
     if zero:
@@ -8921,12 +8986,17 @@ def handheld_step_verdict(entry: dict, activity: int, empty: bool, zero: bool = 
                 "it cannot show the commands. This is a limit of this Mac, not your mistake.")
     if entry.get("files_xrite") and activity and entry.get("kept_unknown"):
         # 1.6 review: an i1iSis session that saw no i1iSis keeps an X-Rite
-        # device the tool does not know, and says so.
+        # device the tool does not know, and says so. 1.6.3: so does every
+        # handheld session, for its own family.
         word = "request or data transfer" if activity == 1 else "requests and data transfers"
-        return (f"this step recorded {activity} {word}, but not of an i1iSis: no i1iSis "
-                f"(0971:2006) was seen in it. The tool kept the traffic of an X-Rite device "
-                f"it does not know ({', '.join(entry['kept_unknown'])}), in case that is "
-                "your i1iSis. If it is not, please tell us; you can also repeat the step.")
+        name = FAMILY_WORDS.get(profile, "instrument")
+        ids = ", ".join(f"{v:04x}:{p:04x}" for v, p in sorted(FAMILY_IDS.get(profile, ())))
+        article = "an" if name[:1] in "iI" else "a"
+        return (f"this step recorded {activity} {word}, but not of {article} {name}: no "
+                f"{name} ({ids}) was seen in it. The tool kept the traffic of an X-Rite "
+                f"device it does not know ({', '.join(entry['kept_unknown'])}), in case "
+                f"that is your {name}. If it is not, please tell us; you can also repeat "
+                "the step.")
     if entry.get("files_xrite") and activity:
         word = "request or data transfer" if activity == 1 else "requests and data transfers"
         text = f"this step recorded {activity} {word} of the instrument: good."

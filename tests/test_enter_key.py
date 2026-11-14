@@ -421,3 +421,22 @@ class AfterTheSinglePatch(Base):
         console = FakeConsole(["", "e", "one patch", "M0", "green", ""])
         _session, screen = self.run_session(console, only=[8])
         self.assertNotIn("Before the next step", screen)
+
+
+class AnUnknownXriteDevice(Base):
+    """1.6.3: a handheld session that sees none of its family keeps an
+    X-Rite device the tool does not know, and says so after the step."""
+
+    def test_it_is_kept_with_a_note(self):
+        w = synth.UsbPcapWriter()
+        w.describe(synth.I1PRO, 0x0765, 0x60FF, [(0x81, 2), (0x83, 3), (0x84, 2), (0x02, 2)])
+        w.vendor_out(synth.I1PRO, 0x22, b"\x00\x00\x00\x00\x13\x00\x00\x00")
+        w.bulk_in(synth.I1PRO, 0x81, bytes(564 * 10))
+        console = FakeConsole(["", "e", "notes", "lights", "", "q"])
+        session, screen = self.run_session(console, recording=w.pcap())
+        step = session["steps"][0]
+        self.assertTrue(step["files_xrite"])
+        self.assertEqual(step["kept_unknown"], ["0765:60ff"])
+        self.assertIn("but not of an i1Pro 3: no i1Pro 3 (0765:6009) was seen in it. The "
+                      "tool kept the traffic of an X-Rite device it does not know "
+                      "(0765:60ff), in case that is your i1Pro 3.", " ".join(screen.split()))

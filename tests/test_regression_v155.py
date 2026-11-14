@@ -27,12 +27,30 @@ import regression_recordings as rr  # noqa: E402
 with open(os.path.join(HERE, "fixtures", "v155-kept.json"), encoding="utf-8") as _fh:
     V155 = json.load(_fh)
 
-# Every session type the tool has, except the i1iSis: None (a caller from
-# before 1.6), the i1iO table, and every handheld profile.
-OLD_TYPES = (None, probe.SESSION_TABLE, "i1pro2", "i1pro", "i1pro3", "munki", "generic")
+# The session types that keep what 1.5.5 kept: None (a caller from before
+# 1.6) and the i1iO table. 1.6.3: the handheld profiles keep only their own
+# family (handheld_want below says exactly what changed).
+OLD_TYPES = (None, probe.SESSION_TABLE)
+HANDHELD = ("i1pro2", "i1pro", "i1pro3", "munki", "generic")
+# labels in regression_recordings: the i1Pro family, X-Rite ids the tool does
+# not know, and the instruments with a session type of their own
+FAMILY_LABELS = {"i1pro2": {"i1Pro2"}, "i1pro": {"i1Pro2"}, "i1pro3": set(), "munki": set()}
+UNKNOWN_LABELS = {"unknownXR"}
+OWN_SESSION_LABELS = {"iSis", "iSis#2", "i1Pro2", "i1iO"}
 # Plain files whose only known X-Rite device is an i1iSis: read as i1iSis.
 CALIBRATORS = {"i1Display", "Display3L"}         # labels in regression_recordings
 ISIS_ONLY = {"B-two-isis-keyboard", "M-isis-with-display", "N-mac-isis-with-display"}
+
+
+def handheld_want(kept, profile):
+    """1.6.3: what a handheld session keeps of what 1.5.5 kept: its own
+    family; else X-Rite devices the tool does not know; never another known
+    instrument or a monitor calibrator. "generic": every X-Rite device but
+    the calibrators and the instruments with a session type of their own."""
+    kept = set(kept) - CALIBRATORS
+    if profile == "generic":
+        return sorted(kept - OWN_SESSION_LABELS)
+    return sorted((kept & FAMILY_LABELS[profile]) or (kept & UNKNOWN_LABELS))
 
 
 class SameAsV155(unittest.TestCase):
@@ -65,6 +83,22 @@ class SameAsV155(unittest.TestCase):
                             got.pop(key)
                             want.pop(key)
                     self.assertEqual(got, want)
+
+    def test_handheld_sessions_keep_only_their_family(self):
+        for name, path in self.files.items():
+            for profile in HANDHELD:
+                with self.subTest(recording=name, session=profile):
+                    got = rr.outcome(probe, path, self.tmp.name, profile)
+                    want = handheld_want(V155["copies"][name]["kept"], profile)
+                    self.assertEqual(sorted(got["kept"]), want)
+                    if want:
+                        self.assertEqual(got["check"], "ok")
+                        self.assertGreater(got["records"], 0)
+                    else:
+                        # (a recording that describes no device at all is still
+                        # checked by counts only, "ok" as in 1.5.5; nothing is kept)
+                        self.assertEqual(got["records"], 0)
+                    self.assertNotIn("keyboard", got["kept"])
 
     def test_analyze_reads_plain_files_as_v155(self):
         for name, path in self.files.items():
