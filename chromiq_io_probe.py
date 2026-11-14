@@ -83,7 +83,7 @@ import tempfile
 import threading
 import time
 
-PROBE_VERSION = "1.6.2"
+PROBE_VERSION = "1.6.3"
 
 ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/129"   # the i1iO only
 NEW_ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/new"

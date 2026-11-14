@@ -1,5 +1,53 @@
 # Changelog
 
+## v1.6.3
+
+- **When a step keeps nothing.** A tester's public screenshot showed tool
+  1.5.5 on Windows ending a nine-step i1Pro 3 session with every step
+  "EMPTY", although the same PC recorded fine before and after. No file of
+  that run reached us, so **the cause is not known**. The tool still keeps
+  nothing it cannot attribute to the instrument. What is new: when a step's
+  recording is not empty but nothing of it was kept, the step's check says
+  what the recording held, as counts, kinds of device and USB ids only
+  (never contents): the records per kind of device, whether the instrument
+  family's USB id was seen and whether it did anything there, how many
+  records travelled on the family's endpoint numbers under another address,
+  and whether another instrument the tool knows was at work. Then it says
+  what to try, one action per line: unplug the instrument, wait five
+  seconds, plug it back in, start the tool again; if still empty, restart
+  Windows with "Restart" (not "Shut down") and plug the instrument in
+  afterwards. When no step of a session kept anything, the tool writes one
+  small `SEND-THIS-<date>-report-only.zip` with only the report and
+  `session.json`, which hold no recording.
+- **A handheld session keeps only its own instrument family**, as the
+  i1iSis session does: the family you chose (the i1Pro and the i1Pro 2
+  count as one), an X-Rite device the tool does not know only when the step
+  shows none of the family (with a note), never another instrument the
+  tool knows. "Another X-Rite instrument" keeps every X-Rite device except
+  the monitor calibrators and the instruments with a session type of their
+  own. A bus that holds only another instrument's traffic says so in its
+  check. The i1iO table session and plain `--analyze` keep what they kept.
+- **The report's device lists without other devices' names.** Other USB
+  devices keep their vendor and product ids (and their kind, where the list
+  has one), not their names; the location parts of Windows device IDs
+  become short scrambled codes. Windows' generic names and X-Rite devices
+  stay. `--clean` does the same for reports made by earlier versions.
+  `--no-redact` shows everything, as before.
+- **Steps shown after another device's traffic was removed:** the i1Pro 3
+  firmware string and the ColorMunki version string show only their length
+  there, and no decoded string carries a control character any more. The
+  i1Pro family's clock-mode request 0xCF is shown decoded ("clock mode 1").
+- **Analysis:** the i1Pro 3's request 0x3B is no longer listed as never
+  sent by the open driver: ArgyllCMS sends it in every measurement (through
+  `i1pro3_setscanstartind`). The i1Pro 3's ruler travel is counted per scan;
+  every swipe is listed with the time its readings took (a slow rescan in
+  the fail-on-purpose step was missed before); the dual scan is no longer
+  compared in "only with the ruler", where its own commands looked like the
+  ruler's.
+- **Steps:** after the single-patch step the tool reminds you to switch the
+  program back to scanning strips; a lights answer "no" is asked once more
+  (no change, or did not look?).
+
 ## v1.6.2
 
 **A privacy fix. Please read this if you made a recording with 1.6.1 or

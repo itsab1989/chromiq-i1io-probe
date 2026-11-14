@@ -221,6 +221,34 @@ jobs:
             recording only listens (on Windows through the free USBPcap, which
             you install yourself if you want to record).
 
+            ### What's new in 1.6.3
+
+            - **When a step keeps nothing:** a tester's screenshot showed a
+              Windows session in which every step stayed empty; **the cause
+              is not known**. The tool still keeps nothing it cannot
+              attribute. It now says what such a recording held (counts,
+              kinds of device and USB ids only, never contents) and what to
+              try, one action per line (replug the instrument; if still
+              empty, restart Windows with "Restart", not "Shut down"). A
+              session in which no step kept anything ends with one small
+              `SEND-THIS-<date>-report-only.zip`: only the report and
+              `session.json`, no recording.
+            - **A handheld session keeps only its own instrument family**
+              (the i1Pro and the i1Pro 2 count as one), as the i1iSis
+              session does; an unknown X-Rite device only with a note.
+            - **The report's device lists show other USB devices without
+              their names** (ids and kind only); `--clean` does the same for
+              older reports; `--no-redact` shows everything.
+            - Steps shown after another device's traffic was removed print
+              no decoded text; no decoded string carries control
+              characters; 0xCF is shown as "clock mode N".
+            - Analysis: ArgyllCMS does send the i1Pro 3's 0x3B (it was
+              listed as never sent); the i1Pro 3's ruler travel per scan;
+              every swipe by its length; the dual scan is not compared in
+              "only with the ruler".
+            - Steps: after the single patch, switch back to strip scanning;
+              a lights answer "no" is asked once more.
+
             ### What's new in 1.6.2
 
             **A privacy fix. Please read this if you made a recording with
