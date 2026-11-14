@@ -9304,8 +9304,10 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                 # 1.6.5: the first recorded step held only the instrument's USB
                 # description. Said now, so nobody records eight more empty steps.
                 session["first_step_descriptor_only"] = True
-                print("  CHECK: " + _wrap(handheld_step_verdict(entry, activity, empty, zero,
-                                                                profile), 64, "  "))
+                # (review nit: no "Please repeat it." right before the offer to stop)
+                verdict = handheld_step_verdict(entry, activity, empty, zero, profile)
+                verdict = verdict.replace(" Please repeat it.", "")
+                print("  CHECK: " + _wrap(verdict, 64, "  "))
                 print()
                 for line in descriptor_only_lines():
                     print("  " + line)

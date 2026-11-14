@@ -172,6 +172,9 @@ class TheSession(tae.TheWholeSession):
         flat = " ".join(screen.split())
         self.assertIn("CHECK: EMPTY: only the instrument's USB description was recorded", flat)
         self.assertIn("Two things look exactly like this", flat)
+        self.assertIn("recorded in this step, none of its requests or data. Two things",
+                      flat)
+        self.assertNotIn("Please repeat it.", screen.split("STEP 1 of 9")[1])
         self.assertIn("the measuring program did not talk to the instrument", flat)
         self.assertIn("1. Does the measuring program show the instrument as connected?", flat)
         self.assertNotIn("STEP 2 of 9", screen)

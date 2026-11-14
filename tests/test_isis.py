@@ -578,7 +578,7 @@ class Session(_IsisSessionBase):
         w.save(os.path.join(self.pcaps, "idle.pcap"))
         session, screen = self.run_session(["", "e", "", "q"], profile="isis")
         self.assertIn("EMPTY: only the instrument's USB description was recorded in this "
-                      "step, none of its requests or data. Please repeat it.", flat(screen))
+                      "step, none of its requests or data. Two things look exactly", flat(screen))
         # 1.6.5: after the first recorded step, the offer to stop (r records again)
         self.assertIn("type  r  to record this step again", "\n".join(self.prompts))
         step = self.saved()["steps"][0]
