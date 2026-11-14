@@ -308,8 +308,10 @@ class TheWholeSession(unittest.TestCase):
 
     def every_step(self):
         steps = []
-        for _ in probe.steps_for("i1pro3"):
-            steps += ["", "e", ""]     # start, stop, go on (empty step: no notes)
+        for n, _ in enumerate(probe.steps_for("i1pro3")):
+            # start, stop, go on (empty step: no notes); after the first step
+            # (1.6.5) "go on" past the offer to stop
+            steps += ["", "e", "go on" if n == 0 else ""]
         return self.START + steps + ["yes"]          # delete the full recordings
 
     def written(self):
@@ -340,7 +342,7 @@ class TheWholeSession(unittest.TestCase):
                       "in this step, none of its requests or data. Please repeat it.", flat)
         self.assertIn("WHAT YOU CAN TRY (the cause is not known yet):", screen)
         self.assertEqual(screen.count("WHAT YOU CAN TRY"), 2)    # first empty step, the end
-        self.assertIn("(What you can try is listed above, after step 1.)", screen)
+        self.assertIn("(What you can try is listed above, after step 2.)", screen)
         self.assertIn("FINISHED, BUT NOTHING WAS KEPT", screen)
         self.assertIn("SEND THIS ONE FILE (the report and session.json, no recording):",
                       screen)

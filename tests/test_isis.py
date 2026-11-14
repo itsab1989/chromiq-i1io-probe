@@ -579,12 +579,13 @@ class Session(_IsisSessionBase):
         session, screen = self.run_session(["", "e", "", "q"], profile="isis")
         self.assertIn("EMPTY: only the instrument's USB description was recorded in this "
                       "step, none of its requests or data. Please repeat it.", flat(screen))
-        self.assertIn("Type  r  and press Enter to record this step again",
-                      "\n".join(self.prompts))
+        # 1.6.5: after the first recorded step, the offer to stop (r records again)
+        self.assertIn("type  r  to record this step again", "\n".join(self.prompts))
         step = self.saved()["steps"][0]
         self.assertTrue(step["empty"])
         self.assertIn("EMPTY", " ".join(step["check"]))
-        self.assertEqual(session["ended"], "stopped by the operator")
+        self.assertEqual(session["ended"], "stopped after the first step: only the "
+                                           "instrument's USB description was recorded")
 
     def test_only_some_steps(self):
         recorder = probe.UsbPcapRecorder(self.exe, ["\\\\.\\USBPcap1"], "")

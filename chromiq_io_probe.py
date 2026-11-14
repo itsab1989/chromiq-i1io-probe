@@ -8059,8 +8059,10 @@ _DRIVER_PS = (
     "-ErrorAction SilentlyContinue).Data; "
     "$p = (Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName DEVPKEY_Device_DriverProvider "
     "-ErrorAction SilentlyContinue).Data; "
+    "$k = (Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName DEVPKEY_Device_Stack "
+    "-ErrorAction SilentlyContinue).Data -join ','; "
     "'DRV :: ' + $_.FriendlyName + ' :: ' + $_.InstanceId + ' :: ' + $_.Class + ' :: ' + $s + ' :: ' + $p "
-    "+ ' :: ' + $_.Status }")
+    "+ ' :: ' + $_.Status + ' :: ' + $k }")
 
 # Every PowerShell command the tool runs (see PS_XRITE_DEVICES above).
 POWERSHELL_SCRIPTS = (PS_XRITE_DEVICES, PS_DEVICE_PROPERTIES, PS_USB_HUBS, PS_DRIVER_FILES,
@@ -8070,22 +8072,145 @@ _INSTANCE_IDS_RE = re.compile(r"VID_([0-9A-Fa-f]{4})&PID_([0-9A-Fa-f]{4})")
 
 
 def parse_driver_lines(text: str) -> list:
-    """The 'DRV :: name :: instance :: class :: service :: provider[ :: status]'
-    lines (the status, as Get-PnpDevice gives it, since 1.5.2)."""
+    """The 'DRV :: name :: instance :: class :: service :: provider[ :: status
+    [ :: stack]]' lines (the status, as Get-PnpDevice gives it, since 1.5.2;
+    the device's driver stack, DEVPKEY_Device_Stack, since 1.6.5)."""
     out = []
     for line in (text or "").splitlines():
         if not line.startswith("DRV :: "):
             continue
         parts = [p.strip() for p in line[len("DRV :: "):].split(" :: ")]
-        parts += [""] * (6 - len(parts))
-        name, instance, cls, service, provider, status = parts[:6]
+        parts += [""] * (7 - len(parts))
+        name, instance, cls, service, provider, status, stack = parts[:7]
         m = _INSTANCE_IDS_RE.search(instance)
         if not m or "&MI_" in instance.upper():
             continue
         out.append({"vid": int(m.group(1), 16), "pid": int(m.group(2), 16), "name": name,
                     "class": cls, "service": service, "provider": provider,
-                    "status": status})
+                    "status": status, "stack": stack})
     return out
+
+
+# --------------------------------------------------------------------------
+# 1.6.5: is USBPcap attached to the instrument?
+#
+# A tester's 42-minute session kept nothing: the instrument's driver stack
+# was {EyeOne, ACPI, USBHUB3}, without USBPcap (the night before, on the same
+# PC: {EyeOne, USBPcap, ACPI, USBHUB3}). USBPcap sees only the traffic of the
+# devices whose stack it is in. Its filter sits on the USB root hubs and adds
+# itself to a device when the hub reports it as new (USBPcap's source,
+# USBPcapFilterManager.c AddDevice, USBPcapPnP.c BusRelations); a device set
+# up again without being plugged in afresh can come back without it.
+# --------------------------------------------------------------------------
+
+RECORDER_WORDS = {"yes": "yes", "no": "no", "unknown": "could not tell"}
+_HUB_DRIVER_NAMES = {"usbhub3", "usbhub", "usbccgp", "usbhub20"}
+
+
+def stack_names(stack: str) -> list:
+    """Driver names of a DEVPKEY_Device_Stack value ("\\Driver\\EyeOne,..."
+    or "{EyeOne, ACPI}")."""
+    names = []
+    for part in re.split(r"[,;{}\s]+", stack or ""):
+        part = part.strip().strip("\\")
+        if part:
+            names.append(part.split("\\")[-1])
+    return names
+
+
+def recorder_attached(dev: dict) -> str:
+    """"yes", "no" or "unknown" for one device. "no" only when the stack is
+    clearly a USB device's driver list (it names a USB hub driver) and
+    USBPcap is not in it; anything else that is not "yes" is "unknown"."""
+    status = (dev.get("status") or "").strip().upper()
+    names = [n.lower() for n in stack_names(dev.get("stack", ""))]
+    if "usbpcap" in names:
+        return "yes"
+    if status not in ("", "OK"):
+        return "unknown"
+    if len(names) >= 2 and set(names) & _HUB_DRIVER_NAMES:
+        return "no"
+    return "unknown"
+
+
+def recorder_verdict(devices: list, profile: str | None) -> dict:
+    """1.6.5: {"verdict": "yes"/"no"/"unknown", "devices": [...]} for the
+    devices of the session's instrument (the table for "io"; for another
+    X-Rite instrument every X-Rite device but a monitor calibrator)."""
+    ids = FAMILY_IDS.get(profile or "", frozenset())
+    if profile == SESSION_TABLE:
+        ids = frozenset({(XRITE_VID, IO_TABLE_PID), (0x0765, 0x30B0)})
+    mine = []
+    for dev in devices or []:
+        key = (dev.get("vid"), dev.get("pid"))
+        if (key in ids) if ids else (key[0] in XRITE_VIDS and key not in CALIBRATOR_IDS):
+            mine.append({"name": dev.get("name") or f"{key[0]:04x}:{key[1]:04x}",
+                         "ids": f"{key[0]:04x}:{key[1]:04x}", "state": recorder_attached(dev)})
+    states = {d["state"] for d in mine}
+    verdict = "no" if "no" in states else "yes" if states == {"yes"} else "unknown"
+    return {"verdict": verdict, "devices": mine}
+
+
+def recorder_line(v: dict | None) -> str:
+    return ("USB recorder attached to your instrument: "
+            + RECORDER_WORDS[(v or {}).get("verdict", "unknown")])
+
+
+def recorder_advice_lines() -> list:
+    """What to do when USBPcap is not attached (sources in the 1.6.5 notes:
+    USBPcap's filter adds itself to a device when Windows sets it up, and
+    Windows sets every device up afresh on Restart, not on a Fast Startup)."""
+    return ["  1. Close this tool and the measuring program.",
+            "  2. Unplug the instrument.",
+            "  3. Restart Windows with \"Restart\" (not \"Shut down\": with Fast",
+            "     Startup, which is on by default, Shut down does not set USB",
+            "     devices up again).",
+            "  4. When Windows has started, plug the instrument in.",
+            "  5. Start this tool again (as administrator)."]
+
+
+def recorder_not_attached_lines(v: dict) -> list:
+    names = ", ".join(d["name"] for d in v["devices"] if d["state"] == "no") or "instrument"
+    return (["THE USB RECORDER IS NOT ATTACHED TO YOUR INSTRUMENT YET",
+             _wrap(f"Windows lists your instrument ({names}) without USBPcap, the "
+                   "recorder, among its drivers. USBPcap joins a USB device only when "
+                   "Windows sets that device up, for example when it is plugged in or "
+                   "when Windows starts. Until then every step would keep nothing.", 74, ""),
+             "Please do this:"] + recorder_advice_lines())
+
+
+def descriptor_only_lines(system: str | None = None) -> list:
+    """1.6.5: after the FIRST recorded step held only the instrument's USB
+    description: the two causes that look the same, and what to check."""
+    system = system or platform.system()
+    lines = [_wrap("Two things look exactly like this, and the recording cannot tell "
+                   "them apart:", 74, ""),
+             "  - the measuring program did not talk to the instrument in this step;",
+             "  - or the USB recorder does not see the instrument's traffic"
+             + (" (USBPcap is" if system == "Windows" else "."),
+             ]
+    if system == "Windows":
+        lines += ["    not attached to it; see the line \"USB recorder attached to your",
+                  "    instrument\" above the steps)."]
+    lines += ["Please check first:",
+              "  1. Does the measuring program show the instrument as connected?",
+              "     If it does not, that is the cause: connect it there first.",
+              "If it does, the recorder is the more likely cause. Then:"]
+    if system == "Windows":
+        lines += recorder_advice_lines()
+    else:
+        lines += ["  1. Close this tool and the measuring program.",
+                  "  2. Unplug the instrument and plug it in again.",
+                  "  3. Start this tool again."]
+    return [part for line in lines for part in line.split("\n")]
+
+
+DESCRIPTOR_STOP_PROMPT = ("\n  Press Enter to stop now (recommended), type  r  to record this "
+                          "step again,\n  or type  go on  to go on with the next step: ")
+
+
+RECORDER_STOP_PROMPT = ("\n  Press Enter to stop now (recommended), or type  go on  to record"
+                        "\n  anyway (the steps will most likely keep nothing): ")
 
 
 def driver_state(dev: dict) -> str:
@@ -8261,14 +8386,15 @@ def windows_capture_checks(profile: str) -> dict:
                      "instrument": [d for d in devs if _XRITE_NAME_RE.search(d[1])]})
     programs = windows_program_versions()
     i1p = next((v for k, v in programs.items() if "i1profiler" in k.lower()), None)
-    drivers = instrument_driver_checks(windows_driver_devices())
+    driver_devices = windows_driver_devices()
+    drivers = instrument_driver_checks(driver_devices)
     working = any(d.get("vendor_working") for d in drivers)
     return {"windows": windows_release_check(build["build"], build["display"], arm, profile,
                                              vendor_driver_working=working),
             "service": service, "usbpcapcmd": cmd, "hubs": hubs,
             "admin": windows_is_admin(), "programs": programs, "arm": arm,
             "i1profiler": i1profiler_check(i1p, profile, build["build"]), "build": build,
-            "drivers": drivers}
+            "drivers": drivers, "recorder": recorder_verdict(driver_devices, profile)}
 
 
 def driver_help_needed(c: dict) -> bool:
@@ -8317,6 +8443,9 @@ def windows_checks_text(c: dict) -> str:
                 "could not tell which USB root hub; the tool records on all of them "
                 f"({', '.join(h['display'] for h in c['hubs'])}) and keeps only the "
                 "instrument's traffic")
+    if "recorder" in c:
+        # 1.6.5: whether USBPcap is in the instrument's driver stack
+        lines += ["", "  " + recorder_line(c["recorder"])]
     return "\n".join(lines)
 
 
@@ -9118,6 +9247,40 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                     take = 1
                     continue
                 session["ended"] = "stopped: the recording shows another instrument than the one chosen"
+                _write_session(session, folder)
+                break
+            first_take = not any(s.get("files_full") for s in session["steps"][:-1])
+            if recorder is not None and empty and not entry["files_xrite"] and not zero \
+                    and first_take and not entry.get("unidentified"):
+                # 1.6.5: the first recorded step held only the instrument's USB
+                # description. Said now, so nobody records eight more empty steps.
+                session["first_step_descriptor_only"] = True
+                print("  CHECK: " + _wrap(handheld_step_verdict(entry, activity, empty, zero,
+                                                                profile), 64, "  "))
+                print()
+                for line in descriptor_only_lines():
+                    print("  " + line)
+                _write_session(session, folder)
+                if interrupted:
+                    entry["interrupted"] = True
+                    session["ended"] = interrupted
+                    _write_session(session, folder)
+                    break
+                answer = _session_ask(DESCRIPTOR_STOP_PROMPT).strip().lower()
+                if answer.startswith("r") and not stop_after:
+                    entry["kept"] = False
+                    _write_session(session, folder)
+                    take += 1
+                    continue
+                entry["kept"] = True
+                if answer.startswith("g") and not stop_after:
+                    session["descriptor_only_go_on"] = True
+                    _write_session(session, folder)
+                    index += 1
+                    take = 1
+                    continue
+                session["ended"] = ("stopped after the first step: only the instrument's USB "
+                                    "description was recorded")
                 _write_session(session, folder)
                 break
             if recorder is not None:
@@ -10183,6 +10346,22 @@ def instrument_session_step(pids: list, direct: bool, only: list | None = None,
             print("  (and make sure tcpdump is installed), then run the tool again.")
             section("Instrument recording session", "[usbmon not loaded or tcpdump missing]")
             return outcome
+    if system == "Windows":       # also when recording by hand with Wireshark
+        context["recorder_attached"] = checks.get("recorder")
+        if (checks.get("recorder") or {}).get("verdict") == "no":
+            # 1.6.5: say it before the steps, not after 40 minutes of them
+            block = recorder_not_attached_lines(checks["recorder"])
+            print()
+            print("\n".join("  " + l for l in block))
+            flush_pending_input()
+            if not ask(RECORDER_STOP_PROMPT).strip().lower().startswith("g"):
+                outcome["reason"] = ("Nothing was recorded, because the USB recorder "
+                                     "(USBPcap) is not attached to your instrument yet.")
+                outcome["help"].append("\n".join("  " + l for l in block))
+                section("Instrument recording session",
+                        "[stopped before the steps: the USB recorder is not attached to the "
+                        "instrument]\n" + windows_checks_text(checks) + "\n\n" + win_diag)
+                return outcome
     if not said_yes(ask("\n  Start the session now? (yes / no): ")):
         print("\n  No problem at all. Nothing was recorded.\n")
         outcome["reason"] = "You chose not to start the recording session."
@@ -10262,6 +10441,13 @@ def instrument_session_step(pids: list, direct: bool, only: list | None = None,
             " Nothing was kept from this step.", " Nothing was kept.")
         outcome["help"] = ["\n".join("  " + _wrap(t.replace("stop here, start", "start"),
                                                    66, "  ") for t in todo)]
+    elif seen_steps and session.get("first_step_descriptor_only") \
+            and session.get("ended", "").startswith("stopped after the first step"):
+        # 1.6.5: stopped after the first step held only the USB description
+        outcome["all_empty"] = True
+        outcome["reason"] = DESCRIPTOR_ONLY_REASON
+        outcome["help"].append("\n".join("  " + l for l in descriptor_only_lines()))
+        _END["report_only"] = folder
     elif seen_steps:
         # 1.6.3: every recorded step kept nothing. The cause is not known;
         # the report and session.json (counts and ids, no recording) are
@@ -10288,6 +10474,18 @@ def instrument_session_step(pids: list, direct: bool, only: list | None = None,
         print()
         print(SIP_OFF_REMINDER)
     body = "\n".join(lines)
+    # 1.6.5: what was seen about the recorder, said in the report (and so in
+    # the report-only zip)
+    seen_lines = []
+    if system == "Windows":
+        seen_lines.append(recorder_line(checks.get("recorder")))
+    if session.get("first_step_descriptor_only"):
+        seen_lines.append("The first recorded step held only the instrument's USB "
+                          "description, nothing it did (the measuring program did not talk "
+                          "to it, or the recorder did not see its traffic).")
+    if seen_lines:
+        body += "\n\nWHAT WAS SEEN ABOUT THE RECORDING\n" + "\n".join(
+            "  " + _wrap(l, 74, "    ") for l in seen_lines)
     if outcome.get("wrong_instrument"):
         body += ("\n\nTHE INSTRUMENT CHOSEN IS NOT THE ONE RECORDED\n" + outcome["reason"]
                  + "\n" + "\n".join(outcome["help"]))
@@ -10781,6 +10979,11 @@ def choose_what_to_do(args, summary: str) -> tuple:
     return 3, summary
 
 
+DESCRIPTOR_ONLY_REASON = ("The first step recorded only the instrument's USB description, "
+                          "nothing it did, so the session was stopped there. Either the "
+                          "measuring program did not talk to the instrument, or the USB "
+                          "recorder did not see its traffic; the recording cannot tell "
+                          "which.")
 ALL_EMPTY_REASON = ("Every step was recorded, but no step held traffic that the tool could "
                     "attribute to the instrument with certainty, so nothing was kept. Why "
                     "this happens is not known yet.")
