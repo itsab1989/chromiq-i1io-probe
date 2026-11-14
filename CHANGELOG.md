@@ -26,9 +26,9 @@ older.**
   belonged to another device at that time. No session keeps a monitor
   calibrator (such as an i1Display) any more. When that traffic is fully
   explained as one USB disk on two endpoints the instrument does not have
-  (the case in that recording), the analysis shows the instrument's step with its decoded
-  values (readings, ruler, lights, counts, sizes, times) but no raw bytes,
-  and says that another device's traffic was removed. When another device's
+  (the case in that recording), the analysis shows the instrument's step
+  with its decoded values (readings, ruler, lights, counts, sizes, times)
+  but no raw bytes, and says that another device's traffic was removed. When another device's
   traffic was also seen on one of the instrument's own endpoints, or could
   not be placed, the analysis shows no contents of that step, only counts
   and sizes, marks it as "not shown" in every comparison, and the step's
