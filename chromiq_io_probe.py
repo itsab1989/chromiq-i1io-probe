@@ -3435,7 +3435,9 @@ def choice_for(token: str) -> str:
         prof = token[6:]
     else:
         vid, pid = (int(x, 16) for x in token.split(":"))
-        if (vid, pid) == (XRITE_VID, IO_TABLE_PID):
+        # 1.6.4 (review): the i1iO 3 too; the table session records every
+        # i1iO table
+        if (vid, pid) in ((XRITE_VID, IO_TABLE_PID), (0x0765, 0x30B0)):
             return "choose 1 (record an i1iO table) at its first question"
         prof = PROFILE_IDS.get((vid, pid), "generic")
     if prof in ("i1pro2", "i1pro"):

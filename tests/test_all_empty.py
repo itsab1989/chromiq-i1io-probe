@@ -645,3 +645,15 @@ class EveryKnownInstrumentIsNamed(unittest.TestCase):
                                 "instrument you chose (i1Pro 3 or 3 Plus). Nothing was kept "
                                 "from this step.")
         self.assertIn("choose 6 (another X-Rite instrument)", todo[0])
+
+
+class TheI1io3Table(unittest.TestCase):
+    """1.6.4 (review): an i1iO 3 table seen in a handheld session gets the
+    same advice as the other i1iO tables."""
+
+    def test_advice(self):
+        first, todo = probe.wrong_instrument_lines(["0765:30b0"], "i1pro2")
+        self.assertIn("an i1iO 3 table (0765:30b0)", first)
+        self.assertEqual(todo, ["To record it: stop here, start the tool again and choose 1 "
+                                "(record an i1iO table) at its first question."])
+        self.assertEqual(probe.choice_for("0971:2004"), probe.choice_for("0765:30b0"))
