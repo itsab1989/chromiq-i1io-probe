@@ -3,10 +3,11 @@
 ## v1.6.5
 
 From a tester's Windows session: nine steps over 42 minutes kept nothing,
-because USBPcap, the recorder, was not attached to the instrument. This
-happens when Windows sets the instrument up again without it being plugged
-in afresh, for example after its driver was changed. The tool now notices
-this early.
+because USBPcap, the recorder, was not attached to the instrument. Most
+likely Windows had set the instrument up again without it being plugged in
+afresh, for example after its driver was changed (USBPcap joins a device
+when it is plugged in or when Windows starts). The tool now notices this
+early.
 
 - **Before the first step (Windows):** the check of the PC now says
   "USB recorder attached to your instrument: yes", "no" or "could not
