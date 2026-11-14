@@ -9336,8 +9336,10 @@ def finish_session(session: dict, folder: str) -> tuple:
                 pass
             lines.append("The full recordings were deleted.")
         else:
-            lines.append("The full recordings were kept in the -FULL-do-not-send folder. "
-                         "Please do not send them; delete them when you no longer need them.")
+            # 1.6.3: wrapped for an 80-column window (printed with 2 spaces)
+            lines.append(_wrap("The full recordings were kept in the -FULL-do-not-send "
+                               "folder. Please do not send them; delete them when you no "
+                               "longer need them.", 77, "  "))
     return lines, analysis
 
 

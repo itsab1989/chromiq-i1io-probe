@@ -477,3 +477,27 @@ class OnAMac(unittest.TestCase):
         self.assertIn("The i1Pro 3's USB id (0765:6009) was not seen", " ".join(text.split()))
         self.assertNotIn("other addresses", text)
         self.assertNotIn(KEY_MARK.decode(), text)
+
+
+class TheFinishLinesFit(unittest.TestCase):
+    """1.6.3 (review nit): every line of the session's finish fits 79 columns
+    as printed (two spaces in front), also when the full recordings are kept."""
+
+    def test_finish_lines(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, tmp, True)
+        folder = os.path.join(tmp, "instrument-session-20261114-120000")
+        os.makedirs(folder)
+        os.makedirs(folder + "-FULL-do-not-send")
+        open(os.path.join(folder + "-FULL-do-not-send", "x-full.pcap"), "wb").close()
+        session = {"steps": [{"number": n, "title": t, "take": 1, "empty": True}
+                             for n, t in enumerate((s["title"] for s in
+                                                    probe.steps_for("i1pro3")), 1)],
+                   "ended": "all steps done", "family": "i1pro3"}
+        with mock.patch.object(probe, "ask", lambda *_a, **_k: "no"), \
+                redirect_stdout(io.StringIO()):
+            lines, _analysis = probe.finish_session(session, folder)
+        printed = "\n".join("  " + l for l in lines).splitlines()
+        self.assertIn("were kept in the -FULL-do-not-send", " ".join(printed))
+        for line in printed:
+            self.assertLessEqual(len(line), 79, line)
