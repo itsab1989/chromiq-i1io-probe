@@ -700,25 +700,42 @@ _DMESG_PORT = re.compile(r"\b(\d+-[\d.]+)(?=[:\s])")
 _DMESG_XRITE_ID = re.compile(r"(?i)idVendor=(0971|0765)\b|\b(0971|0765):[0-9a-f]{4}\b")
 
 
+_DMESG_NEW = re.compile(r"(?i)new usb device found, idVendor=([0-9a-f]{4})")
+_DMESG_GONE = re.compile(r"(?i)usb disconnect")
+
+
 def _redact_dmesg(body: str) -> str:
     """1.6.3 (review): an allow-list. A line is kept only when it is about an
-    X-Rite device (its USB id, after dmesg's own time stamp, or a USB port
-    such an id was seen on, or an X-Rite name); every other line can name
-    another device, a disk's label or a person's folder, and is left out."""
-    xrite_ports = set()
-    for line in body.split("\n"):
-        text = _DMESG_TIME.sub("", line)
-        if _DMESG_XRITE_ID.search(text):
-            m = _DMESG_PORT.search(text)
-            if m:
-                xrite_ports.add(m.group(1))
+    X-Rite device; every other line can name another device, a disk's label
+    or a person's folder, and is left out.
+
+    1.6.4 (review): read in order, as the kernel wrote it. A USB port counts
+    as the X-Rite device's from its "New USB device found" line with an
+    X-Rite id until "USB disconnect" on that port (or on the hub it hangs
+    off), or until a new device on that port shows another id. A device
+    plugged into the same port later is hidden like any other; the
+    instrument plugged in again is trusted again. A line that names no port
+    is kept only when it carries an X-Rite USB id (or an X-Rite name)."""
+    trusted: set = set()
     out, hidden = [], 0
     for line in body.split("\n"):
         text = _DMESG_TIME.sub("", line)
-        port = _DMESG_PORT.search(text)
-        mine = (port and port.group(1) in xrite_ports) or _DMESG_XRITE_ID.search(text) \
-            or _XRITE_NAME_RE.search(text)
-        if not mine and text.strip() and not text.startswith("("):
+        m = _DMESG_PORT.search(text)
+        port = m.group(1) if m else None
+        keep = False
+        if port is not None:
+            new = _DMESG_NEW.search(text)
+            if new:
+                if int(new.group(1), 16) in XRITE_VIDS:
+                    trusted.add(port)
+                else:
+                    trusted.discard(port)
+            keep = port in trusted
+            if _DMESG_GONE.search(text):
+                trusted -= {p for p in trusted if p == port or p.startswith(port + ".")}
+        else:
+            keep = bool(_DMESG_XRITE_ID.search(text) or _XRITE_NAME_RE.search(text))
+        if not keep and text.strip() and not text.startswith("("):
             hidden += 1
             continue
         out.append(line)

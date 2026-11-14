@@ -161,3 +161,86 @@ class ReviewInventory(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+DM2 = """[   12.0] usb 1-4: New USB device found, idVendor=0765, idProduct=6009, bcdDevice= 1.00
+[   12.1] usb 1-4: Product: i1Pro3
+[   20.0] usb 1-4: USB disconnect, device number 9
+[   21.0] usb 1-4: New USB device found, idVendor=0781, idProduct=5567
+[   21.1] usb 1-4: Product: MARKSAMEPORT stick
+[   21.2] usb 1-4.1: Product: MARKNEARBY"""
+
+
+class PortTrustEnds(unittest.TestCase):
+    """1.6.4 (review, inv2.py): a USB port is the X-Rite device's only from
+    its New-device line with an X-Rite id until it is unplugged, or until a
+    new device there shows another id."""
+
+    TITLE = "Linux: kernel messages mentioning USB/FTDI"
+
+    def setUp(self):
+        self.addCleanup(setattr, probe, "REDACT", probe.REDACT)
+        probe.REDACT = True
+
+    def red(self, text):
+        return probe.redact_inventory(self.TITLE, text)
+
+    def test_the_reviewers_repro(self):
+        out = self.red(dm + "\n" + DM2)
+        self.assertEqual(sorted(set(MK.findall(out))), [], out)
+        self.assertIn("usb 1-4: Product: i1Pro3", out)
+        self.assertIn("usb 1-4: USB disconnect, device number 9", out)
+        self.assertNotIn("idVendor=0781", out)
+
+    def test_a_new_device_without_a_disconnect_line(self):
+        out = self.red("[1.0] usb 2-1: New USB device found, idVendor=0971, idProduct=2000\n"
+                       "[2.0] usb 2-1: New USB device found, idVendor=046d, idProduct=c52b\n"
+                       "[2.1] usb 2-1: Product: MARKRECEIVER")
+        self.assertNotIn("MARK", out)
+        self.assertIn("idVendor=0971", out)
+
+    def test_the_instrument_replugged_is_trusted_again(self):
+        out = self.red(DM2 + "\n[30.0] usb 1-4: USB disconnect, device number 10\n"
+                       "[31.0] usb 1-4: New USB device found, idVendor=0765, idProduct=6009\n"
+                       "[31.1] usb 1-4: Product: i1Pro3 again")
+        self.assertIn("usb 1-4: Product: i1Pro3 again", out)
+        self.assertNotIn("MARKSAMEPORT", out)
+
+    def test_hub_ports_are_their_own(self):
+        out = self.red("[1.0] usb 1-4: New USB device found, idVendor=05e3, idProduct=0610\n"
+                       "[1.1] usb 1-4: Product: USB2.0 Hub MARKHUB\n"
+                       "[2.0] usb 1-4.2: New USB device found, idVendor=0971, idProduct=2000\n"
+                       "[2.1] usb 1-4.2: Product: eye-one\n"
+                       "[2.2] usb 1-4.1: Product: MARKOTHERPORT\n"
+                       "[3.0] usb 1-4: USB disconnect, device number 3\n"
+                       "[3.1] usb 1-4.2: Product: MARKAFTERHUBGONE")
+        self.assertIn("usb 1-4.2: Product: eye-one", out)
+        self.assertEqual(sorted(set(MK.findall(out))), [], out)
+
+    def test_interleaved_lines(self):
+        out = self.red("[1.0] usb 1-2: New USB device found, idVendor=0765, idProduct=6009\n"
+                       "[1.1] usb 1-3: New USB device found, idVendor=0781, idProduct=5567\n"
+                       "[1.2] usb 1-3: Product: MARKSTICK\n"
+                       "[1.3] usb 1-2: Product: i1Pro3\n"
+                       "[1.4] usb 1-3: SerialNumber: MARKSN\n"
+                       "[1.5] usb 1-2: Manufacturer: X-Rite")
+        self.assertIn("usb 1-2: Product: i1Pro3", out)
+        self.assertIn("usb 1-2: Manufacturer: X-Rite", out)
+        self.assertEqual(sorted(set(MK.findall(out))), [], out)
+
+    def test_clean_of_an_old_report(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        bar = "=" * 72
+        report = (f"ChromIQ X-Rite instrument probe report, version 1.6.3\n\n"
+                  f"{bar}\n{self.TITLE}\n{bar}\n{DM2}\n\n")
+        zpath = os.path.join(tmp, "SEND-THIS-20261114-120000.zip")
+        with zipfile.ZipFile(zpath, "w") as zf:
+            zf.writestr("chromiq-io-probe-20261114-120000.txt", report)
+        _text, code = probe.clean_paths([zpath])
+        self.assertEqual(code, 0)
+        cleaned = [os.path.join(tmp, n) for n in os.listdir(tmp) if n.endswith("-cleaned.zip")]
+        with zipfile.ZipFile(cleaned[0]) as zf:
+            new = zf.read("chromiq-io-probe-20261114-120000.txt").decode()
+        self.assertNotIn("MARK", new)
+        self.assertIn("Product: i1Pro3", new)
