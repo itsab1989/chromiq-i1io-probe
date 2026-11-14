@@ -4377,6 +4377,13 @@ def _d_reset(out, inn):
     return f"mask 0x{out[0]:02x}" + (f", second byte 0x{out[1]:02x}" if len(out) > 1 else "")
 
 
+def _d_mcmode_set(out, inn):
+    """1.6.3: i1pro_setmcmode sends the mode as one byte (i1pro_imp.c:11845),
+    printed as a decoded value, so it survives in a step shown after a
+    removal (decoded values only)."""
+    return f"clock mode {out[0]}" if len(out) == 1 else _raw(out, inn)
+
+
 def _d_mcmode_get(out, inn):
     if len(inn) < 6:
         return _raw(out, inn)
@@ -4441,7 +4448,7 @@ I1PRO_REQUESTS = {
     0xC4: ("read EEPROM", "i1pro_imp.c:11248", _d_eeprom, True),
     0xC9: ("get status", "i1pro_imp.c:11413", _d_misc, True),
     0xCA: ("reset", "i1pro_imp.c:11200", _d_reset, True),
-    0xCF: ("set measurement clock mode", "i1pro_imp.c:11846", _raw, True),
+    0xCF: ("set measurement clock mode", "i1pro_imp.c:11846", _d_mcmode_set, True),
     0xD0: ("end button handling", "i1pro_imp.c:12016", _raw, True),
     0xD1: ("get measurement clock mode", "i1pro_imp.c:11890", _d_mcmode_get, True),
     0xD2: ("get chip ID", "i1pro_imp.c:12082", _d_chipid, True),

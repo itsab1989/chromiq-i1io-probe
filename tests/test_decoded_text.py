@@ -115,6 +115,36 @@ class ShownAfterRemoval(unittest.TestCase):
         self.assertIn("firmware 1.23 '1.23x'", text)
 
 
+class ClockMode(unittest.TestCase):
+    """1.6.3: 0xCF's one byte is printed as "clock mode N", also in a step
+    shown after a removal (the analyst used it to compare with ArgyllCMS)."""
+
+    def test_clock_mode_survives_a_removal(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        vid, pid, eps = INSTR["i1pro2"]
+        w = synth.UsbPcapWriter()
+        w.describe(A, vid, pid, eps)
+        disk(w)
+        w.vendor_out(A, 0xCF, b"\x01")
+        w.vendor_out(A, 0xCF, b"\x01\x02")            # not the documented shape
+        raw = w.save(os.path.join(tmp, "full.pcap"))
+        chk = probe.check_capture(raw, "i1pro2")
+        folder = os.path.join(tmp, "s")
+        os.makedirs(folder)
+        probe.filter_xrite_capture(raw, os.path.join(folder, "a-instrument.pcap"), "i1pro2")
+        with open(os.path.join(folder, "session.json"), "w") as fh:
+            json.dump({"kind": probe.SESSION_KIND, "family": "i1pro2", "recorder": "x",
+                       "steps": [{"number": 1, "key": "calibrate", "title": "x", "take": 1,
+                                  "kept": True, "left_out": chk["left_out"],
+                                  "explained": chk["explained"],
+                                  "files_xrite": ["a-instrument.pcap"]}]}, fh)
+        text = probe.summarize_session([folder])
+        self.assertIn("0xCF set measurement clock mode: clock mode 1", text)
+        self.assertIn("0xCF set measurement clock mode: out=<2 bytes>", text)
+        self.assertEqual(probe._d_mcmode_set(b"\x03", b""), "clock mode 3")
+
+
 class ControlCharacters(unittest.TestCase):
 
     def test_every_string_decoder_drops_control_characters(self):
