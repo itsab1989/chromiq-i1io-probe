@@ -32,6 +32,23 @@ instrument.  If you already sent us an older file, tell us and we
 will delete it wherever we can, and treat it as private meanwhile.
 
 
+IF EVERY STEP OF A SESSION SAYS IT KEPT NOTHING
+-----------------------------------------------
+
+This has been seen once, and why it happens is not known yet.
+Since 1.6.3 the tool then says what the recording held (counts
+and USB ids only) and what you can try, for example:
+
+    1. Unplug the instrument's USB cable.
+    2. Wait five seconds.
+    3. Plug it back in.
+    4. Start the tool again.
+
+At the end it writes one small file,
+SEND-THIS-<date>-report-only.zip, with only the report and
+session.json (no recording).  Sending it helps us find the cause.
+
+
 THE SHORT VERSION
 -----------------
 

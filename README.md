@@ -27,8 +27,9 @@ It takes about **two minutes**, and you do **not** need to be technical.
 > still unknown (what lowers and lifts the head, how a job is stopped, how
 > the table reports a problem), and nothing is promised: ChromIQ cannot drive
 > the table. 1.5.4 asks for exactly what is missing, in
-> [up to five short steps](#the-i1io-steps-in-154). There is still no recording
-> from a handheld instrument.
+> [up to five short steps](#the-i1io-steps-in-154). Since then, testers have
+> also recorded handheld instruments (an original i1Pro, an i1Pro 2 and an
+> i1Pro 3) with the handheld session.
 
 > **Important if you made a recording with version 1.6.1 or older:** those
 > versions could keep traffic of **another USB device** that shared the
@@ -50,6 +51,16 @@ It takes about **two minutes**, and you do **not** need to be technical.
 > If you already sent us an older file, tell us and we will delete it
 > wherever we can, and treat it as private meanwhile.
 > [Why it happened](#which-traffic-is-the-instruments-since-162).
+
+> **If every step of a session says it kept nothing (1.6.3):** a tester's
+> screenshot showed this once, on Windows with an i1Pro 3, although the same
+> PC recorded fine before and after. Why it happens is **not known yet**.
+> Since 1.6.3 the tool says, after such a step, what the recording did hold
+> (counts, kinds of device and USB ids only, never contents) and what you can
+> try, one action per line; at the end it writes one small
+> `SEND-THIS-<date>-report-only.zip` with only the report and `session.json`
+> (no recording). Sending that helps us find the cause.
+> [Details](#when-a-step-keeps-nothing-since-163).
 
 > **Important for owners of an i1Pro 2 or an i1iO 2:** i1Profiler **3.8.7**
 > (July 2026) removed support for the i1Pro 2 and the i1iO 2. Please stay on
@@ -170,8 +181,9 @@ A window opens and walks you through three short steps:
 
      What would you like to do?
        1. record an i1iO table
-       2. record a handheld instrument   <- suggested
-          (the i1Pro family, the ColorMunki, the i1Studio)
+       2. record a handheld instrument or an i1iSis   <- suggested
+          (the i1Pro family, the ColorMunki, the i1Studio, the i1iSis
+          chart readers)
        3. nothing more: just make the report
        a. look again (after plugging something in)
    ```
@@ -180,8 +192,9 @@ A window opens and walks you through three short steps:
    plug the instrument in. For the i1iO (choice 1) it asks three easy
    questions (which iO generation, which instrument is mounted, which
    software and version) and then offers an **optional extra**: recording
-   what i1Profiler says to the table. Choice 2 is the handheld session
-   described below. `--io` and `--i1pro` choose without asking.
+   what i1Profiler says to the table. Choice 2 is the handheld session (or
+   the i1iSis session) described below. `--io`, `--i1pro` and `--isis`
+   choose without asking.
 
 It then saves a plain-text file such as `chromiq-io-probe-20261111-143052.txt`.
 **Open it, have a look, then attach it to
@@ -400,7 +413,8 @@ measuring program and one printed test chart.
    step 3 (for most people 4 to 6 seconds, counted).
 7. Let one scan fail on purpose, for example by lifting the instrument
    halfway (skip it if you would rather not).
-8. Read one single patch, if the program offers it.
+8. Read one single patch, if the program offers it. Afterwards the tool
+   reminds you to switch the program back to scanning strips (since 1.6.3).
 9. The same strip without the ruler, as a comparison, if the program allows
    it (i1Pro 2 and i1Pro 3 only).
 
@@ -408,7 +422,33 @@ Each step's instructions are a short numbered list, one action per line
 (since 1.6.2). After each step you type one line about what you did and what
 the program showed, which measurement condition the program showed (M0, M1,
 M2 or dual scan) where it matters, and (for instruments with lights) one
-line about what the lights did.
+line about what the lights did (since 1.6.3 a bare "no" is asked once more:
+did the lights not change, or did you not look?).
+
+### When a step keeps nothing (since 1.6.3)
+
+The tool keeps only traffic it can attribute to the instrument, and that has
+not changed. When a step's recording is not empty but nothing in it could be
+attributed, the step's check now says what the recording did hold, in counts
+and USB ids only:
+
+- how many records, and of which kinds of device (hub, keyboard or mouse,
+  disk, a device whose USB description the recording does not hold, ...);
+- whether the instrument family's USB id was seen, and whether the
+  instrument did anything there;
+- how many records travelled on the family's endpoint numbers under another
+  address;
+- whether another X-Rite instrument the tool knows was at work (then you may
+  have chosen the wrong instrument at the start).
+
+Then it lists what you can try, one action per line: unplug the instrument,
+wait five seconds, plug it back in, start the tool again; if the steps are
+still empty, restart Windows with "Restart" (not "Shut down" and switching
+on again) and plug the instrument in afterwards. The cause of a session in
+which every step stays empty is not known; this is what may help, nothing
+more. When no step of a session kept anything, the tool still writes ONE
+small file, `SEND-THIS-<date>-report-only.zip`, with only the report and
+`session.json`. They hold no recording, and they help us find out why.
 
 ### What it needs
 
@@ -489,15 +529,19 @@ line about what the lights did.
   is meant to hold **only the instrument's traffic** (by the rules
   [below](#which-traffic-is-the-instruments-since-162), which say what they
   cannot tell apart; up to 1.6.1 by its device address alone, which was not
-  enough). Only that copy goes into the
-  session folder (`instrument-session-<date>`);
+  enough). Since 1.6.3 that is only the instrument family you chose (the
+  i1Pro and the i1Pro 2 count as one), never another instrument the tool
+  knows; an X-Rite device the tool does not know is kept only when the step
+  shows none of your family, and the tool then says so after the step. Only
+  that copy goes into the session folder (`instrument-session-<date>`);
   the full recordings sit in a separate folder ending in `-FULL-do-not-send`,
   and the tool offers to delete them at the end.
 - Your one-line notes for each step, the program name and version, and the
   checks above, in `session.json`.
 - `analysis.txt`: the tool's own reading of the recordings (see `--analyze`).
-- **Nothing is uploaded, ever.** If you want to help, zip the session folder
-  yourself and send it, with the report. Remember that the zip contains your
+- **Nothing is uploaded, ever.** At the end the tool puts the report and the
+  session folder's own files into ONE `SEND-THIS-<date>.zip` next to it; if
+  you want to help, send that. Remember that the zip contains your
   instrument's serial number and its factory calibration data. Either attach
   it in the forum thread where you heard about this tool, or open a
   [new issue](https://github.com/itsab1989/ChromIQ/issues/new) and attach it
@@ -535,9 +579,10 @@ The tool offers the session when it sees an i1iSis plugged in (choice 2 at the
 question "What would you like to do?"). You can also start it directly with
 `--isis`. It works exactly like the handheld session above: the same recorders
 and checks, one small file per step, skip, repeat or stop at any time,
-`--steps` to repeat only some steps, and ONE `SEND-THIS-<date>.zip` at the
-end. Windows with USBPcap is the main route; a Mac works only with System
-Integrity Protection switched off.
+`--steps` to repeat only some steps, the same help when a step keeps nothing
+(since 1.6.3), and ONE `SEND-THIS-<date>.zip` at the end. Windows with
+USBPcap is the main route; a Mac works only with System Integrity Protection
+switched off.
 
 **Linux** works only by recording the USB traffic of a virtual machine that
 runs i1Profiler and has the i1iSis passed through to it (i1Profiler does not
@@ -646,9 +691,9 @@ talk through a USB-to-serial chip like the i1iO table does, and, if the
 program sends readable text, shows the first lines the **program** sent. The
 i1iSis's answers are never shown in the analysis, only their sizes, because
 they can hold its serial number (the same goes for any X-Rite device the tool
-has no decoder for). It ends with a checklist: real traffic, a page measured
-in single scan, a dual-scan page, a crooked page, a page that failed on
-purpose, and your notes on how the page moved.
+has no decoder for). It ends with a checklist: real traffic, the USB
+description, a page measured in single scan, a dual-scan page, a crooked
+page, a page that failed on purpose, and your notes on how the page moved.
 
 **How the read-only promise is tested (since 1.6):** a test runs a whole
 simulated i1iSis session while it watches, and blocks, the usual ways a Python
@@ -687,7 +732,13 @@ So you know exactly what you're sending:
 - The list of USB devices the system knows about, how they are wired together
   (hubs and Location IDs), and for the X-Rite devices their USB descriptors and
   interfaces as the system recorded them. This is the same kind of list 1.3
-  collected; on current macOS 1.3 simply got an empty one.
+  collected; on current macOS 1.3 simply got an empty one. Since 1.6.3 the
+  other devices appear with their USB vendor and product ids (and their kind,
+  where the list has one) but **without their names**, and the location parts
+  of Windows device IDs as short scrambled codes; Windows' own generic names
+  ("Generic USB Hub", "USB Mass Storage Device") stay, because they only say
+  what kind of device it is. With `--no-redact` everything is shown as the
+  system lists it.
 - Which X-Rite driver software and i1Profiler version is installed.
 - On a Mac: whether SIP is on or off, and which USB recording interfaces exist.
 - **i1Profiler chart *metadata***: the names and patch *counts* of the iO test
@@ -762,13 +813,17 @@ Useful options:
   With no path it finds the newest session or recording next to the tool.
   Reads only; sends nothing to the device. Since 1.6.2 it reads only what
   the copies keep, and shows no contents of a step in which another device
-  shared the instrument's address.
+  shared the instrument's address. Since 1.6.3 it also counts the i1Pro 3's
+  ruler travel per scan, lists every swipe with the time its readings took,
+  and leaves the dual scan out of the "only with the ruler" comparison.
 - `--clean ZIP_OR_FOLDER ...` (1.6.2): for files made with version 1.6.1 or
   older. Writes a cleaned copy of a `SEND-THIS-....zip` (as
   `...-cleaned.zip`), a session folder (as `...-cleaned`) or a single
   recording (as `...-cleaned.pcap`), next to the original: only the
-  instrument's traffic by the rules of 1.6.2, `analysis.txt` made again from
-  the cleaned recordings, and the analysis inside the report replaced. It
+  instrument's traffic by the rules of this version, `analysis.txt` made
+  again from the cleaned recordings, the analysis inside the report
+  replaced, and (since 1.6.3) the other USB devices' names in the report's
+  device lists hidden. It
   says per file what it removed, as counts and the kind of device it looked
   like, never the content. The original is not changed; delete it yourself
   once you have the cleaned copy.
@@ -808,7 +863,11 @@ when:
    keyboard report, with no key pressed, cannot be told apart; it carries no
    typed key).
 
-No session keeps a monitor calibrator (such as an i1Display) either. The
+No session keeps a monitor calibrator (such as an i1Display) either, and
+since 1.6.3 a handheld session keeps only its own instrument family (as the
+i1iSis session always did): never another instrument the tool knows, and an
+X-Rite device it does not know only when the step shows none of the family,
+with a note. The
 step's check says what was left out, how much and what kind of device it
 looked like, never what it was. When all of that traffic is explained as one
 USB disk on two endpoints the instrument does not have (as in the recording
@@ -841,8 +900,10 @@ By default the tool replaces serial numbers with a short scrambled code
 and removes your username and home-folder path. It does not collect documents,
 images, profiles, measurements, or anything personal: only descriptions of
 connected hardware, the processor type, the SIP state, and which X-Rite
-software is installed. If you spot anything in the report you'd rather not
-share, just delete it before sending.
+software is installed. Since 1.6.3 the other USB devices in its device lists
+appear without their names (with `--no-redact`, as the system lists them). If
+you spot anything in the report you'd rather not share, just delete it before
+sending.
 
 ---
 
