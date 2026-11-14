@@ -158,10 +158,12 @@ class Redacted(unittest.TestCase):
         self.assertIn("0971:2000 Gretag-Macbeth AG i1 Pro", text)
         text = probe.redact_inventory("Linux: kernel messages mentioning USB/FTDI", DMESG)
         self.assertPrivateGone(text)
-        self.assertIn("idVendor=046d, idProduct=c52b", text)
+        # 1.6.3 (review): only lines about an X-Rite device are kept
+        self.assertIn("idVendor=0971, idProduct=2000", text)
         self.assertIn("usb 1-3: Product: eye-one", text)
-        self.assertIn("reset high-speed USB device number 4", text)
-        self.assertIn("(3 lines naming other USB devices not shown)", text)
+        self.assertNotIn("046d", text)
+        self.assertNotIn("reset high-speed USB device number 4", text)
+        self.assertIn("(5 lines about other devices not shown)", text)
 
     def test_the_usbpcap_device_list(self):
         checks = {"admin": True, "usbpcapcmd": None, "service": {"installed": True,

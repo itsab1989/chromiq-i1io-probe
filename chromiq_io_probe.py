@@ -487,17 +487,25 @@ def set_section(title: str, body: str) -> None:
 # --------------------------------------------------------------------------
 
 NAME_HIDDEN = "(name not shown)"
+# 1.6.3 (review): exact forms only, matched in full; anything else is hidden
 _GENERIC_NAME_RE = re.compile(
-    r"^(generic (superspeed )?usb hub|usb root hub.*|usb composite device|"
+    r"(generic (superspeed )?usb hub|usb root hub( \(usb [\d.]+\))?|usb composite device|"
     r"usb (attached scsi \(uas\) )?mass storage device|usb input device|"
-    r"usb printing support|unknown usb device.*|usb serial (device|converter).*|"
-    r"usb audio device|usb video device|.*host controller.*|usb4.*|hid-compliant .*|"
-    r"usb hub|usb ?[\d.]* ?hub|usb ?\d*bus|usb ?[\d.]+ ?bus|root hub.*|hub)$", re.I)
+    r"usb printing support|unknown usb device \((device descriptor request failed|"
+    r"port reset failed|set address failed|device failed enumeration|invalid "
+    r"configuration descriptor)\)|usb serial device \(com\d{1,3}\)|"
+    r"usb serial converter( [a-d])?|usb audio device|usb video device|"
+    r"(intel\(r\) |amd |asmedia |renesas )?usb [\d.]+ e?xtensible host controller"
+    r"( - [\d.]+ \(microsoft\))?|standard (enhanced|openhci|universal) pci to usb host "
+    r"controller|standard openhci usb host controller|usb4\(tm\) (host|root) router"
+    r"( \(microsoft\))?|hid-compliant (mouse|keyboard|device|consumer control device|"
+    r"system controller|vendor-defined device|game controller)|"
+    r"usb ?[\d.]* ?hub|hub|usb ?\d*bus|usb ?[\d.]+ ?bus|root hub)", re.I)
 _REDACTED_RE = re.compile(r"^<redacted:[0-9a-f]{8}>$")
 
 
 def is_generic_name(name: str) -> bool:
-    return bool(_GENERIC_NAME_RE.match((name or "").strip()))
+    return bool(_GENERIC_NAME_RE.fullmatch((name or "").strip()))
 
 
 def inventory_name(name: str, xrite: bool = False) -> str:
@@ -567,7 +575,13 @@ def _redact_format_list(body: str) -> str:
     return "".join(out)
 
 
-_SP_HIDE_KEY = re.compile(r"(?i)name|manufacturer|serial|vendor_string|product_string")
+# 1.6.3 (review): for another device only these keys are kept (an allow-list:
+# a volume's mount point or label, a serial, a vendor's name all go)
+_SP_KEEP = {"vendor_id", "product_id", "USBDeviceKeyVendorID", "USBDeviceKeyProductID",
+            "device_speed", "USBDeviceKeyLinkSpeed", "bcd_device",
+            "USBDeviceKeyProductVersion", "Built-in_Device", "USBDeviceKeyClass",
+            "USBDeviceKeyDeviceClass"}
+_SP_HASH = {"location_id", "USBKeyLocationID"}
 
 
 def _redact_system_profiler(body: str) -> str:
@@ -589,16 +603,21 @@ def _redact_system_profiler(body: str) -> str:
         if not isinstance(node, dict):
             return
         vid = vid_of(node)
-        if vid not in XRITE_VIDS:
+        if vid not in XRITE_VIDS and "_name" in node:        # a device or bus entry
             for key, value in list(node.items()):
-                if not isinstance(value, str) or key == "_items":
+                if key == "_items":
                     continue
-                if key == "_name":
+                if key == "_name" and isinstance(value, str):
                     node[key] = value if is_generic_name(value) else NAME_HIDDEN
-                elif _SP_HIDE_KEY.search(key):
-                    node[key] = "(not shown)"
-                elif key in ("vendor_id", "USBDeviceKeyVendorID") and "(" in value:
+                elif key in _SP_HASH and isinstance(value, str):
+                    node[key] = f"<redacted:{salted_code(value)}>" \
+                        if not _REDACTED_RE.match(value) else value
+                elif key not in _SP_KEEP or not isinstance(value, (str, int, float)):
+                    del node[key]
+                elif isinstance(value, str) and "(" in value:
                     node[key] = value.split("(")[0].strip()
+            walk(node.get("_items"))
+            return
         walk(node.get("_items"))
         for key, value in node.items():
             if key != "_items" and isinstance(value, (list, dict)):
@@ -607,11 +626,12 @@ def _redact_system_profiler(body: str) -> str:
     return json.dumps(data, indent=2)
 
 
+# 1.6.3 (review): another device's properties: only these (an allow-list)
 _IOREG_KEEP = {"idVendor", "idProduct", "bcdDevice", "bDeviceClass", "bDeviceSubClass",
-               "bDeviceProtocol", "locationID", "USB Address", "UsbLinkSpeed", "Device Speed",
-               "bcdUSB", "bNumConfigurations", "kUSBCurrentConfiguration", "sessionID",
-               "IOGeneralInterest", "PortNum", "USBPortType"}
-_IOREG_HIDE_KEY = re.compile(r"(?i)name|string|serial|signature|vendor$|product$")
+               "bDeviceProtocol", "USB Address", "UsbLinkSpeed", "Device Speed",
+               "bcdUSB", "bNumConfigurations", "kUSBCurrentConfiguration", "PortNum",
+               "USBPortType", "bInterfaceClass", "bInterfaceSubClass", "bInterfaceProtocol",
+               "bInterfaceNumber", "bAlternateSetting", "bNumEndpoints"}
 
 
 def _redact_ioreg(body: str) -> str:
@@ -653,14 +673,15 @@ def _redact_ioreg(body: str) -> str:
             continue
         if not current:
             p = _IOREG_PROP_RE.match(line)
-            if p and p.group("key") not in _IOREG_KEEP and _IOREG_HIDE_KEY.search(p.group("key")):
+            if p and p.group("key") == "locationID":
+                line = line[:p.start("val")] + f"<redacted:{salted_code(p.group('val'))}>"
+            elif p and p.group("key") not in _IOREG_KEEP:
                 continue
         out.append(line)
     return "\n".join(out)
 
 
 _LSUSB_RE = re.compile(r"^(Bus \d+ Device \d+: ID ([0-9a-fA-F]{4}):[0-9a-fA-F]{4})\s*(.*)$")
-_NAMEY_DMESG = re.compile(r"Product:|Manufacturer:|SerialNumber:|\binput: |hid-\w+ |\[.+\]")
 
 
 def _redact_lsusb(body: str) -> str:
@@ -674,24 +695,35 @@ def _redact_lsusb(body: str) -> str:
     return "\n".join(out)
 
 
+_DMESG_TIME = re.compile(r"^\[\s*[\d.]+\]\s*")
+_DMESG_PORT = re.compile(r"\b(\d+-[\d.]+)(?=[:\s])")
+_DMESG_XRITE_ID = re.compile(r"(?i)idVendor=(0971|0765)\b|\b(0971|0765):[0-9a-f]{4}\b")
+
+
 def _redact_dmesg(body: str) -> str:
+    """1.6.3 (review): an allow-list. A line is kept only when it is about an
+    X-Rite device (its USB id, after dmesg's own time stamp, or a USB port
+    such an id was seen on, or an X-Rite name); every other line can name
+    another device, a disk's label or a person's folder, and is left out."""
     xrite_ports = set()
     for line in body.split("\n"):
-        m = re.search(r"usb (\d+-[\d.]+): .*idVendor=(0971|0765)", line, re.I)
-        if m:
-            xrite_ports.add(m.group(1))
+        text = _DMESG_TIME.sub("", line)
+        if _DMESG_XRITE_ID.search(text):
+            m = _DMESG_PORT.search(text)
+            if m:
+                xrite_ports.add(m.group(1))
     out, hidden = [], 0
     for line in body.split("\n"):
-        port = re.search(r"usb (\d+-[\d.]+):", line)
-        mine = (port and port.group(1) in xrite_ports) or _XRITE_NAME_RE.search(line) \
-            or re.search(r"(?i)ftdi|0971|0765", line)
-        text = re.sub(r"^\[\s*[\d.]+\]\s*", "", line)      # dmesg's own time stamp
-        if not mine and _NAMEY_DMESG.search(text):
+        text = _DMESG_TIME.sub("", line)
+        port = _DMESG_PORT.search(text)
+        mine = (port and port.group(1) in xrite_ports) or _DMESG_XRITE_ID.search(text) \
+            or _XRITE_NAME_RE.search(text)
+        if not mine and text.strip() and not text.startswith("("):
             hidden += 1
             continue
         out.append(line)
     if hidden:
-        out.append(f"({hidden} line{'s' if hidden != 1 else ''} naming other USB devices "
+        out.append(f"({hidden} line{'s' if hidden != 1 else ''} about other devices "
                    "not shown)")
     return "\n".join(out)
 
