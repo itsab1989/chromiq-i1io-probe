@@ -15,7 +15,10 @@ early.
   the tool, unplug the instrument, restart Windows with "Restart" (not
   "Shut down"), plug the instrument in afterwards, and start the tool
   again. Pressing Enter stops there; typing "go on" records anyway. "Could
-  not tell" never stops anything. The i1iO table session checks the same.
+  not tell" never stops anything. The i1iO table session checks the table
+  and the instrument on it. In an "another X-Rite instrument" session one
+  checked device the recorder sees is enough; any other device it does not
+  see is named, without stopping.
 - **After the first step:** if it recorded only the instrument's USB
   description and nothing the instrument did, the tool says so right away,
   instead of after all nine steps. Two things look exactly alike here, and
