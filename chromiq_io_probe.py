@@ -582,6 +582,23 @@ _SP_KEEP = {"vendor_id", "product_id", "USBDeviceKeyVendorID", "USBDeviceKeyProd
             "USBDeviceKeyProductVersion", "Built-in_Device", "USBDeviceKeyClass",
             "USBDeviceKeyDeviceClass"}
 _SP_HASH = {"location_id", "USBKeyLocationID"}
+# 1.6.4 (review): and each kept value only in the form it is expected to
+# have; anything else (a name typed into a field) is not shown
+_HEX4 = r"0x[0-9a-fA-F]{1,4}"
+_SP_FORMATS = {
+    "vendor_id": re.compile(_HEX4 + r"|apple_vendor_id"),
+    "USBDeviceKeyVendorID": re.compile(_HEX4 + r"|apple_vendor_id"),
+    "product_id": re.compile(_HEX4), "USBDeviceKeyProductID": re.compile(_HEX4),
+    "bcd_device": re.compile(r"\d{1,2}\.\d{1,2}"),
+    "USBDeviceKeyProductVersion": re.compile(r"\d{1,2}\.\d{1,2}"),
+    "device_speed": re.compile(r"(low|full|high|super|super_plus)_speed"),
+    "USBDeviceKeyLinkSpeed": re.compile(r"(low|full|high|super|super_plus)_speed|"
+                                        r"\d{1,3}(\.\d{1,2})? ?[MG]b/s"),
+    "Built-in_Device": re.compile(r"Yes|No"),
+    "USBDeviceKeyClass": re.compile(r"0x[0-9a-fA-F]{1,2}|\d{1,3}"),
+    "USBDeviceKeyDeviceClass": re.compile(r"0x[0-9a-fA-F]{1,2}|\d{1,3}"),
+}
+NOT_SHOWN = "(not shown)"
 
 
 def _redact_system_profiler(body: str) -> str:
@@ -614,8 +631,12 @@ def _redact_system_profiler(body: str) -> str:
                         if not _REDACTED_RE.match(value) else value
                 elif key not in _SP_KEEP or not isinstance(value, (str, int, float)):
                     del node[key]
-                elif isinstance(value, str) and "(" in value:
-                    node[key] = value.split("(")[0].strip()
+                elif isinstance(value, str):
+                    # "0x0781  (SanDisk Corp.)": the number, without the name
+                    value = value.split("(")[0].strip()
+                    fmt = _SP_FORMATS.get(key)
+                    node[key] = value if fmt is not None and fmt.fullmatch(value) \
+                        else NOT_SHOWN
             walk(node.get("_items"))
             return
         walk(node.get("_items"))
@@ -632,6 +653,9 @@ _IOREG_KEEP = {"idVendor", "idProduct", "bcdDevice", "bDeviceClass", "bDeviceSub
                "bcdUSB", "bNumConfigurations", "kUSBCurrentConfiguration", "PortNum",
                "USBPortType", "bInterfaceClass", "bInterfaceSubClass", "bInterfaceProtocol",
                "bInterfaceNumber", "bAlternateSetting", "bNumEndpoints"}
+
+
+_IOREG_VALUE = re.compile(r"-?\d{1,20}|0x[0-9a-fA-F]{1,16}|Yes|No")
 
 
 def _redact_ioreg(body: str) -> str:
@@ -677,6 +701,8 @@ def _redact_ioreg(body: str) -> str:
                 line = line[:p.start("val")] + f"<redacted:{salted_code(p.group('val'))}>"
             elif p and p.group("key") not in _IOREG_KEEP:
                 continue
+            elif p and not _IOREG_VALUE.fullmatch(p.group("val").strip()):
+                continue            # 1.6.4: a kept key, but not a plain number
         out.append(line)
     return "\n".join(out)
 

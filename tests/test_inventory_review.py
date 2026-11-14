@@ -244,3 +244,39 @@ class PortTrustEnds(unittest.TestCase):
             new = zf.read("chromiq-io-probe-20261114-120000.txt").decode()
         self.assertNotIn("MARK", new)
         self.assertIn("Product: i1Pro3", new)
+
+
+class ValuesInTheirForm(unittest.TestCase):
+    """1.6.4 (review): a kept macOS key keeps its value only in the expected
+    number form; a name planted in it is not shown."""
+
+    def setUp(self):
+        self.addCleanup(setattr, probe, "REDACT", probe.REDACT)
+        probe.REDACT = True
+
+    def test_system_profiler(self):
+        item = {"_name": "MARKNAME", "vendor_id": "0x0781 (MARKVENDOR)",
+                "product_id": "0x5567 MARKPID", "bcd_device": "1.00 MARKBCD",
+                "device_speed": "MARKSPEED_speed", "Built-in_Device": "MARKYES",
+                "USBDeviceKeyLinkSpeed": "480 Mb/s", "location_id": "0x14300000 / 4 MARKLOC"}
+        good = {"_name": "Hub", "vendor_id": "0x05e3", "product_id": "0x0610",
+                "bcd_device": "6.54", "device_speed": "high_speed", "Built-in_Device": "No"}
+        body = json.dumps({"SPUSBDataType": [{"_name": "USB31Bus", "_items": [item, good]}]})
+        out = probe.redact_inventory("macOS: USB device tree (JSON, older name SPUSBDataType)",
+                                     body)
+        self.assertEqual(sorted(set(MK.findall(out))), [], out)
+        bad, ok = json.loads(out)["SPUSBDataType"][0]["_items"]
+        self.assertEqual(bad["vendor_id"], "0x0781")
+        for key in ("product_id", "bcd_device", "device_speed", "Built-in_Device"):
+            self.assertEqual(bad[key], "(not shown)", key)
+        self.assertEqual(bad["USBDeviceKeyLinkSpeed"], "480 Mb/s")
+        self.assertEqual(ok, good)
+
+    def test_ioreg(self):
+        body = ("+-o MARKDEV@14200000  <class IOUSBHostDevice, id 0x1000>\n"
+                "  {\n    \"idVendor\" = 1921\n    \"idProduct\" = \"MARKPID\"\n"
+                "    \"bcdDevice\" = 256\n    \"USB Address\" = MARKADDR\n  }")
+        out = probe.redact_inventory("macOS: ioreg USB properties", body)
+        self.assertEqual(sorted(set(MK.findall(out))), [], out)
+        self.assertIn('"idVendor" = 1921', out)
+        self.assertIn('"bcdDevice" = 256', out)
