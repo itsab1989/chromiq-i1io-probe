@@ -11,8 +11,8 @@
   what the recording held, as counts, kinds of device and USB ids only
   (never contents): the records per kind of device, whether the instrument
   family's USB id was seen and whether it did anything there, how many
-  records travelled on the family's endpoint numbers under another address,
-  and whether another instrument the tool knows was at work. Then it says
+  records travelled on the family's endpoint numbers under another address.
+  Then it says
   what to try, one action per line: unplug the instrument, wait five
   seconds, plug it back in, start the tool again; if still empty, restart
   Windows with "Restart" (not "Shut down") and plug the instrument in
@@ -25,14 +25,31 @@
   shows none of the family (with a note), never another instrument the
   tool knows. "Another X-Rite instrument" keeps every X-Rite device except
   the monitor calibrators and the instruments with a session type of their
-  own. A bus that holds only another instrument's traffic says so in its
-  check. The i1iO table session and plain `--analyze` keep what they kept.
+  own. The i1iO table session and plain `--analyze` keep what they kept.
+- **The wrong instrument chosen at the start:** when a step's recording
+  holds only another instrument's traffic, the first thing the tool says is
+  which instrument the recording shows, that nothing was kept, and which
+  number to choose when you start the tool again (for example "choose 3
+  (i1Pro 3 or 3 Plus)"). It offers to stop right there (pressing Enter
+  stops); going on is possible, and every step then keeps nothing. No
+  replug advice in that case. The end of the run and the report say it
+  again.
 - **The report's device lists without other devices' names.** Other USB
   devices keep their vendor and product ids (and their kind, where the list
   has one), not their names; the location parts of Windows device IDs
-  become short scrambled codes. Windows' generic names and X-Rite devices
-  stay. `--clean` does the same for reports made by earlier versions.
-  `--no-redact` shows everything, as before.
+  become short codes. Only a fixed list of details is kept for another
+  device (a disk's volume name, for example, is not), and on Linux only
+  the kernel messages about an X-Rite device. Windows' exact generic names
+  and X-Rite devices stay. `--clean` does the same for reports made by
+  earlier versions. `--no-redact` shows everything, as before, and now says
+  so on screen and in the report: do not post such a report publicly.
+- **The short codes that replace serial numbers can no longer be reversed.**
+  Up to 1.6.2 they were an unsalted hash cut to 8 characters, so a serial
+  number of a few digits could be found by trying every number. They are now
+  mixed with a random value made new for every run and never written
+  anywhere: within one report or zip the same value still gets the same
+  code, but a code cannot be traced back or compared between people or
+  runs. (Codes in reports made by earlier versions stay as they were.)
 - **Steps shown after another device's traffic was removed:** the i1Pro 3
   firmware string and the ColorMunki version string show only their length
   there, and no decoded string carries a control character any more. The

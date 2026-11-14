@@ -3152,9 +3152,9 @@ def check_capture(path: str, profile: str | None = None) -> dict:
         xrite = len(mine)
         mine_events = capture_events(linktype, mine_recs)
         if not mine and profile in HANDHELD_PROFILES:
-            other_instrument = sorted({f"{i[0]:04x}:{i[1]:04x}" for i in
-                                       (_darwin_ids(d) for _ts, d in recs)
-                                       if i and i[0] in XRITE_VIDS})
+            other_instrument = other_instrument_ids(
+                {i: {"vid": i[0], "pid": i[1]} for i in
+                 (_darwin_ids(d) for _ts, d in recs) if i})
     else:
         # 1.5: Windows and Linux records carry a bus and device address but no
         # vendor ID, so the X-Rite device is found from its USB description
@@ -3178,19 +3178,12 @@ def check_capture(path: str, profile: str | None = None) -> dict:
             mine = []
             mine_events = []
             unidentified_isis = how == "unidentified"
-        elif profile in HANDHELD_PROFILES and any(
-                v.get("vid") in XRITE_VIDS or (not v.get("vid") and v.get("guess_family"))
-                for v in devices.values()):
+        elif profile in HANDHELD_PROFILES and other_instrument_ids(devices):
             # 1.6.3: only another instrument's traffic (a handheld session
             # keeps its own family only)
             mine = []
             mine_events = []
-            other_instrument = sorted(
-                {f"{v['vid']:04x}:{v['pid']:04x}" for v in devices.values()
-                 if v.get("vid") in XRITE_VIDS}
-                | {f"a device without USB description that uses the "
-                   f"{FAMILY_WORDS.get(v['guess_family'], v['guess_family'])}'s commands"
-                   for v in devices.values() if not v.get("vid") and v.get("guess_family")})
+            other_instrument = other_instrument_ids(devices)
         elif any(v.get("vid") for v in devices.values()):
             mine = []
             mine_events = []
@@ -3218,8 +3211,8 @@ def check_capture(path: str, profile: str | None = None) -> dict:
     elif other_instrument:
         code, verdict = "other-instrument", (
             "NOTHING KEPT: no traffic of the instrument this session is for; the X-Rite "
-            "traffic on this bus is another instrument's (" + "; ".join(other_instrument)
-            + "), so it was not kept.")
+            "traffic on this bus is another instrument's ("
+            + "; ".join(other_label(t) for t in other_instrument) + "), so it was not kept.")
     elif unidentified_isis:
         code, verdict = "unidentified", (
             "NOTHING KEPT: this recording does not say which device is the i1iSis "
@@ -3254,7 +3247,8 @@ def check_capture(path: str, profile: str | None = None) -> dict:
             "payload_bytes": payload_bytes, "nonzero_bytes": nonzero,
             "identified": identified, "activity": activity,
             "kept": how if xrite else "", "kept_ids": kept_ids if xrite else [],
-            "left_out": left_out, "explained": att.get("explained", False)}
+            "left_out": left_out, "explained": att.get("explained", False),
+            "other_ids": other_instrument if code == "other-instrument" else []}
 
 
 # --------------------------------------------------------------------------
@@ -3321,6 +3315,79 @@ def _seen_class(info: dict | None, dev_class, profile: str | None) -> str:
         if code in _CLASS_WORDS:
             return _CLASS_WORDS[code]
     return f"other USB device ({vid:04x}:{pid or 0:04x})"
+
+
+def other_instrument_ids(devices: dict) -> list:
+    """1.6.3: the other instruments of a recording a handheld session did not
+    keep: "vvvv:pppp" for an X-Rite device (not a monitor calibrator), or
+    "guess:<family>" for a device without a description that uses that
+    family's commands."""
+    out = set()
+    for v in devices.values():
+        vid, pid = v.get("vid"), v.get("pid")
+        if vid in XRITE_VIDS and (vid, pid) not in CALIBRATOR_IDS:
+            out.add(f"{vid:04x}:{(pid or 0):04x}")
+        elif not vid and v.get("guess_family"):
+            out.add("guess:" + v["guess_family"])
+    return sorted(out)
+
+
+def other_label(token: str) -> str:
+    """"an i1Pro 3 or i1Pro 3 Plus (0765:6009)" and so on."""
+    if token.startswith("guess:"):
+        fam = token[6:]
+        return (f"a device without a USB description that uses the "
+                f"{FAMILY_WORDS.get(fam, fam)}'s commands")
+    vid, pid = (int(x, 16) for x in token.split(":"))
+    if (vid, pid) == (XRITE_VID, 0x2000):
+        name = "i1Pro or i1Pro 2"
+    elif (vid, pid) == (XRITE_VID, IO_TABLE_PID):
+        name = "i1iO table"
+    elif (vid, pid) in PROFILE_IDS:
+        name = SHORT_NAMES[PROFILE_IDS[(vid, pid)]]
+    else:
+        name = _instrument_label(token)
+    if name.startswith("another"):
+        return f"{name} ({token})"
+    article = "an" if name[:1].lower() in "aeiou" else "a"
+    return f"{article} {name} ({token})"
+
+
+# The instruments in the order the session asks for them (_ask_profile).
+PROFILE_MENU = ["i1pro2", "i1pro", "i1pro3", "munki", "isis", "generic"]
+SHORT_NAMES = {"i1pro2": "i1Pro 2", "i1pro": "original i1Pro", "i1pro3": "i1Pro 3 or 3 Plus",
+               "munki": "ColorMunki or i1Studio", "isis": "i1iSis",
+               "generic": "another X-Rite instrument"}
+
+
+def choice_for(token: str) -> str:
+    """1.6.3: what to choose to record the instrument a token names."""
+    if token.startswith("guess:"):
+        prof = token[6:]
+    else:
+        vid, pid = (int(x, 16) for x in token.split(":"))
+        if (vid, pid) == (XRITE_VID, IO_TABLE_PID):
+            return "choose 1 (record an i1iO table) at its first question"
+        prof = PROFILE_IDS.get((vid, pid), "generic")
+    if prof in ("i1pro2", "i1pro"):
+        return ("choose 1 (i1Pro 2) or 2 (original i1Pro) when it asks which "
+                "instrument you use")
+    return (f"choose {PROFILE_MENU.index(prof) + 1} ({SHORT_NAMES[prof]}) when it asks "
+            "which instrument you use")
+
+
+def wrong_instrument_lines(tokens: list, profile: str) -> tuple:
+    """1.6.3 (review): (what was seen, [what to do]) when a step held only
+    another instrument's traffic: the first thing said after such a step."""
+    seen = [other_label(t) for t in tokens]
+    what = (", ".join(seen[:-1]) + " and " + seen[-1]) if len(seen) > 1 else seen[0]
+    first = (f"This recording shows {what}, not the instrument you chose "
+             f"({SHORT_NAMES.get(profile, profile)}). Nothing was kept from this step.")
+    todo = []
+    for t, label in zip(tokens, seen):
+        lead = "To record it" if len(tokens) == 1 else f"To record {label}"
+        todo.append(f"{lead}: stop here, start the tool again and {choice_for(t)}.")
+    return first, todo
 
 
 def recording_facts(path: str, profile: str | None = None) -> dict:
@@ -8917,6 +8984,9 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                 zero = zero or check["code"] == "all-zero"
                 if check["code"] == "unidentified":
                     entry["unidentified"] = True
+                if check.get("other_ids"):
+                    entry["other_instrument"] = sorted(
+                        set(entry.get("other_instrument", [])) | set(check["other_ids"]))
                 if check["xrite_packets"] and check["code"] in ("ok", "all-zero"):
                     dst_name = name.replace("-full.pcap", "-instrument.pcap")
                     if filter_xrite_capture(src, os.path.join(folder, dst_name), profile):
@@ -8934,8 +9004,47 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                 entry["seen"] = merge_facts([
                     recording_facts(os.path.join(full_dir, name), profile)
                     for name in entry.get("files_full", [])])
+            wrong = recorder is not None and not entry["files_xrite"] \
+                and entry.get("other_instrument")
+            if wrong:
+                session["wrong_instrument"] = sorted(
+                    set(session.get("wrong_instrument", [])) | set(entry["other_instrument"]))
             session["steps"].append(entry)
             _write_session(session, folder)
+            if wrong:
+                # 1.6.3 (review): the instrument chosen at the start is not the
+                # one recorded. Said first and plainly, with what to choose; no
+                # replug advice (it would not help), and stopping is the default.
+                first, todo = wrong_instrument_lines(entry["other_instrument"], profile)
+                print("  CHECK: " + _wrap(first, 70, "  "))
+                for line in todo:
+                    print("  " + _wrap(line, 74, "  "))
+                if session.get("wrong_instrument_go_on"):
+                    print("  (You chose to go on; this step kept nothing either.)")
+                    entry["kept"] = True
+                    _write_session(session, folder)
+                    if stop_after:
+                        session["ended"] = "stopped by the operator"
+                        break
+                    index += 1
+                    take = 1
+                    continue
+                if interrupted:
+                    entry["interrupted"] = True
+                    session["ended"] = interrupted
+                    _write_session(session, folder)
+                    break
+                answer = _session_ask(WRONG_INSTRUMENT_PROMPT).strip().lower()
+                entry["kept"] = True
+                if answer.startswith("g") and not stop_after:
+                    session["wrong_instrument_go_on"] = True
+                    _write_session(session, folder)
+                    index += 1
+                    take = 1
+                    continue
+                session["ended"] = "stopped: the recording shows another instrument than the one chosen"
+                _write_session(session, folder)
+                break
             if recorder is not None:
                 print("  CHECK: " + _wrap(handheld_step_verdict(entry, activity, empty, zero,
                                                                 profile), 64, "  "))
@@ -9054,6 +9163,11 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
 
 
 SHORT_STEP_SECONDS = 2.0
+
+# 1.6.3 (review): after a step that holds only another instrument; stopping
+# is the default
+WRONG_INSTRUMENT_PROMPT = ("\n  Press Enter to stop the session now (recommended), or type  "
+                           "go on  to\n  go on (every step will then keep nothing): ")
 
 # 1.6.2: a notes answer that is only one of these was most likely a stop
 # key typed once too often (or an Enter); the question is asked once more.
@@ -9299,6 +9413,9 @@ def finish_session(session: dict, folder: str) -> tuple:
             s.get("kept") is False else (
             ", ".join(s.get("files_xrite") or [])
             or ("cut from whole-session-instrument.pcap" if s.get("cut_from_whole_recording")
+                else "NOTHING KEPT: the recording shows another instrument ("
+                + ", ".join(s["other_instrument"]) + ")" if s.get("other_instrument")
+                and not s.get("files_xrite")
                 else "EMPTY: nothing kept, please repeat this step" if s.get("empty")
                 else "no instrument traffic"))
         # 1.6.3: wrapped for an 80-column window
@@ -10062,6 +10179,14 @@ def instrument_session_step(pids: list, direct: bool, only: list | None = None,
     seen_steps = [s for s in session["steps"] if s.get("seen") is not None]
     if outcome["recorded"]:
         _END["send"] = {"folder": folder}
+    elif session.get("wrong_instrument"):
+        # 1.6.3 (review): the instrument chosen is not the one recorded
+        first, todo = wrong_instrument_lines(session["wrong_instrument"], profile)
+        outcome["wrong_instrument"] = True
+        outcome["reason"] = first.replace("This recording shows", "The recording showed").replace(
+            " Nothing was kept from this step.", " Nothing was kept.")
+        outcome["help"] = ["\n".join("  " + _wrap(t.replace("stop here, start", "start"),
+                                                   66, "  ") for t in todo)]
     elif seen_steps:
         # 1.6.3: every recorded step kept nothing. The cause is not known;
         # the report and session.json (counts and ids, no recording) are
@@ -10088,6 +10213,9 @@ def instrument_session_step(pids: list, direct: bool, only: list | None = None,
         print()
         print(SIP_OFF_REMINDER)
     body = "\n".join(lines)
+    if outcome.get("wrong_instrument"):
+        body += ("\n\nTHE INSTRUMENT CHOSEN IS NOT THE ONE RECORDED\n" + outcome["reason"]
+                 + "\n" + "\n".join(outcome["help"]))
     if seen_steps:
         body += "\n\nWHAT THE STEPS THAT KEPT NOTHING HELD (counts and USB ids only)"
         for s in seen_steps:
@@ -10599,6 +10727,14 @@ def closing_words(outcome: dict | None) -> list:
         return first + ["  In the report the serial numbers are scrambled; in the",
                         "  recordings they cannot be, as said above.", "",
                         HANDHELD_SEND_WAYS]
+    if outcome.get("wrong_instrument"):
+        # 1.6.3 (review): nothing to send; what to choose, last on screen.
+        lines = ["  NOTHING WAS KEPT THIS TIME",
+                 "  " + _wrap(outcome.get("reason") or "", 66, "  "), ""]
+        lines += outcome.get("help") or []
+        lines += ["", "  You do not need to send anything from this session.",
+                  "  Thank you for trying!"]
+        return lines
     if outcome.get("all_empty"):
         # 1.6.3: one small file to send, and what to try, last on screen.
         lines = ["  NOTHING WAS KEPT THIS TIME",
@@ -10694,7 +10830,8 @@ def finish_report(args, system: str, instrument: bool = False,
     recorded = (not instrument) or bool((outcome or {}).get("recorded"))
     print("\n" + "=" * 68)
     print("  ALL DONE. Thank you!" if recorded else "  FINISHED, BUT NOTHING WAS KEPT"
-          if report_only else "  FINISHED, BUT NOTHING WAS RECORDED YET")
+          if report_only or (outcome or {}).get("wrong_instrument")
+          else "  FINISHED, BUT NOTHING WAS RECORDED YET")
     print("=" * 68)
     print()
     print("  Your report was saved here:")

@@ -236,9 +236,15 @@ jobs:
             - **A handheld session keeps only its own instrument family**
               (the i1Pro and the i1Pro 2 count as one), as the i1iSis
               session does; an unknown X-Rite device only with a note.
+            - **The wrong instrument chosen:** when a step holds only another
+              instrument's traffic, the tool says so first, names the number
+              to choose, and offers to stop (no replug advice then).
             - **The report's device lists show other USB devices without
-              their names** (ids and kind only); `--clean` does the same for
-              older reports; `--no-redact` shows everything.
+              their names** (ids and kind only; an allow-list); `--clean`
+              does the same for older reports; `--no-redact` shows
+              everything and says so.
+            - **The short codes that replace serial numbers are salted per
+              run** and can no longer be traced back by trying numbers.
             - Steps shown after another device's traffic was removed print
               no decoded text; no decoded string carries control
               characters; 0xCF is shown as "clock mode N".

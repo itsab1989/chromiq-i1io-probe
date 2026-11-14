@@ -454,7 +454,9 @@ class TheCheckNamesTheOtherInstrument(unittest.TestCase):
         path = w.save(os.path.join(tmp, "a.pcap"))
         check = probe.check_capture(path, "munki")
         self.assertEqual(check["code"], "other-instrument")
-        self.assertIn("another instrument's (0765:6009)", check["verdict"])
+        self.assertIn("another instrument's (an i1Pro 3 or 3 Plus (0765:6009))",
+                      check["verdict"])
+        self.assertEqual(check["other_ids"], ["0765:6009"])
         self.assertEqual(probe.check_capture(path, "i1pro3")["code"], "ok")
         # the table session and a caller without a type: as before
         self.assertEqual(probe.check_capture(path, "io")["code"], "ok")
@@ -501,3 +503,119 @@ class TheFinishLinesFit(unittest.TestCase):
         self.assertIn("were kept in the -FULL-do-not-send", " ".join(printed))
         for line in printed:
             self.assertLessEqual(len(line), 79, line)
+
+
+def i1pro3_rec():
+    w = synth.UsbPcapWriter()
+    synth.i1pro3_scan(w)
+    synth.keyboard_noise(w)
+    return w
+
+
+class TheWrongInstrument(TheWholeSession):
+    """1.6.3 (review, famB.py): an i1Pro 3 recorded in an i1Pro 2 session. The
+    first thing said is which instrument the recording shows and what to
+    choose; no replug advice; stopping is the default; the end and the
+    report say it again."""
+
+    START_I1PRO2 = ["1", "yes", "1", ""]
+
+    def test_stop_at_once(self):
+        with mock.patch.object(probe, "candidate_dirs", lambda: [self.dir]):
+            outcome, code, screen = self.run_all(i1pro3_rec,
+                                                 self.START_I1PRO2 + ["", "e", "", "yes"])
+        self.assertEqual(code, 0)
+        self.assertTrue(outcome["wrong_instrument"])
+        after = screen.split("Key received.")[1]
+        first = [l for l in after.splitlines() if l.strip()][2]   # after the "wait" line
+        self.assertTrue(first.startswith("  CHECK: This recording shows an i1Pro 3 or 3 Plus"),
+                        first)
+        flat = " ".join(screen.split())
+        self.assertIn("CHECK: This recording shows an i1Pro 3 or 3 Plus (0765:6009), not the "
+                      "instrument you chose (i1Pro 2). Nothing was kept from this step.", flat)
+        self.assertIn("To record it: stop here, start the tool again and choose 3 (i1Pro 3 "
+                      "or 3 Plus) when it asks which instrument you use.", flat)
+        prompt = probe.WRONG_INSTRUMENT_PROMPT
+        self.assertIn("Press Enter to stop the session now (recommended)", prompt)
+        self.assertTrue(all(len(l) <= 80 for l in prompt.splitlines()))
+        self.assertNotIn("WHAT YOU CAN TRY", screen)
+        self.assertNotIn("Unplug", screen)
+        self.assertNotIn("STEP 2 of 9", screen)
+        self.assertIn("NOTHING WAS KEPT THIS TIME", screen)
+        self.assertIn("The recording showed an i1Pro 3 or 3 Plus (0765:6009), not the "
+                      "instrument you chose (i1Pro 2). Nothing was kept.", flat)
+        tail = " ".join(screen.split("NOTHING WAS KEPT THIS TIME")[1].split())
+        self.assertIn("start the tool again and choose 3 (i1Pro 3 or 3 Plus)", tail)
+        self.assertEqual([p for p in self.written() if p.endswith(".zip")], [])
+        report = [p for p in self.written() if os.path.basename(p).startswith(
+            "chromiq-io-probe-")]
+        with open(report[0], encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn("THIS REPORT CONTAINS NO RECORDING. The recording showed an i1Pro 3", text)
+        self.assertIn("THE INSTRUMENT CHOSEN IS NOT THE ONE RECORDED", text)
+        for line in screen.splitlines():
+            if self.dir not in line and "fake_usbpcapcmd" not in line:
+                self.assertLessEqual(len(line), 80, line)
+
+    def test_go_on_is_possible(self):
+        answers = self.START_I1PRO2 + ["", "e", "go on", "", "e", "q"]
+        with mock.patch.object(probe, "candidate_dirs", lambda: [self.dir]):
+            _outcome, _code, screen = self.run_all(i1pro3_rec, answers)
+        self.assertIn("STEP 2 of 9", screen)
+        self.assertIn("(You chose to go on; this step kept nothing either.)", screen)
+        self.assertNotIn("WHAT YOU CAN TRY", screen)
+
+
+class EveryFamilyPair(unittest.TestCase):
+    """1.6.3 (review): each handheld session against each instrument."""
+
+    def recordings(self, tmp):
+        def i1pro2(w):
+            synth.i1pro2_calibration(w)
+        def munki(w):
+            synth.munki_scan(w)
+        def isis(w):
+            synth.isis_open(w)
+        def io_table(w):
+            w.describe(synth.I1PRO, 0x0971, 0x2004, [(0x81, 2), (0x02, 2)])
+            w.bulk_out(synth.I1PRO, 0x02, b";TABLE\r")
+            w.bulk_in(synth.I1PRO, 0x81, b"\x01\x60OK\r")
+        def i1pro3(w):
+            synth.i1pro3_scan(w)
+        out = {}
+        for name, fn in (("i1pro2", i1pro2), ("i1pro3", i1pro3), ("munki", munki),
+                         ("isis", isis), ("io", io_table)):
+            w = synth.UsbPcapWriter()
+            fn(w)
+            out[name] = w.save(os.path.join(tmp, name + ".pcap"))
+        return out
+
+    def test_pairs(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, tmp, True)
+        recs = self.recordings(tmp)
+        own = {"i1pro2": {"i1pro2"}, "i1pro": {"i1pro2"}, "i1pro3": {"i1pro3"},
+               "munki": {"munki"}, "generic": set()}
+        choice = {"i1pro2": "choose 1 (i1Pro 2) or 2 (original i1Pro)",
+                  "i1pro3": "choose 3 (i1Pro 3 or 3 Plus)",
+                  "munki": "choose 4 (ColorMunki or i1Studio)", "isis": "choose 5 (i1iSis)",
+                  "io": "choose 1 (record an i1iO table) at its first question"}
+        for session in ("i1pro2", "i1pro", "i1pro3", "munki", "generic"):
+            for rec, path in recs.items():
+                with self.subTest(session=session, recording=rec):
+                    check = probe.check_capture(path, session)
+                    if rec in own[session]:
+                        self.assertEqual(check["code"], "ok")
+                        continue
+                    self.assertEqual(check["code"], "other-instrument")
+                    first, todo = probe.wrong_instrument_lines(check["other_ids"], session)
+                    self.assertTrue(first.startswith("This recording shows "), first)
+                    self.assertIn(f"not the instrument you chose "
+                                  f"({probe.SHORT_NAMES[session]})", first)
+                    self.assertIn(choice[rec], " ".join(todo))
+
+    def test_several_instruments_are_each_named(self):
+        first, todo = probe.wrong_instrument_lines(["0971:2000", "0971:2006"], "i1pro3")
+        self.assertIn("an i1Pro or i1Pro 2 (0971:2000) and an i1iSis (0971:2006)", first)
+        self.assertEqual(len(todo), 2)
+        self.assertTrue(todo[0].startswith("To record an i1Pro or i1Pro 2 (0971:2000):"))

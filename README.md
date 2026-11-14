@@ -438,8 +438,12 @@ and USB ids only:
   instrument did anything there;
 - how many records travelled on the family's endpoint numbers under another
   address;
-- whether another X-Rite instrument the tool knows was at work (then you may
-  have chosen the wrong instrument at the start).
+- whether another X-Rite instrument the tool knows was at work.
+
+If a step holds only another instrument's traffic (you chose, say, the
+i1Pro 2, but an i1Pro 3 is plugged in), the tool says that first, names
+the number to choose when you start it again, and offers to stop at once;
+it gives no replug advice then.
 
 Then it lists what you can try, one action per line: unplug the instrument,
 wait five seconds, plug it back in, start the tool again; if the steps are
@@ -735,7 +739,7 @@ So you know exactly what you're sending:
   collected; on current macOS 1.3 simply got an empty one. Since 1.6.3 the
   other devices appear with their USB vendor and product ids (and their kind,
   where the list has one) but **without their names**, and the location parts
-  of Windows device IDs as short scrambled codes; Windows' own generic names
+  of Windows device IDs as short codes; Windows' own generic names
   ("Generic USB Hub", "USB Mass Storage Device") stay, because they only say
   what kind of device it is. With `--no-redact` everything is shown as the
   system lists it.
@@ -895,9 +899,12 @@ mouse may stay.
 
 ## Privacy
 
-By default the tool replaces serial numbers with a short scrambled code
-(including the copy macOS hides inside `UsbDeviceSignature`, which 1.3 missed)
-and removes your username and home-folder path. It does not collect documents,
+By default the tool replaces serial numbers with a short code (including the
+copy macOS hides inside `UsbDeviceSignature`, which 1.3 missed) and removes
+your username and home-folder path. Since 1.6.3 that code is mixed with a
+random value made new for every run and never written anywhere, so it cannot
+be traced back to the serial number by trying numbers, and is not the same in
+two people's reports. It does not collect documents,
 images, profiles, measurements, or anything personal: only descriptions of
 connected hardware, the processor type, the SIP state, and which X-Rite
 software is installed. Since 1.6.3 the other USB devices in its device lists
