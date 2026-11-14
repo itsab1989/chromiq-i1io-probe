@@ -280,3 +280,26 @@ class ValuesInTheirForm(unittest.TestCase):
         self.assertEqual(sorted(set(MK.findall(out))), [], out)
         self.assertIn('"idVendor" = 1921', out)
         self.assertIn('"bcdDevice" = 256', out)
+
+
+class PortlessLines(unittest.TestCase):
+    """1.6.4 (review, dm.py "portless line with X-Rite word"): a kernel line
+    that names no USB port is kept only by an X-Rite USB id, never by a name."""
+
+    def setUp(self):
+        self.addCleanup(setattr, probe, "REDACT", probe.REDACT)
+        probe.REDACT = True
+
+    def test_names_alone_do_not_keep_a_line(self):
+        body = ("[ 1.0] input: X-Rite fake keyboard MARKPORTLESS as /devices/pci0000:00/"
+                "0000:00:14.0/usb1/1-5/input/input5\n"
+                "[ 1.1] hid-generic 0003:1234:0001.0001: input,hidraw0: USB HID v1.11 "
+                "Keyboard [i1Pro clone MARKHID] on usb-0000:00:14.0-5/input0\n"
+                "[ 1.2] hid-generic 0003:046D:C31C.0002: input: USB HID v1.11 Keyboard "
+                "[Logitech MARKLOGI] on usb-0000:00:14.0-6/input0\n"
+                "[ 1.3] hid-generic 0003:0765:5020.0003: hiddev0,hidraw1: USB HID v1.11 "
+                "Device [X-Rite i1Display] on usb-0000:00:14.0-7/input0")
+        out = probe.redact_inventory("Linux: kernel messages mentioning USB/FTDI", body)
+        self.assertEqual(sorted(set(MK.findall(out))), [], out)
+        self.assertIn("0003:0765:5020.0003", out)
+        self.assertIn("(3 lines about other devices not shown)", out)

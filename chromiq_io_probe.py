@@ -767,7 +767,7 @@ def _redact_dmesg(body: str) -> str:
     off), or until a new device on that port shows another id. A device
     plugged into the same port later is hidden like any other; the
     instrument plugged in again is trusted again. A line that names no port
-    is kept only when it carries an X-Rite USB id (or an X-Rite name)."""
+    is kept only when it carries an X-Rite USB id."""
     trusted: set = set()
     out, hidden = [], 0
     for line in body.split("\n"):
@@ -786,7 +786,9 @@ def _redact_dmesg(body: str) -> str:
             if _DMESG_GONE.search(text):
                 trusted -= {p for p in trusted if p == port or p.startswith(port + ".")}
         else:
-            keep = bool(_DMESG_XRITE_ID.search(text) or _XRITE_NAME_RE.search(text))
+            # 1.6.4 (review): by its USB id only (0765:xxxx, also in the HID
+            # form 0003:0765:xxxx); a name can be anyone's
+            keep = bool(_DMESG_XRITE_ID.search(text))
         if not keep and text.strip() and not text.startswith("("):
             hidden += 1
             continue
