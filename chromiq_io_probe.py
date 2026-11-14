@@ -395,7 +395,7 @@ def scrub(text: str) -> str:
 
 
 def section(title: str, body: str) -> None:
-    _SECTIONS.append((title, scrub(body if body is not None else "")))
+    _SECTIONS.append((title, redact_inventory(title, scrub(body if body is not None else ""))))
 
 
 def set_section(title: str, body: str) -> None:
@@ -403,9 +403,274 @@ def set_section(title: str, body: str) -> None:
     long session can keep its report section up to date as it goes."""
     for i, (old, _body) in enumerate(_SECTIONS):
         if old == title:
-            _SECTIONS[i] = (title, scrub(body if body is not None else ""))
+            _SECTIONS[i] = (title, redact_inventory(title, scrub(body if body is not None
+                                                               else "")))
             return
     section(title, body)
+
+
+# --------------------------------------------------------------------------
+# 1.6.3: the other USB devices in the report's device lists
+#
+# The report lists every USB device of the computer for context (the hubs and
+# controllers the instrument hangs off). A tester's report showed the other
+# devices' names, a printer's model inside a Windows device ID and location
+# IDs, and --clean left them. Decision: by default (redaction on) another
+# device keeps its USB vendor and product id and, where the list has one, its
+# class, but not its name; Windows' own generic names ("Generic USB Hub", "USB
+# Mass Storage Device", ...) stay, because they ARE the class. X-Rite devices
+# are shown in full. --no-redact shows everything, as before. There is no
+# second, full copy: the person can always look at the device list in the
+# system's own tools.
+# --------------------------------------------------------------------------
+
+NAME_HIDDEN = "(name not shown)"
+_GENERIC_NAME_RE = re.compile(
+    r"^(generic (superspeed )?usb hub|usb root hub.*|usb composite device|"
+    r"usb (attached scsi \(uas\) )?mass storage device|usb input device|"
+    r"usb printing support|unknown usb device.*|usb serial (device|converter).*|"
+    r"usb audio device|usb video device|.*host controller.*|usb4.*|hid-compliant .*|"
+    r"usb hub|usb ?[\d.]* ?hub|usb ?\d*bus|usb ?[\d.]+ ?bus|root hub.*|hub)$", re.I)
+_REDACTED_RE = re.compile(r"^<redacted:[0-9a-f]{8}>$")
+
+
+def is_generic_name(name: str) -> bool:
+    return bool(_GENERIC_NAME_RE.match((name or "").strip()))
+
+
+def inventory_name(name: str, xrite: bool = False) -> str:
+    """A device name for the report's lists: X-Rite and generic names as
+    they are, any other name hidden (when redaction is on). A USBPcapCMD
+    name keeps its "[address] " prefix."""
+    if not REDACT or not name:
+        return name
+    m = re.match(r"^(\[\d+\]\s*)(.*)$", name)
+    head, rest = (m.group(1), m.group(2)) if m else ("", name)
+    if xrite or _XRITE_NAME_RE.search(rest) or is_generic_name(rest) or rest == NAME_HIDDEN:
+        return name
+    return head + NAME_HIDDEN
+
+
+def _hash_token(token: str) -> str:
+    if _REDACTED_RE.match(token):
+        return token
+    return f"<redacted:{hashlib.sha256(token.encode('utf-8', 'replace')).hexdigest()[:8]}>"
+
+
+def _instance_id(value: str) -> str:
+    """A Windows device instance ID with only its enumerator and its
+    VID/PID or VEN/DEV parts: the rest (a model name, a location, a
+    serial) as a short stable hash."""
+    parts = value.strip().split("\\")
+    if len(parts) < 2 or re.search(r"VID_(0971|0765)\b", value, re.I):
+        return value
+    ids = [t for t in re.split(r"[&]", parts[1]) if re.match(r"(?i)(VID|PID|VEN|DEV|MI)_", t)]
+    middle = "&".join(ids) if ids else _hash_token(parts[1])
+    return "\\".join([parts[0], middle] + [_hash_token(p) for p in parts[2:]])
+
+
+def _redact_format_list(body: str) -> str:
+    """Windows' Format-List blocks (FriendlyName, InstanceId, ...)."""
+    out = []
+    for block in re.split(r"(\n\s*\n)", body):
+        if not block.strip():
+            out.append(block)
+            continue
+        xrite = bool(re.search(r"VID_(0971|0765)\b", block, re.I))
+        lines = []
+        last = None
+        for line in block.split("\n"):
+            m = re.match(r"^(\s*)(FriendlyName|InstanceId)(\s*:\s?)(.*)$", line)
+            if m:
+                last = m.group(2)
+                value = m.group(4)
+                if last == "FriendlyName":
+                    value = inventory_name(value, xrite)
+                    if value == NAME_HIDDEN:
+                        vid = re.search(r"VID_([0-9A-Fa-f]{4})", block)
+                        if vid:
+                            value += f" (vendor id {vid.group(1).lower()})"
+                else:
+                    value = _instance_id(value)
+                lines.append(m.group(1) + m.group(2) + m.group(3) + value)
+                continue
+            if re.match(r"^\s*\w[\w ]*\s:\s", line):
+                last = None
+                lines.append(line)
+            elif last and line.startswith(" ") and not xrite:
+                continue                # the wrapped rest of a hidden value
+            else:
+                lines.append(line)
+        out.append("\n".join(lines))
+    return "".join(out)
+
+
+_SP_HIDE_KEY = re.compile(r"(?i)name|manufacturer|serial|vendor_string|product_string")
+
+
+def _redact_system_profiler(body: str) -> str:
+    try:
+        data = json.loads(body)
+    except (ValueError, TypeError):
+        if body.startswith("["):
+            return body                # the tool's own note, not a device list
+        return "[not shown: the device list could not be read to hide other devices' names]"
+
+    def vid_of(item):
+        return _to_int(item.get("USBDeviceKeyVendorID", item.get("vendor_id")))
+
+    def walk(node):
+        if isinstance(node, list):
+            for x in node:
+                walk(x)
+            return
+        if not isinstance(node, dict):
+            return
+        vid = vid_of(node)
+        if vid not in XRITE_VIDS:
+            for key, value in list(node.items()):
+                if not isinstance(value, str) or key == "_items":
+                    continue
+                if key == "_name":
+                    node[key] = value if is_generic_name(value) else NAME_HIDDEN
+                elif _SP_HIDE_KEY.search(key):
+                    node[key] = "(not shown)"
+                elif key in ("vendor_id", "USBDeviceKeyVendorID") and "(" in value:
+                    node[key] = value.split("(")[0].strip()
+        walk(node.get("_items"))
+        for key, value in node.items():
+            if key != "_items" and isinstance(value, (list, dict)):
+                walk(value)
+    walk(data)
+    return json.dumps(data, indent=2)
+
+
+_IOREG_KEEP = {"idVendor", "idProduct", "bcdDevice", "bDeviceClass", "bDeviceSubClass",
+               "bDeviceProtocol", "locationID", "USB Address", "UsbLinkSpeed", "Device Speed",
+               "bcdUSB", "bNumConfigurations", "kUSBCurrentConfiguration", "sessionID",
+               "IOGeneralInterest", "PortNum", "USBPortType"}
+_IOREG_HIDE_KEY = re.compile(r"(?i)name|string|serial|signature|vendor$|product$")
+
+
+def _redact_ioreg(body: str) -> str:
+    lines = body.split("\n")
+    nodes = []                           # (line index, depth, class)
+    for i, line in enumerate(lines):
+        m = _IOREG_NODE_RE.match(line)
+        if m:
+            nodes.append([i, len(m.group("indent")), m.group("cls").strip(), None])
+        elif nodes:
+            p = _IOREG_PROP_RE.match(line)
+            if p and p.group("key") == "idVendor":
+                nodes[-1][3] = _to_int(_ioreg_value(p.group("val")))
+    keep_node = {}
+    stack = []                           # (depth, kept because X-Rite)
+    for idx, depth, cls, vid in nodes:
+        while stack and stack[-1][0] >= depth:
+            stack.pop()
+        under_xrite = any(x for _d, x in stack)
+        xrite = vid in XRITE_VIDS or under_xrite
+        # only USB devices and their interfaces carry a product's name; the
+        # controllers and the root are the Mac's own
+        keep_node[idx] = xrite or cls not in _USB_DEVICE_CLASSES + (
+            "IOUSBHostInterface", "IOUSBInterface")
+        stack.append((depth, vid in XRITE_VIDS or under_xrite))
+    out = []
+    current = True
+    for i, line in enumerate(lines):
+        if i in keep_node:
+            current = keep_node[i]
+            if not current:
+                m = _IOREG_NODE_RE.match(line)
+                name = m.group("name")
+                base, at, unit = name.rpartition("@")
+                shown = base if at else name
+                if not is_generic_name(shown):
+                    line = line.replace(f"+-o {name}  <", f"+-o {NAME_HIDDEN}{at}{unit if at else ''}  <", 1)
+            out.append(line)
+            continue
+        if not current:
+            p = _IOREG_PROP_RE.match(line)
+            if p and p.group("key") not in _IOREG_KEEP and _IOREG_HIDE_KEY.search(p.group("key")):
+                continue
+        out.append(line)
+    return "\n".join(out)
+
+
+_LSUSB_RE = re.compile(r"^(Bus \d+ Device \d+: ID ([0-9a-fA-F]{4}):[0-9a-fA-F]{4})\s*(.*)$")
+_NAMEY_DMESG = re.compile(r"Product:|Manufacturer:|SerialNumber:|\binput: |hid-\w+ |\[.+\]")
+
+
+def _redact_lsusb(body: str) -> str:
+    out = []
+    for line in body.split("\n"):
+        m = _LSUSB_RE.match(line)
+        if m and int(m.group(2), 16) not in XRITE_VIDS and m.group(2).lower() != "1d6b" \
+                and m.group(3) and m.group(3) != NAME_HIDDEN:
+            line = f"{m.group(1)} {NAME_HIDDEN}"
+        out.append(line)
+    return "\n".join(out)
+
+
+def _redact_dmesg(body: str) -> str:
+    xrite_ports = set()
+    for line in body.split("\n"):
+        m = re.search(r"usb (\d+-[\d.]+): .*idVendor=(0971|0765)", line, re.I)
+        if m:
+            xrite_ports.add(m.group(1))
+    out, hidden = [], 0
+    for line in body.split("\n"):
+        port = re.search(r"usb (\d+-[\d.]+):", line)
+        mine = (port and port.group(1) in xrite_ports) or _XRITE_NAME_RE.search(line) \
+            or re.search(r"(?i)ftdi|0971|0765", line)
+        text = re.sub(r"^\[\s*[\d.]+\]\s*", "", line)      # dmesg's own time stamp
+        if not mine and _NAMEY_DMESG.search(text):
+            hidden += 1
+            continue
+        out.append(line)
+    if hidden:
+        out.append(f"({hidden} line{'s' if hidden != 1 else ''} naming other USB devices "
+                   "not shown)")
+    return "\n".join(out)
+
+
+INVENTORY_SECTIONS = {
+    "Windows: all USB controllers/hubs (topology context)": _redact_format_list,
+    "macOS: USB device tree (JSON, SPUSBHostDataType)": _redact_system_profiler,
+    "macOS: USB device tree (JSON, older name SPUSBDataType)": _redact_system_profiler,
+    "macOS: ioreg USB properties": _redact_ioreg,
+    "Linux: lsusb (all devices)": _redact_lsusb,
+    "Linux: kernel messages mentioning USB/FTDI": _redact_dmesg,
+}
+
+
+def redact_inventory(title: str, body: str) -> str:
+    """1.6.3: the report's device lists without other devices' names."""
+    fn = INVENTORY_SECTIONS.get(title)
+    if not REDACT or fn is None or not body:
+        return body
+    try:
+        return fn(body)
+    except Exception:                                     # noqa: BLE001
+        return "[not shown: the device list could not be read to hide other devices' names]"
+
+
+def redact_report_inventory(text: str) -> str:
+    """1.6.3, --clean: the same for a whole report written by an earlier
+    version (sections are "=" * 72, title, "=" * 72, body)."""
+    bar = "=" * 72
+    parts = text.split("\n" + bar + "\n")
+    out = [parts[0]]
+    i = 1
+    while i < len(parts):
+        title = parts[i]
+        body = parts[i + 1] if i + 1 < len(parts) else ""
+        if title in INVENTORY_SECTIONS and "\n" not in title:
+            tail = body.endswith("\n")
+            body = redact_inventory(title, body.rstrip("\n")) + ("\n" if tail else "")
+        out += [title, body]
+        i += 2
+    return ("\n" + bar + "\n").join(out)
 
 
 # 1.5.4: what the very end of the run must still show (the SIP box after a
@@ -7671,7 +7936,7 @@ def usbpcap_diagnosis(c: dict) -> str:
         mark = "  <-- recorded" if h in chosen else ""
         lines.append(f"    {h['path']} ({h['display']}){mark}")
         for addr, name in h.get("devices") or []:
-            lines.append(f"      device {addr}: {name}")
+            lines.append(f"      device {addr}: {inventory_name(name)}")
         if not h.get("devices"):
             lines.append("      (USBPcapCMD listed no devices here)")
     lines.append(f"  why: {why}" if hubs else "  (none: nothing to record on)")
@@ -9275,11 +9540,18 @@ def clean_paths(paths: list) -> tuple:
                               errors="replace") as fh:
                         text = fh.read()
                     new, found = _clean_report_text(text, analysis)
+                    # 1.6.3: and the other USB devices' names in its lists
+                    named = redact_report_inventory(new)
                     with open(os.path.join(out_root, name), "w", encoding="utf-8") as fh:
-                        fh.write(new)
-                    lines.append(f"    {name}: " + (
-                        "its analysis was replaced by the one made from the cleaned "
-                        "recordings" if found else "kept as it was (it holds no analysis)"))
+                        fh.write(named)
+                    done = []
+                    if found:
+                        done.append("its analysis was replaced by the one made from the "
+                                    "cleaned recordings")
+                    if named != new:
+                        done.append("other USB devices' names in its device lists are hidden")
+                    lines.append(f"    {name}: " + ("; ".join(done) or
+                                                    "kept as it was (it holds no analysis)"))
                 try:
                     with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as out_zip:
                         for root, _dirs, files in os.walk(out_root):
