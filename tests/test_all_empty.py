@@ -284,9 +284,10 @@ class TheWholeSession(unittest.TestCase):
                               lambda: {"build": 26200, "display": "25H2", "product": ""}),
             mock.patch.object(probe, "windows_is_arm", lambda: False),
             mock.patch.object(probe, "windows_is_admin", lambda: True),
-            mock.patch.object(probe, "windows_driver_devices", lambda: [
-                {"vid": 0x0765, "pid": 0x6009, "name": "i1Pro3", "class": "USBDevice",
-                 "service": "WinUSB", "provider": "X-Rite", "status": "OK"}]),
+            mock.patch.object(probe, "windows_driver_devices", lambda: getattr(
+                self, "drivers", [
+                    {"vid": 0x0765, "pid": 0x6009, "name": "i1Pro3", "class": "USBDevice",
+                     "service": "WinUSB", "provider": "X-Rite", "status": "OK"}])),
             mock.patch.object(probe.platform, "system", lambda: "Windows"),
             mock.patch.object(probe, "_writable_dir", lambda: self.dir),
             mock.patch.object(probe, "ask", _answers(it)),

@@ -2556,6 +2556,21 @@ def annotate_session() -> None:
     print(CAPTURE_HELP.get(system, CAPTURE_HELP["Linux"]))
     print()
     print(I1PROFILER_WARNING)
+    if system == "Windows" and not windows_is_arm():
+        # 1.6.5: the table's driver stack, as for the handheld session
+        verdict = recorder_verdict(windows_driver_devices(), SESSION_TABLE)
+        print("\n  " + recorder_line(verdict))
+        section("Stage 2: USB recorder", recorder_line(verdict) + "\n" + "\n".join(
+            f"  {d['name']} ({d['ids']}): {RECORDER_WORDS[d['state']]}"
+            for d in verdict["devices"]))
+        if verdict["verdict"] == "no":
+            print()
+            print("\n".join("  " + l for l in recorder_not_attached_lines(verdict)))
+            flush_pending_input()
+            if not ask(RECORDER_STOP_PROMPT).strip().lower().startswith("g"):
+                section("Stage 2: timed recording",
+                        "[stopped: the USB recorder is not attached to the table]")
+                return
 
     print("\n" + "-" * 68)
     print("\n".join(io_steps_overview(IO_STEPS)))
@@ -8171,12 +8186,16 @@ def recorder_advice_lines() -> list:
 
 def recorder_not_attached_lines(v: dict) -> list:
     names = ", ".join(d["name"] for d in v["devices"] if d["state"] == "no") or "instrument"
-    return (["THE USB RECORDER IS NOT ATTACHED TO YOUR INSTRUMENT YET",
+    return _lines(["THE USB RECORDER IS NOT ATTACHED TO YOUR INSTRUMENT YET",
              _wrap(f"Windows lists your instrument ({names}) without USBPcap, the "
                    "recorder, among its drivers. USBPcap joins a USB device only when "
                    "Windows sets that device up, for example when it is plugged in or "
                    "when Windows starts. Until then every step would keep nothing.", 74, ""),
              "Please do this:"] + recorder_advice_lines())
+
+
+def _lines(items: list) -> list:
+    return [part for item in items for part in item.split("\n")]
 
 
 def descriptor_only_lines(system: str | None = None) -> list:
@@ -9644,7 +9663,7 @@ def finish_session(session: dict, folder: str) -> tuple:
     done = [s for s in session["steps"] if s.get("files_xrite")
             or s.get("cut_from_whole_recording")]
     lines = [f"Session folder: {os.path.basename(folder)}",
-             f"Ended: {session.get('ended') or 'unknown'}",
+             _wrap(f"Ended: {session.get('ended') or 'unknown'}", 76, "  "),
              f"Steps with a saved recording: {len(done)}"]
     for s in session["steps"]:
         state = "skipped" if s.get("skipped") else "replaced by the next take" if \
