@@ -830,7 +830,10 @@ Useful options:
   device lists hidden. It
   says per file what it removed, as counts and the kind of device it looked
   like, never the content. The original is not changed; delete it yourself
-  once you have the cleaned copy.
+  once you have the cleaned copy. Reports made with a version before 1.6.3
+  contain codes that can be traced back to short serial numbers; please do
+  not post such a report publicly, and delete one you already posted if you
+  can. `--clean` cannot change those old codes.
 
 The tests need nothing but Python: `python3 -m unittest discover -s tests -v`.
 
@@ -904,7 +907,10 @@ copy macOS hides inside `UsbDeviceSignature`, which 1.3 missed) and removes
 your username and home-folder path. Since 1.6.3 that code is mixed with a
 random value made new for every run and never written anywhere, so it cannot
 be traced back to the serial number by trying numbers, and is not the same in
-two people's reports. It does not collect documents,
+two people's reports. **Reports made with a version before 1.6.3 contain codes
+that can be traced back to short serial numbers.** Please do not post such a
+report publicly, and delete one you already posted if you can. `--clean`
+cannot change those old codes. It does not collect documents,
 images, profiles, measurements, or anything personal: only descriptions of
 connected hardware, the processor type, the SIP state, and which X-Rite
 software is installed. Since 1.6.3 the other USB devices in its device lists

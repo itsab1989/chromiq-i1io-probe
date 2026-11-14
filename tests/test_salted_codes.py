@@ -82,3 +82,27 @@ class SaltedCodes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheOldReportsAdvice(unittest.TestCase):
+    """1.6.4 (review): the advice about reports made before 1.6.3 is in the
+    CHANGELOG's 1.6.4 entry, the release body and the README."""
+
+    def read(self, *parts):
+        with open(os.path.join(ROOT, *parts), encoding="utf-8") as fh:
+            return " ".join(fh.read().replace(">", " ").split())
+
+    def test_everywhere(self):
+        changelog = self.read("CHANGELOG.md")
+        entry = changelog.split("## v1.6.4")[1].split("## v1.6.3")[0]
+        body = self.read(".github", "workflows", "build.yml")
+        body164 = body.split("What's new in 1.6.4")[1].split("What's new in 1.6.3")[0]
+        readme = self.read("README.md")
+        for name, text in (("CHANGELOG 1.6.4", entry), ("release body 1.6.4", body164),
+                           ("README", readme)):
+            with self.subTest(where=name):
+                self.assertIn("reports made with a version before 1.6.3 contain codes that "
+                              "can be traced back to short serial numbers", text.lower())
+                self.assertIn("delete one you already posted if you can", text)
+                self.assertIn("`--clean` cannot change those old codes", text)
+        self.assertNotIn("we will delete", entry + body164)

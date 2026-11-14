@@ -223,6 +223,12 @@ jobs:
 
             ### What's new in 1.6.4
 
+            **About older reports:** reports made with a version before
+            1.6.3 contain codes that can be traced back to short serial
+            numbers. Please do not post such a report publicly, and delete
+            one you already posted if you can. `--clean` cannot change those
+            old codes.
+
             - **Linux:** a USB stick plugged into the instrument's old port
               later no longer shows its name in the report: a port counts
               as the instrument's only until it is unplugged.

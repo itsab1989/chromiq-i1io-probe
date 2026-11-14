@@ -4,18 +4,27 @@
 
 Three small follow-ups to 1.6.3, all about what the report shows.
 
+**About older reports:** reports made with a version before 1.6.3 contain
+codes that can be traced back to short serial numbers. Please do not post
+such a report publicly, and delete one you already posted if you can.
+`--clean` cannot change those old codes.
+
 - **Linux: another device on the instrument's old USB port stays hidden.**
   The report keeps only the kernel messages about the X-Rite instrument.
   Up to 1.6.3, once a USB port had shown the instrument, every later line
   about that port was kept, so a USB stick plugged into the same port
   afterwards could show its name. Now a port counts as the instrument's
   only until it is unplugged, or until another device appears there. Plug
-  the instrument back in and its lines are kept again.
+  the instrument back in and its lines are kept again. A kernel line that
+  names no USB port is kept only when it carries the instrument's USB id,
+  not because of a name in it.
 - **Known instruments are named.** When the recording shows an instrument
   the tool knows but that has no session of its own (for example a DTP20,
   an i1Monitor or an i1iO 3 table), the message and the report now say
   which one it is, instead of "unknown X-Rite device". What the tool
-  advises you to do is the same as before.
+  advises you to do is the same as before, except for an i1iO 3 table:
+  like the other i1iO tables it now says to choose 1 (record an i1iO
+  table) at the first question.
 - **macOS: only numbers where numbers belong.** For other USB devices the
   report keeps a few details such as the USB ids, the version and the
   speed. These are now kept only when they look like what they should be
