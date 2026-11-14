@@ -619,3 +619,29 @@ class EveryFamilyPair(unittest.TestCase):
         self.assertIn("an i1Pro or i1Pro 2 (0971:2000) and an i1iSis (0971:2006)", first)
         self.assertEqual(len(todo), 2)
         self.assertTrue(todo[0].startswith("To record an i1Pro or i1Pro 2 (0971:2000):"))
+
+
+class EveryKnownInstrumentIsNamed(unittest.TestCase):
+    """1.6.4 (review): a known instrument without a session type of its own
+    (a DTP20, an i1iO 3 ...) is named, never "unknown"; the advice is the same."""
+
+    def test_names(self):
+        known = (probe.OTHER_INSTRUMENT_IDS | probe.CALIBRATOR_IDS)
+        for vid, pid in sorted(known):
+            tag = f"{vid:04x}:{pid:04x}"
+            with self.subTest(device=tag):
+                self.assertNotIn("unknown", probe.pid_label(pid, vid))
+                self.assertNotIn("unknown", probe.other_label(tag))
+                if (vid, pid) in probe.CALIBRATOR_IDS:
+                    continue
+                first, todo = probe.wrong_instrument_lines([tag], "i1pro2")
+                self.assertNotIn("unknown", first)
+                self.assertEqual(todo, ["To record it: stop here, start the tool again and "
+                                        + probe.choice_for(tag) + "."])
+
+    def test_the_dtp20(self):
+        first, todo = probe.wrong_instrument_lines(["0765:d020"], "i1pro3")
+        self.assertEqual(first, "This recording shows a DTP20 Pulse (0765:d020), not the "
+                                "instrument you chose (i1Pro 3 or 3 Plus). Nothing was kept "
+                                "from this step.")
+        self.assertIn("choose 6 (another X-Rite instrument)", todo[0])

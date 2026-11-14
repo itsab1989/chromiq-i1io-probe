@@ -151,8 +151,10 @@ class DetectionTests(unittest.TestCase):
     def test_id_labels_come_from_evidence_only(self):
         self.assertIn("i1iO", probe.pid_label(0x2004))
         self.assertIn("i1Pro 2", probe.pid_label(0x2000))
-        # 1.3 called 0x2001 "i1Pro 2 / i1Pro 3 family" without evidence.
-        self.assertIn("unknown", probe.pid_label(0x2001))
+        # 1.3 called 0x2001 "i1Pro 2 / i1Pro 3 family" without evidence. 1.6.4
+        # names it from ArgyllCMS's device table (insttypes.c: i1 Monitor).
+        self.assertIn("i1Monitor (per ArgyllCMS", probe.pid_label(0x2001))
+        self.assertNotIn("i1Pro", probe.pid_label(0x2001))
         # 1.6: 0x2006 is named now, from X-Rite's own i1iSis driver file.
         self.assertIn("i1iSis", probe.pid_label(0x2006))
         self.assertIn("X-Rite's driver file", probe.pid_label(0x2006))

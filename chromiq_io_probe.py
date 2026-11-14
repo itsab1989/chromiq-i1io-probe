@@ -272,12 +272,38 @@ KNOWN_IDS_0765 = {
 }
 
 
+# 1.6.4: the name of every X-Rite instrument the tool knows to be another
+# one (OTHER_INSTRUMENT_IDS, CALIBRATOR_IDS), so a message about it names it
+# instead of calling it unknown. Sources as for those lists: ArgyllCMS 3.5.0
+# insttypes.c:439-495, X-Rite's device plug-ins (i1iO 3, CAPSURE),
+# ArgyllCMS's usb/55-Argyll.rules (i1Display 3L).
+KNOWN_INSTRUMENT_NAMES = {
+    (0x0971, 0x2001): "i1Monitor",
+    (0x0971, 0x2003): "i1Display 2 (monitor calibrator)",
+    (0x0971, 0x2005): "Huey (monitor calibrator)",
+    (0x0765, 0x5001): "HueyL (monitor calibrator)",
+    (0x0765, 0x5010): "HueyL (monitor calibrator)",
+    (0x0765, 0x5020): "i1Display Pro or ColorMunki Display (monitor calibrator)",
+    (0x0765, 0x6001): "CAPSURE",
+    (0x0765, 0x6003): "ColorMunki Smile (monitor calibrator)",
+    (0x0765, 0x600A): "i1Display 3L (monitor calibrator)",
+    (0x0765, 0x30B0): "i1iO 3 table",
+    (0x0765, 0xD020): "DTP20 Pulse",
+    (0x0765, 0xD092): "DTP92 (monitor calibrator)",
+    (0x0765, 0xD094): "DTP94 (monitor calibrator)",
+}
+
+
 def pid_label(pid, vid=XRITE_VID) -> str:
     if pid is None:
         return "unknown X-Rite device"
-    if vid == 0x0765:
-        return KNOWN_IDS_0765.get(pid, "unknown X-Rite device (not in this tool's list yet)")
-    return KNOWN_PIDS.get(pid, "unknown X-Rite device (not in this tool's list yet)")
+    if vid == 0x0765 and pid in KNOWN_IDS_0765:
+        return KNOWN_IDS_0765[pid]
+    if vid != 0x0765 and pid in KNOWN_PIDS:
+        return KNOWN_PIDS[pid]
+    if (vid, pid) in KNOWN_INSTRUMENT_NAMES:
+        return KNOWN_INSTRUMENT_NAMES[(vid, pid)] + " (per ArgyllCMS or X-Rite's device files)"
+    return "unknown X-Rite device (not in this tool's list yet)"
 
 
 REDACT = True
@@ -3561,6 +3587,8 @@ def _instrument_label(tag: str) -> str:
     vid, pid = (int(x, 16) for x in tag.split(":"))
     if (vid, pid) in PROFILE_IDS:
         return PROFILE_NAMES[PROFILE_IDS[(vid, pid)]]
+    if (vid, pid) in KNOWN_INSTRUMENT_NAMES:          # 1.6.4
+        return KNOWN_INSTRUMENT_NAMES[(vid, pid)]
     return pid_label(pid, vid).split(" (")[0]
 
 
