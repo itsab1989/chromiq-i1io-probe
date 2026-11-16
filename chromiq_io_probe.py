@@ -8220,6 +8220,13 @@ def recorder_not_attached_lines(v: dict) -> list:
                    "recorder, among its drivers. USBPcap joins a USB device only when "
                    "Windows sets that device up, for example when it is plugged in or "
                    "when Windows starts. Until then every step would keep nothing.", 74, ""),
+             # 1.6.6: two empty mornings of one tester, both right after the
+             # instrument had been set up again at the very second it arrived
+             # (a driver change; a libusb0 package for it was installed)
+             _wrap("This usually happens after its driver was changed, for example "
+                   "every time you switch the instrument between ChromIQ (ArgyllCMS) "
+                   "and X-Rite's program. Please do the steps below after every such "
+                   "switch, before you record.", 74, ""),
              "Please do this:"] + recorder_advice_lines())
 
 
