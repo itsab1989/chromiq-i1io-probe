@@ -40,6 +40,14 @@ STEPS = ((1, "idle", "start the program, then leave it idle"), (2, "calibrate", 
 MARKERS = (sf.KEY_MARKER, sf.DISK_MARKER[:19], sf.BT_MARKER[:17])
 
 
+def squash(text) -> str:
+    """Whitespace normalised, so a phrase wrapped at the console width (a long
+    Windows path before it) still compares."""
+    if isinstance(text, (list, tuple)):
+        text = " ".join(text)
+    return " ".join(text.split())
+
+
 def make_165_session(root, build=None, session_json=True):
     """A session as 1.6.5 leaves it when every step kept nothing."""
     name = f"instrument-session-{STAMP}"
@@ -120,7 +128,7 @@ class Rescue(unittest.TestCase):
         self.assertIn("FOUND UNDER ANOTHER USB ADDRESS (one the recording gives to a USB hub)",
                       flat)
         self.assertIn("SEND THIS ONE FILE (the report and the instrument-only recordings):",
-                      screen)
+                      squash(screen))
         self.assertIn("was only read, not changed. Do NOT send it.", flat)
         # the full recordings: untouched
         self.assertEqual(digest(full), before)
@@ -168,13 +176,13 @@ class Rescue(unittest.TestCase):
         _sess, full = make_165_session(self.root)
         code, screen = self.run_main([full])
         self.assertEqual(code, 0)
-        self.assertIn("RESCUED", screen)
+        self.assertIn("RESCUED", squash(screen))
 
     def test_without_a_path_the_newest_folder_next_to_the_tool(self):
         make_165_session(self.root)
         code, screen = self.run_main(["--reprocess"])
         self.assertEqual(code, 0, screen)
-        self.assertIn("RESCUED", screen)
+        self.assertIn("RESCUED", squash(screen))
 
     def test_without_session_json_the_steps_come_from_the_file_names(self):
         sess, full = make_165_session(self.root, session_json=False)
@@ -193,7 +201,7 @@ class Rescue(unittest.TestCase):
         before = digest(full)
         code, screen = self.run_main(["--reprocess", full])
         self.assertEqual(code, 0)
-        self.assertIn("NOTHING COULD BE RESCUED", screen)
+        self.assertIn("NOTHING COULD BE RESCUED", squash(screen))
         self.assertIn("still nothing that could be attributed", " ".join(screen.split()))
         name, members = self.zip_names()
         self.assertTrue(name.endswith("-report-only.zip"))
@@ -203,12 +211,26 @@ class Rescue(unittest.TestCase):
     def test_a_wrong_folder_says_so(self):
         code, screen = self.run_main(["--reprocess", os.path.join(self.root, "nope")])
         self.assertEqual(code, 1)
-        self.assertIn("no such folder", screen)
-        os.makedirs(os.path.join(self.root, "empty" + probe.FULL_SUFFIX))
-        code, screen = self.run_main(["--reprocess",
-                                      os.path.join(self.root, "empty" + probe.FULL_SUFFIX)])
+        # Windows CI: a long temp path once broke the phrase across two lines.
+        # The words are compared with the whitespace normalised, and the path
+        # must stand whole on a line of its own.
+        self.assertIn("There is no such folder:", squash(screen))
+        self.assertIn("    " + os.path.join(self.root, "nope"), screen.splitlines())
+        empty = os.path.join(self.root, "empty" + probe.FULL_SUFFIX)
+        os.makedirs(empty)
+        code, screen = self.run_main(["--reprocess", empty])
         self.assertEqual(code, 1)
-        self.assertIn("holds no full recording", screen)
+        self.assertIn("This folder holds no full recording", squash(screen))
+        self.assertIn("    " + os.path.basename(empty), screen.splitlines())
+
+    def test_a_wrong_folder_with_a_long_windows_like_path(self):
+        """As on the Windows runner: a long temp path, the window 80 columns.
+        The phrase stays whole, the path is never broken."""
+        deep = os.path.join(self.root, *(["a-rather-long-folder-name-like-windows"] * 4), "nope")
+        code, screen = self.run_main(["--reprocess", deep])
+        self.assertEqual(code, 1)
+        self.assertIn("  There is no such folder:", screen.splitlines())
+        self.assertIn("    " + deep, screen.splitlines())
 
     def test_the_menu_offers_it_only_when_a_folder_is_there(self):
         sug = probe.suggest([])
@@ -317,7 +339,7 @@ class FullRecordingsKept(unittest.TestCase):
                 redirect_stdout(io.StringIO()):
             lines = probe.finish_recordings({"USBPcap1": full}, None)
         self.assertTrue(os.path.exists(full))
-        self.assertIn("they are the only full copy", " ".join(lines))
+        self.assertIn("they are the only full copy", squash(lines))
 
     def test_the_table_two_buses_one_good_one_refused(self):
         """The confirmation review's table case: bus 1 good; bus 2 holds the
@@ -336,12 +358,12 @@ class FullRecordingsKept(unittest.TestCase):
         c2 = probe.check_capture(f2, probe.SESSION_TABLE)
         self.assertEqual(c2["code"], "no-xrite")
         self.assertTrue(c2["followed"]["refused"])
-        self.assertIn("it was not kept, to be safe", c2["verdict"])
+        self.assertIn("it was not kept, to be safe", squash(c2["verdict"]))
         with mock.patch.object(probe, "ask", lambda *_a, **_k: self.fail("asked")), \
                 redirect_stdout(io.StringIO()):
             lines = probe.finish_recordings({"USBPcap1": f1, "USBPcap2": f2}, None)
         self.assertTrue(os.path.exists(f1) and os.path.exists(f2))
-        self.assertIn("they are the only full copy", " ".join(lines))
+        self.assertIn("they are the only full copy", squash(lines))
 
     def test_the_table_recording_keeps_them_when_a_check_is_not_good(self):
         """The review's table case: the instrument's description is kept
@@ -357,7 +379,7 @@ class FullRecordingsKept(unittest.TestCase):
                 redirect_stdout(io.StringIO()):
             lines = probe.finish_recordings({"USBPcap1": full}, None)
         self.assertTrue(os.path.exists(full))
-        self.assertIn("they are the only full copy", " ".join(lines))
+        self.assertIn("they are the only full copy", squash(lines))
 
 
 def stale_at_hub():
@@ -389,7 +411,7 @@ class TheSession(tae.TheWholeSession):
         self.assertEqual(code, 0)
         self.assertTrue(outcome["recorded"], screen[-3000:])
         self.assertEqual(screen.count("FOUND: YOUR INSTRUMENT'S TRAFFIC WAS UNDER ANOTHER USB"), 1)
-        self.assertIn("(Followed the instrument again:", screen)
+        self.assertIn("(Followed the instrument again:", squash(screen))
         flat = " ".join(screen.split())
         self.assertIn("Nothing for you to do: just carry on.", flat)
         self.assertNotIn("only the instrument's USB description", flat)

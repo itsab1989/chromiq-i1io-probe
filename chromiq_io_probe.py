@@ -10791,7 +10791,7 @@ def reprocess_locate(path: str) -> tuple:
     holds -full.pcap files. Raises ValueError with plain words."""
     p = os.path.abspath(path.strip().strip('"').rstrip("/\\"))
     if not os.path.isdir(p):
-        raise ValueError(f"{path}: no such folder")
+        raise ValueError(f"There is no such folder:\n{path}")
     if p.endswith(FULL_SUFFIX):
         full = p
         sess = p[:-len(FULL_SUFFIX)]
@@ -10800,8 +10800,8 @@ def reprocess_locate(path: str) -> tuple:
     else:
         sess, full = None, p
     if not any(n.lower().endswith("-full.pcap") for n in os.listdir(full)):
-        raise ValueError(f"{os.path.basename(full)}: holds no full recording "
-                         "(no file ending in -full.pcap)")
+        raise ValueError("This folder holds no full recording (no file ending in "
+                         f"-full.pcap):\n{os.path.basename(full)}")
     if sess is not None and not os.path.exists(os.path.join(sess, "session.json")):
         sess = None
     return sess, full
@@ -10865,7 +10865,10 @@ def reprocess_session(path: str, output=None, report: bool = True) -> tuple:
     try:
         sess, full = reprocess_locate(path)
     except (ValueError, OSError) as exc:
-        lines += ["  " + _wrap(str(exc), 64, "  "), "",
+        # 1.6.6 (Windows CI): the words wrapped, the path on a line of its own
+        # and never broken, however long a Windows path is
+        text, _sep, where = str(exc).partition("\n")
+        lines += ["  " + _wrap(text, 64, "  ")] + (["    " + where] if where else []) + ["",
                   "  " + _wrap("Please give the folder whose name ends in -FULL-do-not-send "
                                "(or the session folder next to it).", 64, "  ")]
         return lines, 1, info

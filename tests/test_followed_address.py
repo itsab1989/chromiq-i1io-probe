@@ -98,9 +98,10 @@ class FollowsTheInstrument(unittest.TestCase):
             _lt, copy = probe._read_pcap(dst)                           # noqa: SLF001
         self.assertEqual(check["code"], "ok", check["verdict"])
         self.assertGreater(check["activity"], 0)
-        self.assertIn("FOLLOWED", check["verdict"])
-        self.assertIn("a USB hub", check["verdict"])
-        self.assertIn("very likely, but not certain", check["verdict"])
+        verdict = " ".join(check["verdict"].split())
+        self.assertIn("FOLLOWED", verdict)
+        self.assertIn("a USB hub", verdict)
+        self.assertIn("very likely, but not certain", verdict)
         item = check["followed"]["followed"][0]
         self.assertEqual(item["address"], [1, sf.HUB])
         self.assertEqual((item["requests"], item["data"]), (5, 9))
@@ -115,7 +116,7 @@ class FollowsTheInstrument(unittest.TestCase):
 
     def test_swap_text_does_not_ask_to_unplug_other_devices(self):
         check = probe.check_capture(self._save(sf.swapped_step()), "i1pro2")
-        self.assertIn("other half of the same address mix-up", check["verdict"])
+        self.assertIn("other half of the same address mix-up", " ".join(check["verdict"].split()))
         self.assertNotIn("every other USB device unplugged", check["verdict"])
 
     def test_session_analysis_reads_the_copy(self):
