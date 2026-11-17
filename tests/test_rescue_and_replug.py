@@ -33,7 +33,7 @@ import chromiq_io_probe as probe  # noqa: E402
 import synth_follow as sf  # noqa: E402
 import test_all_empty as tae  # noqa: E402
 
-STAMP = "20261117-085029"
+STAMP = "20261117-090000"
 STEPS = ((1, "idle", "start the program, then leave it idle"), (2, "calibrate", "calibrate"),
          (4, "scan-dual", "the same strip, dual scan"),
          (6, "scan-slow", "the same strip again, slowly"))
@@ -54,11 +54,11 @@ def make_165_session(root, build=None, session_json=True):
         w.save(os.path.join(full, fn))
         steps.append({
             "number": number, "key": key, "title": title, "take": 1, "control": False,
-            "start_epoch": 1794901092.7, "end_epoch": 1794901132.4, "files_full": [fn],
+            "start_epoch": 1800000000.0, "end_epoch": 1800000040.0, "files_full": [fn],
             "files_xrite": [], "check": [f"{fn}: 6 instrument packets; EMPTY: only the USB "
                                          "description was recorded, nothing the instrument "
                                          "did."],
-            "empty": True, "seen": {"records": 1592, "classes": {}, "family_ids": {},
+            "empty": True, "seen": {"records": 1000, "classes": {}, "family_ids": {},
                                     "family_eps": {}, "files": 1, "unreadable": 0,
                                     "other_instruments": {}},
             "kept": True})
@@ -67,8 +67,8 @@ def make_165_session(root, build=None, session_json=True):
             json.dump({"kind": probe.SESSION_KIND, "probe_version": "1.6.5",
                        "created": "2026-11-17T08:50:29", "family": "i1pro2",
                        "instrument": "i1Pro 2", "program": "i1Profiler",
-                       "program_version": "3.8.6.18652", "recorder": "USBPcap (USBPcapCMD)",
-                       "platform": "Windows-11-10.0.26300-SP0", "steps": steps,
+                       "program_version": "3.8.6", "recorder": "USBPcap (USBPcapCMD)",
+                       "platform": "Windows-11", "steps": steps,
                        "ended": "all steps done", "context": {}, "only_steps": [1, 2, 4, 6],
                        "first_step_descriptor_only": True, "descriptor_only_go_on": True},
                       fh, indent=2)

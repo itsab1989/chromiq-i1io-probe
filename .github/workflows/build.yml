@@ -176,10 +176,10 @@ jobs:
           if [ "${{ runner.os }}" = "Windows" ]; then PY=python; else PY=python3; fi
           mkdir -p smoke/rescue
           $PY -c "import sys; sys.path.insert(0,'tests'); import test_rescue_and_replug as t; t.make_165_session('smoke/rescue')"
-          "./out/${{ matrix.asset }}" --reprocess smoke/rescue/instrument-session-20261117-085029-FULL-do-not-send --no-pause < /dev/null > smoke/rescue.txt
+          "./out/${{ matrix.asset }}" --reprocess smoke/rescue/instrument-session-20261117-090000-FULL-do-not-send --no-pause < /dev/null > smoke/rescue.txt
           tail -20 smoke/rescue.txt
           grep -q "RESCUED: 4 steps now hold the instrument's traffic" smoke/rescue.txt
-          ls smoke/rescue/instrument-session-20261117-085029-reprocessed/step2-calibrate-take1-USBPcap1-instrument.pcap
+          ls smoke/rescue/instrument-session-20261117-090000-reprocessed/step2-calibrate-take1-USBPcap1-instrument.pcap
           $PY -c "import glob,zipfile,sys; z=zipfile.ZipFile(sorted(glob.glob('out/SEND-THIS-*.zip'))[-1]); n=z.namelist(); print(n); sys.exit(1 if any(x.endswith('-full.pcap') for x in n) or not any(x.endswith('-instrument.pcap') for x in n) else 0)"
 
       - uses: actions/upload-artifact@v4

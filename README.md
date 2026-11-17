@@ -505,7 +505,7 @@ new measurement:
 
    Or drop the `-FULL-do-not-send` folder onto the tool, or run it with
    `--reprocess` and the folder's name, for example
-   `chromiq-io-probe-windows.exe --reprocess "instrument-session-20261117-083631-FULL-do-not-send"`.
+   `chromiq-io-probe-windows.exe --reprocess "instrument-session-20261117-090000-FULL-do-not-send"`.
 3. It says per step what it found, writes a new folder ending in
    `-reprocessed` with the instrument-only copies, `session.json` and
    `analysis.txt`, a new report, and ONE file to send:

@@ -66,7 +66,7 @@ class TheTestersShape(unittest.TestCase):
         self.assertEqual(facts["family_ids"], {"0971:2000": [1, 6, 0]})
         self.assertEqual(facts["classes"]["the i1Pro 2 (0971:2000)"], [1, 6])
         # his: "On the i1Pro 2's endpoint numbers ... at other addresses:
-        # ... USB hub: 2,104 records"
+        # ... USB hub: <thousands of> records"
         self.assertGreater(facts["family_eps"].get("USB hub", 0), 0)
         # his step 2 of one session: the hub's own traffic at the instrument's
         # address (left out there as "hub" and "endpoint")
