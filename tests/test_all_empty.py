@@ -151,9 +151,10 @@ class Facts(unittest.TestCase):
             self.assertNotIn(m[:8], blob, what)
 
     def test_nothing_is_kept_in_any_of_the_cases(self):
-        for name, build in (("stale-disk", stale_at_disk), ("stale-undescribed",
-                            stale_undescribed), ("absent", absent), ("wrong-hub", wrong_hub),
-                            ("header-only", header_only)):
+        # 1.6.6: "stale-disk" is no longer one of them: the instrument's own
+        # commands under the disk's address are followed (see below)
+        for name, build in (("stale-undescribed", stale_undescribed), ("absent", absent),
+                            ("wrong-hub", wrong_hub), ("header-only", header_only)):
             with self.subTest(case=name):
                 path = self.save(build(), name + ".pcap")
                 check = probe.check_capture(path, "i1pro3")
@@ -165,6 +166,29 @@ class Facts(unittest.TestCase):
                 if probe.filter_xrite_capture(path, dst, "i1pro3"):
                     with open(dst, "rb") as fh:
                         self.assertNoMarks(fh.read(), dst)
+
+    def test_a_stale_address_at_a_disk_is_followed(self):
+        """1.6.6: the i1Pro 3's own commands under a disk's address are
+        followed; the disk's own endpoint numbers (0x81, 0x02, which the
+        i1Pro 3 has too) cannot be told apart and are left out."""
+        path = self.save(stale_at_disk(), "f.pcap")
+        check = probe.check_capture(path, "i1pro3")
+        self.assertEqual(check["code"], "ok", check["verdict"])
+        self.assertIn("FOLLOWED", check["verdict"])
+        item = check["followed"]["followed"][0]
+        self.assertEqual(item["as"], "USB disk or memory stick")
+        self.assertEqual((item["requests"], item["data"], item["overlap"]), (2, 2, 2))
+        dst = os.path.join(self.tmp.name, "f-instrument.pcap")
+        self.assertTrue(probe.filter_xrite_capture(path, dst, "i1pro3"))
+        _lt, recs = probe._read_pcap(dst)                               # noqa: SLF001
+        data = b"".join(d for _t, d in recs)
+        self.assertNotIn(DISK_MARK, data)
+        self.assertNotIn(KEY_MARK, data)
+        eps = {probe._record_fields(probe.LINKTYPE_USBPCAP, d)[1]          # noqa: SLF001
+               for _t, d in recs
+               if probe._record_fields(probe.LINKTYPE_USBPCAP, d)[0] == (1, STALE)}  # noqa: SLF001
+        self.assertEqual(eps & {0x81, 0x02}, set())
+        self.assertIn(0x84, eps)
 
     def test_a_stale_address_at_a_disk(self):
         facts = self.facts(self.save(stale_at_disk(), "a.pcap"))
@@ -333,8 +357,10 @@ class TheWholeSession(unittest.TestCase):
             self.assertNotIn(m.hex().encode(), blob.lower(), what)
 
     def test_every_step_stale(self):
+        # 1.6.6: an address without any description and without the
+        # instrument's commands (stale_at_disk is followed now)
         with mock.patch.object(probe, "candidate_dirs", lambda: [self.dir]):
-            outcome, code, screen = self.run_all(stale_at_disk, self.every_step())
+            outcome, code, screen = self.run_all(stale_undescribed, self.every_step())
         self.assertEqual(code, 0)
         self.assertTrue(outcome["all_empty"])
         self.assertFalse(outcome["recorded"])
@@ -370,8 +396,18 @@ class TheWholeSession(unittest.TestCase):
         self.assertIn("On the i1Pro 3's endpoint numbers", report)
         self.assertTrue(all(s.get("seen") for s in saved["steps"]))
         self.assertTrue(all(not s["files_xrite"] for s in saved["steps"]))
-        # no recording anywhere but the deleted full ones, and no planted byte
+        # 1.6.6 (b): nothing was kept, so the full recordings are kept and
+        # their deletion is not even offered; no recording anywhere else, and
+        # no planted byte anywhere but in them
+        self.assertNotIn("Delete the full recordings", screen)
+        self.assertIn("PLEASE KEEP THE FOLDER WITH THE FULL RECORDINGS", screen)
+        self.assertIn('choose "rescue an earlier session"', flat)
+        full = [p for p in self.written() if "-FULL-do-not-send" in p]
+        self.assertEqual(len(full), len(probe.steps_for("i1pro3")))
+        self.assertTrue(saved.get("full_kept_for_reprocess", "").endswith("-FULL-do-not-send"))
         for path in self.written():
+            if "-FULL-do-not-send" in path:
+                continue
             self.assertFalse(path.endswith(".pcap"), path)
             with open(path, "rb") as fh:
                 self.assertNoMarks(fh.read(), path)
@@ -387,7 +423,11 @@ class TheWholeSession(unittest.TestCase):
         self.assertTrue(outcome.get("all_empty"))
         self.assertIn("-report-only.zip", screen)
         self.assertNoMarks(screen, "screen")
+        # 1.6.6 (b): kept, never offered for deletion, never in the zip
+        self.assertNotIn("Delete the full recordings", screen)
         for path in self.written():
+            if "-FULL-do-not-send" in path:
+                continue
             with open(path, "rb") as fh:
                 self.assertNoMarks(fh.read(), path)
         return screen

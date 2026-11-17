@@ -8570,6 +8570,57 @@ def descriptor_only_lines(system: str | None = None) -> list:
     return [part for line in lines for part in line.split("\n")]
 
 
+def nothing_seen_lines(system: str | None = None) -> list:
+    """1.6.6 (d): after the FIRST recorded step held nothing of the
+    instrument at all: not its USB description, not its commands under any
+    address."""
+    system = system or platform.system()
+    lines = [_wrap("Nothing of your instrument was in this recording: not its USB "
+                   "description, and none of its commands under any USB address. Either it "
+                   "is plugged into a USB port that this recording did not cover, or the "
+                   "USB recorder does not see it.", 74, ""),
+             "Please check first:",
+             "  1. Is the instrument plugged in, and does the measuring program",
+             "     show it as connected?",
+             "If it is, then:"]
+    if system == "Windows":
+        lines += recorder_advice_lines()
+    else:
+        lines += ["  1. Close this tool and the measuring program.",
+                  "  2. Unplug the instrument and plug it in again.",
+                  "  3. Start this tool again."]
+    return [part for line in lines for part in line.split("\n")]
+
+
+def followed_screen_lines(followed: dict, first: bool = True) -> list:
+    """1.6.6 (d): what the session says when it followed the instrument to
+    another USB address (or saw it there and could not follow)."""
+    lines = []
+    for item in followed.get("followed") or []:
+        n = item["requests"] + item["data"]
+        if first:
+            lines += [
+                "FOUND: YOUR INSTRUMENT'S TRAFFIC WAS UNDER ANOTHER USB ADDRESS",
+                _wrap(f"Windows recorded it under an address that its own list gives to "
+                      f"{_a(item['as'])}. That can happen after sleep, or after \"Shut "
+                      "down\" with Fast Startup. The tool now recognises the instrument by "
+                      "its own commands and endpoints and kept "
+                      f"{_n(n, 'transfer', 'transfers')} of it. Nothing of the other "
+                      "device was kept. Nothing for you to do: just carry on.", 74, "")]
+        else:
+            lines.append(_wrap(f"(Followed the instrument again: {_n(n, 'transfer', 'transfers')}"
+                               " under another USB address.)", 74, ""))
+        if item.get("overlap"):
+            lines.append(_wrap(f"{_n(item['overlap'], 'transfer', 'transfers')} on an "
+                               "endpoint number the other device has too could not be told "
+                               "apart and were left out.", 74, ""))
+    for item in followed.get("refused") or []:
+        lines.append(_wrap(f"Traffic that looks like your instrument's was also seen under "
+                           f"the address of {_a(item['as'])}, but it was not kept, because "
+                           f"{item['why']}.", 74, ""))
+    return [part for line in lines for part in line.split("\n")]
+
+
 DESCRIPTOR_STOP_PROMPT = ("\n  Press Enter to stop now (recommended), type  r  to record this "
                           "step again,\n  or type  go on  to go on with the next step: ")
 
@@ -9394,6 +9445,70 @@ def privacy_text(profile: str) -> str:
   recordings, which you never need to send."""
 
 
+def check_step_files(entry: dict, full_dir: str, folder: str, profile: str,
+                     recorded: bool = True) -> tuple:
+    """Check one step's full recordings, write its instrument-only copies into
+    folder and note the results in entry (the step of session.json).
+    Returns (activity, empty, zero, nothing). 1.6.6: one place for the
+    session and for --reprocess, so both decide the same way. nothing: no
+    file of the step held anything of the instrument at all (not even its
+    USB description), so a first step like that stops the session too."""
+    entry["files_xrite"] = []
+    entry["check"] = []
+    for key in ("left_out", "explained", "followed", "empty", "seen", "unidentified",
+                "other_instrument", "kept_unknown"):
+        entry.pop(key, None)
+    activity = 0
+    empty = False
+    zero = False
+    codes = []
+    follows = []
+    for name in entry.get("files_full", []):
+        src = os.path.join(full_dir, name)
+        check = check_capture(src, profile)
+        codes.append(check["code"])
+        entry["check"].append(f"{name}: {check['xrite_packets']} instrument packets; "
+                              f"{check['verdict']}")
+        activity += check.get("activity") or 0
+        for kind, count in (check.get("left_out") or {}).items():
+            entry.setdefault("left_out", {})
+            entry["left_out"][kind] = entry["left_out"].get(kind, 0) + count
+        if check.get("left_out"):
+            entry["explained"] = entry.get("explained", True) and \
+                bool(check.get("explained"))
+        if check.get("followed"):
+            follows.append(check["followed"])
+        empty = empty or check["code"] == "empty-step"
+        zero = zero or check["code"] == "all-zero"
+        if check["code"] == "unidentified":
+            entry["unidentified"] = True
+        if check.get("other_ids"):
+            entry["other_instrument"] = sorted(
+                set(entry.get("other_instrument", [])) | set(check["other_ids"]))
+        if check["xrite_packets"] and check["code"] in ("ok", "all-zero"):
+            dst_name = name.replace("-full.pcap", "-instrument.pcap")
+            if filter_xrite_capture(src, os.path.join(folder, dst_name), profile):
+                entry["files_xrite"].append(dst_name)
+                if check.get("kept") == "unknown":
+                    entry["kept_unknown"] = sorted(
+                        {f"{v:04x}:{p:04x}" for v, p in check["kept_ids"]}
+                        | set(entry.get("kept_unknown", [])))
+    merged = merge_followed(follows)
+    if merged:
+        entry["followed"] = merged
+    if recorded and (not entry["files_xrite"] or zero):
+        entry["empty"] = True
+    if recorded and not entry["files_xrite"] and not zero \
+            and not entry.get("unidentified"):
+        # 1.6.3: nothing kept: what the recording DID hold, in counts
+        # and ids only, for the screen, session.json and the report.
+        entry["seen"] = merge_facts([
+            recording_facts(os.path.join(full_dir, name), profile)
+            for name in entry.get("files_full", [])])
+    nothing = bool(codes) and all(c in ("no-xrite", "empty") for c in codes)
+    return activity, empty, zero, nothing
+
+
 def run_instrument_session(recorder, folder: str, profile: str, program: str = "",
                            program_version: str = "", context: dict | None = None,
                            only: list | None = None) -> dict:
@@ -9533,47 +9648,8 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                 if recorder is not None and recording:
                     entry["files_full"] = [os.path.basename(p) for p in recorder.stop()]
                     recording = False
-            entry["files_xrite"] = []
-            entry["check"] = []
-            activity = 0
-            empty = False
-            zero = False
-            for name in entry.get("files_full", []):
-                src = os.path.join(full_dir, name)
-                check = check_capture(src, profile)
-                entry["check"].append(f"{name}: {check['xrite_packets']} instrument packets; "
-                                      f"{check['verdict']}")
-                activity += check.get("activity") or 0
-                for kind, count in (check.get("left_out") or {}).items():
-                    entry.setdefault("left_out", {})
-                    entry["left_out"][kind] = entry["left_out"].get(kind, 0) + count
-                if check.get("left_out"):
-                    entry["explained"] = entry.get("explained", True) and \
-                        bool(check.get("explained"))
-                empty = empty or check["code"] == "empty-step"
-                zero = zero or check["code"] == "all-zero"
-                if check["code"] == "unidentified":
-                    entry["unidentified"] = True
-                if check.get("other_ids"):
-                    entry["other_instrument"] = sorted(
-                        set(entry.get("other_instrument", [])) | set(check["other_ids"]))
-                if check["xrite_packets"] and check["code"] in ("ok", "all-zero"):
-                    dst_name = name.replace("-full.pcap", "-instrument.pcap")
-                    if filter_xrite_capture(src, os.path.join(folder, dst_name), profile):
-                        entry["files_xrite"].append(dst_name)
-                        if check.get("kept") == "unknown":
-                            entry["kept_unknown"] = sorted(
-                                {f"{v:04x}:{p:04x}" for v, p in check["kept_ids"]}
-                                | set(entry.get("kept_unknown", [])))
-            if recorder is not None and (not entry["files_xrite"] or zero):
-                entry["empty"] = True
-            if recorder is not None and not entry["files_xrite"] and not zero \
-                    and not entry.get("unidentified"):
-                # 1.6.3: nothing kept: what the recording DID hold, in counts
-                # and ids only, for the screen, session.json and the report.
-                entry["seen"] = merge_facts([
-                    recording_facts(os.path.join(full_dir, name), profile)
-                    for name in entry.get("files_full", [])])
+            activity, empty, zero, nothing = check_step_files(
+                entry, full_dir, folder, profile, recorded=recorder is not None)
             wrong = recorder is not None and not entry["files_xrite"] \
                 and entry.get("other_instrument")
             if wrong:
@@ -9616,17 +9692,27 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                 _write_session(session, folder)
                 break
             first_take = not any(s.get("files_full") for s in session["steps"][:-1])
-            if recorder is not None and empty and not entry["files_xrite"] and not zero \
-                    and first_take and not entry.get("unidentified"):
+            if recorder is not None and (empty or nothing) and not entry["files_xrite"] \
+                    and not zero and first_take and not entry.get("unidentified"):
                 # 1.6.5: the first recorded step held only the instrument's USB
                 # description. Said now, so nobody records eight more empty steps.
+                # 1.6.6: the same when it held nothing of the instrument at all
+                # (its traffic under another address is followed before this).
                 session["first_step_descriptor_only"] = True
+                if nothing and not empty:
+                    session["first_step_nothing"] = True
                 # (review nit: no "Please repeat it." right before the offer to stop)
                 verdict = handheld_step_verdict(entry, activity, empty, zero, profile)
                 verdict = verdict.replace(" Please repeat it.", "")
                 print("  CHECK: " + _wrap(verdict, 64, "  "))
                 print()
-                for line in descriptor_only_lines():
+                if nothing and not empty and entry.get("seen") is not None:
+                    # 1.6.6: what the recording did hold, counts and ids only
+                    for line in facts_lines(entry["seen"], profile):
+                        print("  " + line)
+                    print()
+                for line in (nothing_seen_lines() if nothing and not empty
+                             else descriptor_only_lines()):
                     print("  " + line)
                 _write_session(session, folder)
                 if interrupted:
@@ -9647,13 +9733,26 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                     index += 1
                     take = 1
                     continue
-                session["ended"] = ("stopped after the first step: only the instrument's USB "
-                                    "description was recorded")
+                session["ended"] = (
+                    "stopped after the first step: nothing of the instrument was recorded"
+                    if session.get("first_step_nothing") else
+                    "stopped after the first step: only the instrument's USB "
+                    "description was recorded")
                 _write_session(session, folder)
                 break
             if recorder is not None:
                 print("  CHECK: " + _wrap(handheld_step_verdict(entry, activity, empty, zero,
                                                                 profile), 64, "  "))
+                if (entry.get("followed") or {}).get("followed") \
+                        or (entry.get("followed") or {}).get("refused"):
+                    # 1.6.6 (d): the instrument's traffic under another address
+                    # is followed by itself; said plainly, once in full
+                    print()
+                    for line in followed_screen_lines(entry["followed"],
+                                                      first=not session.get("follow_said")):
+                        print("  " + line)
+                    session["follow_said"] = True
+                    _write_session(session, folder)
                 if entry.get("seen") is not None:
                     print()
                     for line in facts_lines(entry["seen"], profile):
@@ -9815,7 +9914,9 @@ def handheld_step_verdict(entry: dict, activity: int, empty: bool, zero: bool = 
         text = f"this step recorded {activity} {word} of the instrument: good."
         if entry.get("left_out"):
             # 1.6.2: traffic at the instrument's address that was not its own.
-            text += " " + left_out_text(entry["left_out"], entry.get("explained", False))
+            text += " " + left_out_text(entry["left_out"], entry.get("explained", False),
+                                        swapped=bool((entry.get("followed") or {})
+                                                     .get("followed")))
         return text
     seen = entry.get("seen")
     if seen is not None and not entry.get("files_xrite"):
@@ -10041,7 +10142,20 @@ def finish_session(session: dict, folder: str) -> tuple:
             os.rmdir(full_dir)
         except OSError:
             pass
-    if os.path.isdir(full_dir) and os.listdir(full_dir):
+    empty_steps = steps_that_kept_nothing(session)
+    if os.path.isdir(full_dir) and os.listdir(full_dir) and empty_steps:
+        # 1.6.6: a tester's third session lost its only copy here: every step
+        # had kept nothing, and "Delete the full recordings now? Recommended."
+        # removed what a newer version could have read again. Never offered
+        # when a step kept nothing.
+        session["full_kept_for_reprocess"] = os.path.basename(full_dir)
+        _write_session(session, folder)
+        _END["keep_full"] = full_dir
+        block = keep_full_lines(full_dir, empty_steps)
+        print()
+        print("\n".join("  " + l for l in block))
+        lines += block
+    elif os.path.isdir(full_dir) and os.listdir(full_dir):
         print("\n  The full recordings (in the folder ending in -FULL-do-not-send) hold")
         print("  everything that happened on those USB ports, possibly including what")
         print("  you typed on a USB keyboard. They are not needed: the session folder")
@@ -10064,6 +10178,38 @@ def finish_session(session: dict, folder: str) -> tuple:
                                "folder. Please do not send them; delete them when you no "
                                "longer need them.", 77, "  "))
     return lines, analysis
+
+
+def steps_that_kept_nothing(session: dict) -> list:
+    """1.6.6: the numbers of the steps that were recorded but kept nothing in
+    any take (their full recordings are then the only copy)."""
+    recorded, kept = set(), set()
+    for s in session.get("steps") or []:
+        if s.get("skipped"):
+            continue
+        if s.get("files_full"):
+            recorded.add(s.get("number"))
+        if s.get("files_xrite"):
+            kept.add(s.get("number"))
+    return sorted(n for n in recorded - kept if n is not None)
+
+
+def keep_full_lines(full_dir: str, steps: list) -> list:
+    """1.6.6: what to do with the full recordings when a step kept nothing."""
+    which = (f"Step {steps[0]} kept" if len(steps) == 1 else
+             "Steps " + ", ".join(str(n) for n in steps[:-1]) + f" and {steps[-1]} kept")
+    name = os.path.basename(full_dir)
+    return _lines([
+        "PLEASE KEEP THE FOLDER WITH THE FULL RECORDINGS",
+        _wrap(f"{which} nothing, so the full recordings are the only copy of what was "
+              "recorded. The tool did not delete them, and it will not offer to. Please "
+              "keep this folder:", 74, ""),
+        f"    {name}",
+        _wrap("Do NOT send it: it holds everything that happened on those USB ports, "
+              "possibly including what you typed on a USB keyboard. A newer version of "
+              "this tool can read it again, without measuring anything, and make the "
+              "file to send from it: start the tool and choose \"rescue an earlier "
+              "session\" (or run it with  --reprocess  and the folder's name).", 74, "")])
 
 
 HANDHELD_SEND_WAYS = f"""\
@@ -10813,8 +10959,10 @@ def instrument_session_step(pids: list, direct: bool, only: list | None = None,
             and session.get("ended", "").startswith("stopped after the first step"):
         # 1.6.5: stopped after the first step held only the USB description
         outcome["all_empty"] = True
-        outcome["reason"] = DESCRIPTOR_ONLY_REASON
-        outcome["help"].append("\n".join("  " + l for l in descriptor_only_lines()))
+        nothing = bool(session.get("first_step_nothing"))
+        outcome["reason"] = NOTHING_SEEN_REASON if nothing else DESCRIPTOR_ONLY_REASON
+        outcome["help"].append("\n".join("  " + l for l in (
+            nothing_seen_lines() if nothing else descriptor_only_lines())))
         _END["report_only"] = folder
     elif seen_steps:
         # 1.6.3: every recorded step kept nothing. The cause is not known;
@@ -10848,7 +10996,11 @@ def instrument_session_step(pids: list, direct: bool, only: list | None = None,
     if system == "Windows":
         seen_lines.append(recorder_line(checks.get("recorder")))
         seen_lines += [l.strip() for l in recorder_detail_lines(checks.get("recorder"))]
-    if session.get("first_step_descriptor_only"):
+    if session.get("first_step_nothing"):
+        seen_lines.append("The first recorded step held nothing of the instrument at all: "
+                          "not its USB description, and none of its commands under any "
+                          "USB address.")
+    elif session.get("first_step_descriptor_only"):
         seen_lines.append("The first recorded step held only the instrument's USB "
                           "description, nothing it did (the measuring program did not talk "
                           "to it, or the recorder did not see its traffic).")
@@ -11353,6 +11505,9 @@ DESCRIPTOR_ONLY_REASON = ("The first step recorded only the instrument's USB des
                           "measuring program did not talk to the instrument, or the USB "
                           "recorder did not see its traffic; the recording cannot tell "
                           "which.")
+NOTHING_SEEN_REASON = ("The first step recorded nothing of the instrument at all, so the "
+                       "session was stopped there. Either it is plugged into a USB port the "
+                       "recording did not cover, or the USB recorder does not see it.")
 ALL_EMPTY_REASON = ("Every step was recorded, but no step held traffic that the tool could "
                     "attribute to the instrument with certainty, so nothing was kept. Why "
                     "this happens is not known yet.")
