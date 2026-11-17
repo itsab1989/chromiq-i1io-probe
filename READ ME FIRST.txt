@@ -36,9 +36,9 @@ IF A SESSION WITH 1.6.5 OR OLDER KEPT NOTHING (NEW IN 1.6.6)
 ------------------------------------------------------------
 
 The tool could lose track of the instrument after Windows had
-given it a new USB address (most likely after sleep, or after
-"Shut down" with Fast Startup).  Version 1.6.6 follows the
-instrument by its own traffic instead.  If you still have the
+given it a new USB address (likely after sleep, or after "Shut
+down" with Fast Startup).  Version 1.6.6 follows the instrument
+by its own traffic when that address belongs to a USB hub.  If you still have the
 folder whose name ends in  -FULL-do-not-send , 1.6.6 can rescue
 that session without measuring again: put the new tool next to
 that folder, start it, and choose

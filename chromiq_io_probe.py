@@ -4507,32 +4507,32 @@ def _transfer_groups(fields) -> list:
 # (USBPcapGetDeviceUSBInfo at IRP_MN_START_DEVICE, see 1.6.2 above), while
 # USBPcapCMD's injected descriptions carry the address the hub reports now.
 # When Windows gives the devices new addresses without starting them again
-# (most likely after sleep, or after "Shut down" with Fast Startup, which
-# resumes the kernel instead of starting it), the two disagree. 1.6.2 to
-# 1.6.5 knew the instrument only by the address of its description, so
+# (likely, not proven: after sleep, or after "Shut down" with Fast Startup,
+# which resumes the kernel instead of starting it), the two disagree. 1.6.2
+# to 1.6.5 knew the instrument only by the address of its description, so
 # nothing of it was kept.
 #
-# The instrument is now ALSO recognised by its own evidence: under an address
-# whose description says it is another kind of device (not an X-Rite one),
-# the tool looks for the family's own vendor requests (the request numbers
-# the decoders know) and data on the instrument's endpoints. It follows that
-# address only when ALL of these hold:
-#   1. that device's own configuration description is in the recording, so
-#      its own endpoints are known;
+# The instrument is now ALSO recognised by its own evidence, under the
+# address of a USB HUB only (the strict rule of the 1.6.6 review: privacy
+# before coverage). It follows that address only when ALL of these hold:
+#   1. the recording's own list gives it to a USB hub (device or interface
+#      class 9) and the hub's configuration description is in the recording;
 #   2. at least one of the family's own vendor requests (for the i1iO table:
-#      one of its command lines with a correct checksum) and at least two
-#      such transfers in all;
-#   3. nothing there looks like another device's traffic on an endpoint that
-#      device does not have: no mass-storage command or status, no input
-#      report on the instrument's button endpoint.
+#      one of its command lines with a correct checksum) AND at least one data
+#      transfer on the instrument's endpoints, and at least two in all;
+#   3. nothing there looks like a disk's commands or a keyboard's reports on
+#      the instrument's endpoints.
 # It then keeps ONLY, transfer by transfer: the family's vendor requests to
-# the device, and bulk or interrupt transfers on the instrument's endpoints
-# that are NOT the other device's own endpoints, of the right transfer type.
-# Never that device's standard or class requests, never anything on its own
-# endpoints (a keyboard's reports, a disk's blocks, a Bluetooth adapter's
-# packets travel only there or as class requests), and never its
-# description. This is strong evidence, not certainty, and the check says
-# so, with the counts.
+# the device, bulk or interrupt transfers on the instrument's endpoints of the
+# right type that are not the hub's own endpoint of the same type, and the
+# instrument's own configuration description fetched again there. Never the
+# hub's standard or class requests, its status endpoint or its description.
+# A hub has nothing but that one status endpoint, so the device the list
+# names there is not the sender of the rest. (A device that shares the very
+# same live address with the instrument is the gap 1.6.2 describes; this
+# does not close it.) Under any other kind of device's address, or one whose
+# configuration is not recorded, nothing is kept: the check says what it saw
+# ("refused"), counts only. Strong evidence, not certainty; the check says so.
 # --------------------------------------------------------------------------
 
 FOLLOW_FAMILIES = ("i1pro2", "i1pro", "i1pro3", "munki", "io")
@@ -5183,9 +5183,9 @@ def followed_text(summary: dict | None) -> str:
             f"({_n(n, 'transfer', 'transfers')}: "
             f"{_n(item['requests'], 'command of the instrument', 'commands of the instrument')}"
             f" and {_n(item['data'], 'data transfer', 'data transfers')} on its endpoints, "
-            f"{_n(item['records'], 'record', 'records')}). This happens when Windows gave the "
-            "devices new addresses after the USB recorder had started watching them (for "
-            "example after sleep, or after Shut down with Fast Startup). The tool recognised "
+            f"{_n(item['records'], 'record', 'records')}). The USB recorder notes a device's "
+            "address only when the device is started, so a recording can carry an old one "
+            "(likely after sleep, or after Shut down with Fast Startup). The tool recognised "
             "the instrument by its own commands and endpoints, not by the address, and kept "
             "only that: the instrument's commands and the traffic on the instrument's own "
             "endpoints. That is very likely, but not certain, to be all the instrument's. "
@@ -8689,7 +8689,7 @@ def followed_screen_lines(followed: dict, first: bool = True) -> list:
             lines += [
                 "FOUND: YOUR INSTRUMENT'S TRAFFIC WAS UNDER ANOTHER USB ADDRESS",
                 _wrap(f"Windows recorded it under an address that its own list gives to "
-                      f"{_a(item['as'])}. That most likely happens after sleep, or after "
+                      f"{_a(item['as'])}. That likely happens after sleep, or after "
                       "\"Shut down\" with Fast Startup. The tool recognises the instrument "
                       "by its own commands and endpoints and kept "
                       f"{_n(n, 'transfer', 'transfers')} on the instrument's own channels, "

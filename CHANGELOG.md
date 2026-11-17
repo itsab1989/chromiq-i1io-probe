@@ -10,38 +10,50 @@ the instrument with certainty".
 **What was wrong, in plain words: the tool could lose track of the
 instrument after Windows had given it a new USB address.** The recording
 names each device by a number, its USB address. USBPcap, the recorder,
-writes into every packet the address it noted when the device was last set
-up, while the list of devices it adds at the start of every recording uses
-the address the device has now. When Windows gives devices new addresses
-without setting them up again, the two disagree. This most likely happens
-after sleep, or after "Shut down" with Fast Startup (on by default), which
-resumes Windows instead of starting it afresh. In the tester's recordings
-the instrument's own commands and data were all there, but under an address
+notes a device's address only when the device is started (this is in its
+source code), and writes that address into every packet; the list of
+devices it adds at the start of every recording uses the address the
+device has now. So a recording can carry an old address. When Windows gives
+devices new addresses without starting them again, the two disagree. That
+this happens after sleep, or after "Shut down" with Fast Startup (on by
+default), is likely, not proven. In the tester's recordings the
+instrument's own commands and data were all there, but under an address
 that the recording's own list gave to a USB hub, and a little of the hub's
 traffic sat under the instrument's address: a swap. Up to 1.6.5 the tool
 knew the instrument only by the address in that list, so it kept nothing
-of it. (The cause is certain from his reports' counts; that sleep or Fast
-Startup set it off is likely, not proven.)
+of it. (That the instrument's traffic sat under the hub's address is
+certain from the reports' counts; that USBPcap keeps the address from the
+device's start is in its source code; that sleep or Fast Startup set it
+off is likely, not proven.)
 
 - **The instrument is now recognised by its own traffic, not only by its
-  address.** Under an address the recording gives to another kind of device
-  (not an X-Rite one), the tool looks for the instrument family's own
-  commands (the request numbers it already decodes; for the i1iO table, its
-  command lines with a correct checksum) and for data on the instrument's
-  endpoints. It follows that address only if that device's own description
-  is in the recording, at least one of the instrument's own commands is
-  there, and nothing there looks like that device's traffic on endpoints it
-  does not have. It then keeps only the instrument's commands and the
-  transfers on the instrument's endpoints that the other device does not
-  have itself: never that device's own requests, its description, or
-  anything on its own endpoints. So a keyboard's keys, a disk's data or a
-  Bluetooth adapter's packets cannot enter the instrument-only copy; tests
-  prove that for each of them, also when they use the instrument's endpoint
-  numbers. This is very likely, not certain, to be exactly the
-  instrument's traffic, and the step's check says so, with the counts.
+  address, under a USB hub's address.** When the recording's own list gives
+  an address to a USB hub and the instrument family's own commands (the
+  request numbers the tool already decodes; for the i1iO table, its command
+  lines with a correct checksum) AND data on the instrument's endpoints
+  travel under it, the tool follows the instrument there. It needs the
+  hub's description in the recording, and nothing there may look like a
+  disk's commands or a keyboard's reports. It keeps only traffic on the
+  instrument's own channels found under that address: the instrument's
+  commands and the transfers on the instrument's endpoints. Never the hub's
+  own traffic: not its requests, its description, or anything on its own
+  status endpoint. A hub has nothing but that one status endpoint, so the
+  rest cannot be the hub's. This is very likely, but not certain, to be
+  exactly the instrument's traffic, and the step's check says so, with the
+  counts. A device that shares the very same address with the instrument
+  remains the gap described in the README under "Which traffic is the
+  instrument's".
+- **Under any other kind of device's address, nothing is kept.** If
+  traffic that looks like the instrument's is seen under an address the
+  recording gives to, say, a keyboard or a disk (or to a device whose
+  configuration the recording does not hold), the tool keeps none of it,
+  to be safe. The step's check says what it saw, in counts only, asks you
+  to tell us, and the full recordings are kept (see below). A device that
+  merely sends vendor requests with the same numbers, without data on the
+  instrument's endpoints, is never taken for the instrument.
 - **The session says it, and goes on by itself.** When a step's traffic was
-  found under another address, the check says "FOUND: your instrument's
-  traffic was under another USB address", once in full, and there is
+  found under a hub's address, the check says "FOUND: YOUR INSTRUMENT'S
+  TRAFFIC WAS UNDER ANOTHER USB ADDRESS", once in full, and there is
   nothing for you to do. If the first step holds nothing of the instrument
   at all (not even its USB description), the session now stops there with
   what to check, as it already did when the first step held only the
@@ -51,7 +63,8 @@ Startup set it off is likely, not proven.)
   recordings now? Recommended." although nothing had been kept from them.
   Now, when any step kept nothing, the tool does not delete them and does
   not ask: it says to keep the folder ending in `-FULL-do-not-send`, never
-  to send it, and that a newer version can read it again.
+  to send it, and that a newer version can read it again. The i1iO table
+  recording does the same when any recording's check is not good.
 - **New: rescue an earlier session with `--reprocess`.** It reads the full
   recordings of an earlier session again with this version's rules, without
   any new measurement, and writes the instrument-only copies, a new report

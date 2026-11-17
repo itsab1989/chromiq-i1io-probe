@@ -54,9 +54,9 @@ It takes about **two minutes**, and you do **not** need to be technical.
 
 > **If a session with 1.6.5 or older kept nothing although everything was
 > recorded (1.6.6):** the tool could lose track of the instrument after
-> Windows had given it a new USB address (most likely after sleep, or after
+> Windows had given it a new USB address (likely after sleep, or after
 > "Shut down" with Fast Startup). 1.6.6 follows the instrument by its own
-> traffic instead. If you still have the folder ending in
+> traffic when that address belongs to a USB hub. If you still have the folder ending in
 > `-FULL-do-not-send`, 1.6.6 can rescue that session without measuring
 > again: start it next to that folder and choose **4. rescue an earlier
 > session** ([how](#rescuing-an-earlier-session---reprocess-since-166)).
@@ -470,10 +470,12 @@ address.
 
 **If the instrument's traffic is under another USB address (since 1.6.6).**
 On Windows the recorder can name the instrument with an old address after
-Windows has given it a new one (most likely after sleep, or after "Shut
-down" with Fast Startup). The tool then finds the instrument by its own
-commands and endpoints instead, keeps only that, and says so after the
-step ("FOUND: your instrument's traffic was under another USB address").
+Windows has given it a new one (likely after sleep, or after "Shut down"
+with Fast Startup). When that address belongs to a USB hub, the tool finds
+the instrument by its own commands and endpoints instead, keeps only that,
+and says so after the step ("FOUND: YOUR INSTRUMENT'S TRAFFIC WAS UNDER
+ANOTHER USB ADDRESS"). Under any other kind of device's address it keeps
+nothing, says what it saw, and asks you to tell us.
 Nothing for you to do. How it decides is in "Which traffic is the
 instrument's" below.
 
@@ -968,31 +970,45 @@ recorded under an address that the recording's device list gives to another
 device, and nothing is left at the instrument's own address but its
 description. A tester's three sessions showed exactly that (the other
 device was a USB hub, and a little of the hub's traffic sat at the
-instrument's address: a swap). The tool now follows the instrument there
+instrument's address: a swap). USBPcap notes a device's address only when
+the device is started (this is in its source code), so a recording can
+carry an old address; that sleep or "Shut down" with Fast Startup sets
+this off is likely, not proven. The tool now follows the instrument there
 when ALL of these hold:
 
-1. the other device is described in the recording, including its own
-   endpoints, and it is not an X-Rite device;
+1. the recording's own device list gives that address to a USB HUB, and
+   the hub's description, with its endpoint, is in the recording;
 2. at least one of the instrument family's own commands (request numbers
    the analysis decodes; for the i1iO table a command line with a correct
-   checksum) and at least two such transfers in all were sent there;
-3. nothing there looks like the other device's traffic on endpoints it does
-   not have: no disk command or status, no keyboard report on the
-   instrument's button endpoint.
+   checksum) AND at least one data transfer on the instrument's endpoints
+   travel under it;
+3. nothing there looks like a disk's commands or a keyboard's reports on
+   the instrument's endpoints.
 
-It then keeps only the instrument's commands and the transfers on the
-instrument's endpoints that the other device does not have itself (and the
-instrument's own configuration description when the program fetches it
-again there). Never the other device's standard or class requests, its
-description, or anything on its own endpoints. A keyboard, a disk or a
-Bluetooth adapter sends nothing anywhere else, so none of its traffic can
-enter the copy. Transfers on an endpoint number both devices have are left
-out and counted. The step's check names the kind of device whose address it
-was and the counts, and says that this is very likely, not certain, all
-the instrument's. When nothing of the instrument's own work was kept at its
-own address, the other device's traffic there cannot hide among it, so the
-analysis shows decoded values (never raw bytes) instead of withholding the
-step.
+It then keeps only traffic on the instrument's own channels found under
+that address: the instrument's commands, the transfers on the instrument's
+endpoints, and the instrument's own configuration description when the
+program fetches it again there. Never the hub's own traffic: not its
+requests, its description, or anything on its status endpoint. A hub has
+nothing but that one status endpoint, so the device the list names at that
+address cannot be the sender of the rest. A device that shares the very
+same address with the instrument is the gap described above. The step's
+check says that this is very likely, but not certain, all the
+instrument's, with the counts. When nothing of the instrument's own work
+was kept at its listed address, the hub's traffic there cannot hide among
+it, so the analysis shows decoded values (never raw bytes) instead of
+withholding the step.
+
+**Under any other kind of device's address, nothing is kept.** If traffic
+that looks like the instrument's is seen under an address the recording
+gives to, say, a keyboard, a disk or a Bluetooth adapter, or to a device
+whose configuration the recording does not hold, the tool keeps none of
+it, to be safe. The step's check says what it saw (counts only) and asks
+you to tell us; the full recordings are kept, so a later version can look
+at them again. A device that only sends vendor requests with the same
+numbers, without data on the instrument's endpoints, is never taken for
+the instrument. Following is used for Windows and Linux recordings; a Mac
+recording names the device in every packet and needs none.
 
 **So, while you record:** unplug every other USB device you can from that
 computer, or at least from the same hub or dock. Not only disks and memory
