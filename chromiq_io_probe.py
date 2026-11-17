@@ -9430,7 +9430,8 @@ def privacy_text(profile: str) -> str:
   - Your short notes for each step.
   Nothing is uploaded, ever. You decide whether to send the files, and you
   send them yourself. At the end the tool offers to delete the full
-  recordings, which you never need to send."""
+  recordings, which you never need to send; if a step kept nothing, it
+  asks you to keep them instead, so a newer version can read them again."""
     return f"""\
   WHAT THE RECORDING CONTAINS, AND WHAT HAPPENS TO IT
   - The USB conversation between the program and the instrument. That
@@ -9449,7 +9450,8 @@ def privacy_text(profile: str) -> str:
   - Your short notes for each step.
   Nothing is uploaded, ever. You decide whether to send the files, and you
   send them yourself. At the end the tool offers to delete the full
-  recordings, which you never need to send."""
+  recordings, which you never need to send; if a step kept nothing, it
+  asks you to keep them instead, so a newer version can read them again."""
 
 
 def check_step_files(entry: dict, full_dir: str, folder: str, profile: str,
@@ -9876,6 +9878,13 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
 
 SHORT_STEP_SECONDS = 2.0
 
+# 1.6.6 (f): a re-plug is followed by the recording (a new description at a
+# new address), and an address mix-up after one is followed as well
+REPLUG_SAFE_TEXT = """\
+  You may unplug the instrument and plug it in again between steps, for
+  example if the measuring program loses it: the tool finds it again by
+  itself, also when Windows gives it a new USB address."""
+
 # 1.6.3 (review): after a step that holds only another instrument; stopping
 # is the default
 WRONG_INSTRUMENT_PROMPT = ("\n  Press Enter to stop the session now (recommended), or type  "
@@ -10158,10 +10167,7 @@ def finish_session(session: dict, folder: str) -> tuple:
         session["full_kept_for_reprocess"] = os.path.basename(full_dir)
         _write_session(session, folder)
         _END["keep_full"] = full_dir
-        block = keep_full_lines(full_dir, empty_steps)
-        print()
-        print("\n".join("  " + l for l in block))
-        lines += block
+        lines += keep_full_lines(full_dir, empty_steps)      # printed by the caller
     elif os.path.isdir(full_dir) and os.listdir(full_dir):
         print("\n  The full recordings (in the folder ending in -FULL-do-not-send) hold")
         print("  everything that happened on those USB ports, possibly including what")
@@ -11067,6 +11073,7 @@ def instrument_session_step(pids: list, direct: bool, only: list | None = None,
     print("  pressed Enter here to start that step. Before that, nothing is recorded.")
     print("  Each step is recorded into its own small file. You can skip or repeat")
     print("  any step and stop at any time; the steps you finished are kept.")
+    print(REPLUG_SAFE_TEXT)
     if profile == "isis":
         print("  You need: the i1iSis, i1Profiler, one printed chart page for the")
         print("  i1iSis and, for step 6, one plain sheet of normal 80 g/m2 printer")

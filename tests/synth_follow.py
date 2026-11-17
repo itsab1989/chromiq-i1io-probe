@@ -139,3 +139,28 @@ def description_only_step():
     keyboard(w)
     keyboard_work(w, KEYBOARD)
     return w
+
+
+def replugged_step():
+    """1.6.6 (f): the instrument is unplugged and plugged in again during a
+    step. Windows sets it up afresh (at address 0, then SET_ADDRESS 7) and
+    the recording sees that; its old address 3 is then given to a USB disk
+    that is plugged in afterwards."""
+    w = UsbPcapWriter()
+    describe(w, 3, 0x0971, 0x2000, 0xFF, 0xFF, I1PRO2_EPS)
+    keyboard(w)
+    i1pro2_work(w, 3, readings=2)
+    keyboard_work(w, KEYBOARD)
+    w.tick(2.0)                                   # unplugged here, plugged in again
+    dd = struct.pack("<BBHBBBBHHHBBBB", 18, 1, 0x0200, 0xFF, 0, 0, 64, 0x0971, 0x2000,
+                     0x0100, 1, 2, 3, 1)
+    w.control(0, 0x80, 6, value=0x0100, length=64, reply=dd)
+    w.control(0, 0x00, 5, value=7)                # SET_ADDRESS 7
+    describe(w, 7, 0x0971, 0x2000, 0xFF, 0xFF, I1PRO2_EPS)
+    i1pro2_work(w, 7, readings=2)
+    w.tick(1.0)                                   # a USB stick plugged in: gets address 3
+    w.control(0, 0x00, 5, value=3)
+    disk(w, 3)
+    disk_work(w, 3)
+    i1pro2_work(w, 7, readings=1)
+    return w
