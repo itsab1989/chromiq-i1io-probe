@@ -110,9 +110,10 @@ def bluetooth_work(w, dev):
     w.bulk_out(dev, 0x02, BT_MARKER)
 
 
-def swapped_step(readings=3, others=True):
+def swapped_step(readings=3, others=True, hub_back=True):
     """THE tester's case: description at INSTR, own traffic under HUB's
-    address, the hub's own traffic under INSTR's."""
+    address, the hub's own traffic under INSTR's (hub_back; in most of his
+    steps there was none of it, in one there was)."""
     w = UsbPcapWriter()
     instrument(w)
     hub(w)
@@ -121,7 +122,8 @@ def swapped_step(readings=3, others=True):
         disk(w)
         bluetooth(w)
     i1pro2_work(w, HUB, readings)
-    hub_work(w, INSTR)
+    if hub_back:
+        hub_work(w, INSTR)
     if others:
         keyboard_work(w, KEYBOARD)
         disk_work(w, DISK)
