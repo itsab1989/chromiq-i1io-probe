@@ -258,6 +258,22 @@ class OtherDevicesNeverEnterTheCopy(unittest.TestCase):
         self.assertIn("USB disk", att["followed"]["refused"][0]["why"])
         self.assertEqual({f[0] for f in fields(copy)}, {(1, sf.INSTR)})
 
+    def test_a_disk_under_the_same_stale_address_on_its_own_pair(self):
+        """Seen in a real recording: a USB disk's commands under the same
+        stale address, on two endpoints the instrument does not have. Its
+        complete commands show the pair, nothing on it is ever kept, and
+        the instrument is still followed."""
+        w = UsbPcapWriter()
+        sf.instrument(w)
+        sf.hub(w)
+        sf.i1pro2_work(w, sf.HUB)
+        sf.disk_work(w, sf.HUB, out_ep=0x02, in_ep=0x81)
+        sf.i1pro2_work(w, sf.HUB, readings=1)
+        copy, att = kept(w)
+        self.assert_clean(copy)
+        self.assertEqual(len(att["followed"]["followed"]), 1)
+        self.assertFalse(any(f[1] in (0x81, 0x02) for f in fields(copy)))
+
     def test_keyboard_reports_on_the_button_endpoint_stop_following(self):
         w = UsbPcapWriter()
         sf.instrument(w)
@@ -269,6 +285,40 @@ class OtherDevicesNeverEnterTheCopy(unittest.TestCase):
         self.assert_clean(copy)
         self.assertEqual(att["followed"]["followed"], [])
         self.assertIn("input device", att["followed"]["refused"][0]["why"])
+
+
+class TheTable(unittest.TestCase):
+    """The i1iO table (an FTDI chip) is followed by its command lines with a
+    correct checksum, in a table session."""
+
+    def build(self, lines=True):
+        import synth_io                                          # noqa: PLC0415
+        w = UsbPcapWriter()
+        sf.describe(w, sf.INSTR, 0x0971, 0x2004, 0, 0xFF, [(0x81, 2), (0x02, 2)])
+        sf.hub(w)
+        sf.keyboard(w)
+        w.control(sf.HUB, 0x40, 0x03, value=0x4138)               # FTDI: set baud rate
+        for body in ((";RS", ";PA") if lines else ()):
+            w.bulk_out(sf.HUB, 0x02, (synth_io.host(body) + "\r").encode("latin-1"))
+            w.bulk_in(sf.HUB, 0x81, synth_io.ftdi_packets(
+                (synth_io.table(body) + "\r").encode("latin-1")))
+        if not lines:
+            w.bulk_out(sf.HUB, 0x02, b"no line here")
+            w.bulk_in(sf.HUB, 0x81, b"\x11\x60")
+        sf.keyboard_work(w, sf.KEYBOARD)
+        return w
+
+    def test_followed_by_its_lines(self):
+        copy, att = kept(self.build(), profile=probe.SESSION_TABLE)
+        item = att["followed"]["followed"][0]
+        self.assertEqual(item["family"], "io")
+        self.assertEqual(item["requests"], 1)
+        self.assertEqual(item["data"], 4)
+        self.assertNotIn(sf.KEY_MARKER, blob(copy))
+
+    def test_not_without_a_line(self):
+        _copy, att = kept(self.build(lines=False), profile=probe.SESSION_TABLE)
+        self.assertIsNone(att["followed"])
 
 
 class NotFollowedWithoutEvidence(unittest.TestCase):

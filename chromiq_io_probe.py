@@ -4617,7 +4617,10 @@ def _follow_pass(fields, events, seg_of, devices, wanted, allowed, profile,
                 if instruments_cfg(ev["in"]):
                     continue                    # the instrument's own, fetched again
                 lines = parse_config_descriptor(ev["in"])
-                own.update(config_endpoints(lines))
+                for line in lines:
+                    m = _EP_LINE_RE.search(line)
+                    if m:
+                        own.setdefault(int(m.group(1), 16), set()).add(m.group(2))
                 cfg_lines = cfg_lines or lines
             elif ev["wValue"] >> 8 == 1 and len(ev["in"]) >= 5 and ev["in"][1] == 1:
                 dev_class = ev["in"][4] if dev_class is None else dev_class
@@ -4627,11 +4630,16 @@ def _follow_pass(fields, events, seg_of, devices, wanted, allowed, profile,
             eps = eps_for[fam]
             btn = BUTTON_ENDPOINTS.get(fam)
             outside = {(ev["bus"], ev["dev"]) for ev in evs}
-            bot_ids, bot_seen, _pairs = _bot_drops(
-                [ev for ev in evs if ev["kind"] == "data" and ev["ep"] not in own], outside)
+            bot_ids, bot_seen, pairs = _bot_drops(
+                [ev for ev in evs if ev["kind"] == "data"
+                 and ev["type"] not in own.get(ev["ep"], ())], outside)
             tally = {"requests": [], "data": [], "overlap": 0, "lines": 0, "conflict": "",
                      "own_description": []}
-            if bot_seen:
+            # A USB disk under the same stale address (seen in a real
+            # recording): fine when its complete commands show its two
+            # endpoints and the instrument has neither, since nothing on them
+            # is ever kept; anything else about it stops the following.
+            if any(not (pairs.get(k) and pairs[k].isdisjoint(eps)) for k in bot_seen):
                 tally["conflict"] = ("a USB disk's commands were seen there on endpoints "
                                      "that device does not have")
             for g in groups_of.get(s, []):
@@ -4661,8 +4669,12 @@ def _follow_pass(fields, events, seg_of, devices, wanted, allowed, profile,
                         continue
                 elif (kind != want) if want is not None else kind not in ("bulk", "interrupt"):
                     continue
-                if ep in own:
-                    tally["overlap"] += 1       # that device's own endpoint: cannot be told apart
+                if ep in own and (kind == "info" or kind in own[ep]):
+                    # that device's own endpoint, of the same kind: cannot be
+                    # told apart. (Another kind there cannot be that device's:
+                    # an endpoint has one transfer type, so a bulk transfer on
+                    # a hub's or keyboard's interrupt endpoint is not theirs.)
+                    tally["overlap"] += 1
                     continue
                 data = [e for e in gev if e["kind"] == "data"]
                 if any(id(e) in bot_ids for e in data):
