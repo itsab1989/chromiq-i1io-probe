@@ -3327,10 +3327,15 @@ def check_capture(path: str, profile: str | None = None) -> dict:
     if code == "ok" and not identified:
         verdict += (" Which device each packet belongs to could not be told from this "
                     "recording (it holds no USB description).")
-    note = left_out_text(left_out, att.get("explained", False))
+    note = left_out_text(left_out, att.get("explained", False),
+                         swapped=bool((att.get("followed") or {}).get("followed")))
+    if note:
+        verdict += " " + note
+    note = followed_text(att.get("followed"))
     if note:
         verdict += " " + note
     return {"ok": code == "ok", "packets": len(recs), "xrite_packets": xrite,
+            "followed": att.get("followed"),
             "linktype": linktype, "code": code, "verdict": verdict,
             "payload_bytes": payload_bytes, "nonzero_bytes": nonzero,
             "identified": identified, "activity": activity,
@@ -4450,6 +4455,231 @@ def _bot_drops(events, keys) -> tuple:
     return drop, seen, pairs
 
 
+def _transfer_groups(fields) -> list:
+    """The records of each transfer (submit to completion), as lists of
+    record indices, in recording order (attribute_records, rule 4)."""
+    inst: dict = {}
+    groups = []
+    for ri, f in enumerate(fields):
+        if f is None:
+            continue
+        tid, starts, ends = f[4], f[5], f[6]
+        g = inst.get(tid)
+        if g is None or starts:
+            g = []
+            groups.append(g)
+            inst[tid] = g
+        g.append(ri)
+        if ends:
+            inst.pop(tid, None)
+    return groups
+
+
+# --------------------------------------------------------------------------
+# 1.6.6: following the instrument to another address
+#
+# A tester's three i1Pro 2 sessions (Windows 11, USBPcap attached, every step
+# recorded) kept nothing: the instrument's description was recorded at one
+# address, but its own commands and data were recorded under ANOTHER address,
+# one that the recording's own device list gives to a USB hub, and that
+# hub's traffic showed up at the instrument's address. A swap. USBPcap writes
+# into each live record the address it cached when the device was started
+# (USBPcapGetDeviceUSBInfo at IRP_MN_START_DEVICE, see 1.6.2 above), while
+# USBPcapCMD's injected descriptions carry the address the hub reports now.
+# When Windows gives the devices new addresses without starting them again
+# (most likely after sleep, or after "Shut down" with Fast Startup, which
+# resumes the kernel instead of starting it), the two disagree. 1.6.2 to
+# 1.6.5 knew the instrument only by the address of its description, so
+# nothing of it was kept.
+#
+# The instrument is now ALSO recognised by its own evidence: under an address
+# whose description says it is another kind of device (not an X-Rite one),
+# the tool looks for the family's own vendor requests (the request numbers
+# the decoders know) and data on the instrument's endpoints. It follows that
+# address only when ALL of these hold:
+#   1. that device's own configuration description is in the recording, so
+#      its own endpoints are known;
+#   2. at least one of the family's own vendor requests (for the i1iO table:
+#      one of its command lines with a correct checksum) and at least two
+#      such transfers in all;
+#   3. nothing there looks like another device's traffic on an endpoint that
+#      device does not have: no mass-storage command or status, no input
+#      report on the instrument's button endpoint.
+# It then keeps ONLY, transfer by transfer: the family's vendor requests to
+# the device, and bulk or interrupt transfers on the instrument's endpoints
+# that are NOT the other device's own endpoints, of the right transfer type.
+# Never that device's standard or class requests, never anything on its own
+# endpoints (a keyboard's reports, a disk's blocks, a Bluetooth adapter's
+# packets travel only there or as class requests), and never its
+# description. This is strong evidence, not certainty, and the check says
+# so, with the counts.
+# --------------------------------------------------------------------------
+
+FOLLOW_FAMILIES = ("i1pro2", "i1pro", "i1pro3", "munki", "io")
+
+
+def follow_families(profile: str | None, wanted_families) -> list:
+    """The instrument families whose traffic a recording may follow."""
+    if profile in ("i1pro2", "i1pro", "i1pro3", "munki"):
+        return [profile]
+    if profile == SESSION_TABLE:
+        # the table, and the i1Pro or i1Pro 2 riding on it
+        return ["io", "i1pro2"]
+    if profile is None:
+        return sorted({f for f in wanted_families if f in FOLLOW_FAMILIES})
+    return []
+
+
+def _follow_request(ev, family: str) -> bool:
+    """A vendor request to the device of the family's own kind."""
+    if ev.get("kind") != "control" or (ev["rt"] >> 5) & 3 != 2 or ev["rt"] & 0x1F:
+        return False
+    if family == "io":
+        return True                     # the table's chip; only with a command line
+    return ev["req"] in FAMILIES[family]["requests"]
+
+
+def _io_line_event(ev) -> bool:
+    """A command line to the i1iO table with a correct checksum."""
+    if ev.get("kind") != "data" or ev["dir_in"] or ev["data"][:1] != b";":
+        return False
+    text = ev["data"].decode("latin-1")
+    return any(io_checksum_ok(part) for part in text.split("\r") if part.startswith(";"))
+
+
+def _follow_pass(fields, events, seg_of, devices, wanted, allowed, profile,
+                 wanted_fams: dict) -> dict:
+    """1.6.6: the records of the instrument's traffic under other addresses.
+    Returns {"keep": set of record indices, "summary": None or {"family",
+    "followed": [...], "refused": [...]}} (see the notes above)."""
+    out = {"keep": set(), "summary": None}
+    fams = follow_families(profile, set(wanted_fams.values()))
+    if not fams:
+        return out
+    eps_for = {}
+    for fam in fams:
+        same = {"i1pro2", "i1pro"} if fam in ("i1pro2", "i1pro") else {fam}
+        known = None
+        for s in wanted:
+            if wanted_fams.get(s) in same and allowed.get(s):
+                known = dict(allowed[s])
+                break
+        eps_for[fam] = known or dict(FAMILY_ENDPOINTS[fam])
+    by_seg: dict = {}
+    ev_of_ri: dict = {}
+    for ev in events:
+        s = seg_of[ev["_ri"][0]]
+        by_seg.setdefault(s, []).append(ev)
+        for ri in ev["_ri"]:
+            ev_of_ri[ri] = ev
+    candidates = {s for s, info in devices.items()
+                  if s not in wanted and s[1] != 0 and info.get("vid")
+                  and info.get("vid") not in XRITE_VIDS}
+    if not candidates:
+        return out
+    groups_of: dict = {}
+    for g in _transfer_groups(fields):
+        s = seg_of[g[0]]
+        if s in candidates:
+            groups_of.setdefault(s, []).append(g)
+    followed, refused = [], []
+    for s in sorted(candidates, key=str):
+        evs = by_seg.get(s, [])
+        own: dict = {}
+        cfg_lines: list = []
+        dev_class = None
+        for ev in evs:
+            if ev["kind"] != "control" or ev["rt"] != 0x80 or ev["req"] != 6:
+                continue
+            if ev["wValue"] >> 8 == 2 and len(ev["in"]) >= 9 and ev["in"][1] == 2:
+                lines = parse_config_descriptor(ev["in"])
+                own.update(config_endpoints(lines))
+                cfg_lines = cfg_lines or lines
+            elif ev["wValue"] >> 8 == 1 and len(ev["in"]) >= 5 and ev["in"][1] == 1:
+                dev_class = ev["in"][4] if dev_class is None else dev_class
+        as_word = _seen_class(dict(devices[s], config=cfg_lines), dev_class, profile)
+        best = None
+        for fam in fams:
+            eps = eps_for[fam]
+            btn = BUTTON_ENDPOINTS.get(fam)
+            outside = {(ev["bus"], ev["dev"]) for ev in evs}
+            bot_ids, bot_seen, _pairs = _bot_drops(
+                [ev for ev in evs if ev["kind"] == "data" and ev["ep"] not in own], outside)
+            tally = {"requests": [], "data": [], "overlap": 0, "lines": 0, "conflict": ""}
+            if bot_seen:
+                tally["conflict"] = ("a USB disk's commands were seen there on endpoints "
+                                     "that device does not have")
+            for g in groups_of.get(s, []):
+                f0 = fields[g[0]]
+                ep, kind = f0[1], f0[2]
+                gev = []
+                for ri in g:
+                    ev = ev_of_ri.get(ri)
+                    if ev is not None and all(e is not ev for e in gev):
+                        gev.append(ev)
+                if kind == "control" or not ep & 0x7F:
+                    ctl = [e for e in gev if e["kind"] == "control"]
+                    if ctl and _follow_request(ctl[0], fam) \
+                            and set(g) <= set(ctl[0]["_ri"]) | {ri for ri in g if not fields[ri][3]}:
+                        tally["requests"].append(g)
+                    continue
+                if ep not in eps or ep == 0xFF:
+                    continue
+                want = eps[ep]
+                if kind == "info":
+                    if any(fields[ri][3] for ri in g):
+                        continue
+                elif (kind != want) if want is not None else kind not in ("bulk", "interrupt"):
+                    continue
+                if ep in own:
+                    tally["overlap"] += 1       # that device's own endpoint: cannot be told apart
+                    continue
+                data = [e for e in gev if e["kind"] == "data"]
+                if any(id(e) in bot_ids for e in data):
+                    tally["conflict"] = tally["conflict"] or "a USB disk's data was seen there"
+                    continue
+                if btn and ep == btn[0] and any(e["dir_in"] and not btn[1](e["data"])
+                                                for e in data):
+                    tally["conflict"] = ("an input device's reports were seen there on the "
+                                         "instrument's button endpoint")
+                    continue
+                if fam == "io" and any(_io_line_event(e) for e in data):
+                    tally["lines"] += 1
+                tally["data"].append(g)
+            n_req, n_all = len(tally["requests"]), len(tally["requests"]) + len(tally["data"])
+            evidence = (tally["lines"] >= 1) if fam == "io" else (n_req >= 1)
+            if not evidence:
+                continue
+            why = ""
+            if not cfg_lines:
+                why = "that device's own endpoints are not in the recording"
+            elif tally["conflict"]:
+                why = tally["conflict"]
+            elif n_all < 2:
+                why = "there was too little of it to be sure"
+            cand = (n_all, fam, tally, why)
+            if best is None or (not why, n_all) > (not best[3], best[0]):
+                best = cand
+        if best is None:
+            continue
+        n_all, fam, tally, why = best
+        item = {"address": list(s[:2]), "as": as_word, "family": fam,
+                "requests": len(tally["requests"]), "data": len(tally["data"]),
+                "overlap": tally["overlap"]}
+        if why:
+            item["why"] = why
+            refused.append(item)
+            continue
+        keep = {ri for g in tally["requests"] + tally["data"] for ri in g}
+        item["records"] = len(keep)
+        out["keep"] |= keep
+        followed.append(item)
+    if followed or refused:
+        out["summary"] = {"family": (followed or refused)[0]["family"],
+                          "followed": followed, "refused": refused}
+    return out
+
+
 def attribute_records(linktype: int, recs, profile: str | None = None,
                       table_lines: bool = False) -> dict:
     """1.6.2: THE decision which records of a recording are the instrument's.
@@ -4690,21 +4920,18 @@ def attribute_records(linktype: int, recs, profile: str | None = None,
                 keep[ri] = False
                 drop_reason[ri] = kind
 
+    # 3b (1.6.6). The instrument's own traffic under another address.
+    followed = None
+    if not darwin:
+        fol = _follow_pass(fields, events, seg_of, devices, wanted, allowed, profile,
+                           {s: family_of(s) for s in wanted})
+        for ri in fol["keep"]:
+            keep[ri] = True
+            drop_reason[ri] = None
+        followed = fol["summary"]
+
     # 4. A transfer is kept or dropped whole.
-    inst: dict = {}
-    groups = []
-    for ri, f in enumerate(fields):
-        if f is None:
-            continue
-        tid, starts, ends = f[4], f[5], f[6]
-        g = inst.get(tid)
-        if g is None or starts:
-            g = []
-            groups.append(g)
-            inst[tid] = g
-        g.append(ri)
-        if ends:
-            inst.pop(tid, None)
+    groups = _transfer_groups(fields)
     for g in groups:
         reasons = [drop_reason[ri] for ri in g if drop_reason[ri]]
         if not reasons and all(keep[ri] for ri in g):
@@ -4734,6 +4961,13 @@ def attribute_records(linktype: int, recs, profile: str | None = None,
                 explained = False
     result["explained"] = explained
     result["devices"] = {addr(s): devices[s] for s in wanted}
+    result["followed"] = followed
+    for item in (followed or {}).get("followed", []):
+        key = tuple(item["address"])
+        result["devices"].setdefault(key, {
+            "vid": None, "pid": None, "config": [], "guess_family": item["family"],
+            "how": "followed: its own commands under another USB address (1.6.6)"})
+        result["keys"].add(key)
     return result
 
 
@@ -4783,11 +5017,21 @@ def foreign_seen(left: dict | None) -> bool:
     return any(left.get(k) for k in PROVEN_FOREIGN) if left else False
 
 
-def left_out_text(left: dict, explained: bool = False) -> str:
-    """The plain words for what attribute_records() left out, or ""."""
+def left_out_text(left: dict, explained: bool = False, swapped: bool = False) -> str:
+    """The plain words for what attribute_records() left out, or "".
+    swapped (1.6.6): the instrument's own traffic was followed to another
+    address, so the other device at its address is the other half of the
+    same address mix-up, and unplugging other devices would not help."""
     total = sum(left.values())
     if not total:
         return ""
+    if swapped and foreign_seen(left):
+        kinds = [LEFT_OUT_KINDS.get(k, k) for k, _v in sorted(left.items(), key=lambda kv: -kv[1])]
+        return (f"{_n(total, 'transfer', 'transfers')} of another device were recorded under "
+                "the instrument's own USB address (" + ", ".join(kinds) + ") and were left "
+                "out. That is the other half of the same address mix-up (see FOLLOWED). "
+                "Because of it, the analysis shows only counts and sizes for this step, "
+                "not its contents.")
     if not foreign_seen(left):
         # 1.6.2: nothing here proves another device
         return ("A few records could not be matched to the instrument and were left out "
@@ -4807,6 +5051,72 @@ def left_out_text(left: dict, explained: bool = False) -> str:
                  "instrument does not have). If you can, unplug the other USB devices "
                  "before the next recording.")
     return text
+
+
+def merge_followed(items) -> dict | None:
+    """1.6.6: the follow summaries of several recordings (or steps) as one:
+    counts added up per kind of device the address was given to."""
+    out = {"followed": {}, "refused": {}}
+    family = None
+    for summary in items:
+        if not summary:
+            continue
+        family = family or summary.get("family")
+        for part in ("followed", "refused"):
+            for item in summary.get(part) or []:
+                slot = out[part].setdefault(item["as"], {
+                    "as": item["as"], "family": item.get("family"), "addresses": 0,
+                    "requests": 0, "data": 0, "overlap": 0, "records": 0,
+                    "why": item.get("why", "")})
+                slot["addresses"] += 1
+                for k in ("requests", "data", "overlap", "records"):
+                    slot[k] += item.get(k, 0) or 0
+    if not out["followed"] and not out["refused"]:
+        return None
+    return {"family": family, "followed": list(out["followed"].values()),
+            "refused": list(out["refused"].values())}
+
+
+def _a(word: str) -> str:
+    """"a USB hub", "an audio device", "another USB device (...)"."""
+    if word.startswith("other "):
+        return "an" + word
+    return ("an " if word[:1] in "aeioAEIO" else "a ") + word
+
+
+def followed_text(summary: dict | None) -> str:
+    """1.6.6: the plain words for what the tool followed (or saw and did not
+    follow) under another USB address, with the reason and the counts, or ""."""
+    merged = merge_followed([summary])
+    if not merged:
+        return ""
+    parts = []
+    for item in merged["followed"]:
+        n = item["requests"] + item["data"]
+        parts.append(
+            "FOLLOWED: the instrument's own traffic was recorded under another USB "
+            f"address, one that this recording's own device list gives to {_a(item['as'])} "
+            f"({_n(n, 'transfer', 'transfers')}: "
+            f"{_n(item['requests'], 'command of the instrument', 'commands of the instrument')}"
+            f" and {_n(item['data'], 'data transfer', 'data transfers')} on its endpoints, "
+            f"{_n(item['records'], 'record', 'records')}). This happens when Windows gave the "
+            "devices new addresses after the USB recorder had started watching them (for "
+            "example after sleep, or after Shut down with Fast Startup). The tool recognised "
+            "the instrument by its own commands and endpoints, not by the address, and kept "
+            "this traffic in the instrument-only copy. That is very likely, but not certain, "
+            "to be all the instrument's. Nothing of the other device's own traffic was kept: "
+            "not its requests, not its description, nothing on its own endpoints.")
+        if item["overlap"]:
+            parts.append(f"{_n(item['overlap'], 'transfer', 'transfers')} on an endpoint "
+                         "number that the other device also has could not be told apart, "
+                         "so they were left out.")
+    for item in merged["refused"]:
+        n = item["requests"] + item["data"]
+        parts.append(
+            "NOT FOLLOWED: traffic that looks like the instrument's "
+            f"({_n(n, 'transfer', 'transfers')}) was also recorded under the address of "
+            f"{_a(item['as'])}, but it was not kept, because {item['why']}.")
+    return " ".join(parts)
 
 
 def kept_records(linktype: int, recs, profile: str | None = None,
