@@ -2898,12 +2898,15 @@ def finish_recordings(files: dict, record: list | None = None, ask_delete: bool 
     send = []
     full = []
     codes = []                  # 1.6.6 review: each recording's check
+    refused = False             # ... and whether one said "NOT KEPT, to be safe"
     for iface, path in files.items():
         if not os.path.exists(path):
             continue
         full.append(path)
         check = check_capture(path, SESSION_TABLE)
         codes.append(check["code"])
+        if (check.get("followed") or {}).get("refused"):
+            refused = True
         lines.append(f"{iface}: {check['packets']} packets, "
                      f"{check['xrite_packets']} of them from X-Rite devices")
         lines.append("  " + check["verdict"])
@@ -2958,7 +2961,8 @@ def finish_recordings(files: dict, record: list | None = None, ask_delete: bool 
     # without any X-Rite device ("no-xrite", or nothing at all) is normal
     # beside a good one (one recording per bus), and does not count then.
     good = [c for c in codes if c in ("ok", "all-zero")]
-    unusable = not good or any(c not in ("ok", "all-zero", "no-xrite", "empty") for c in codes)
+    unusable = refused or not good or any(
+        c not in ("ok", "all-zero", "no-xrite", "empty") for c in codes)
     if full and (not send or unusable):
         # 1.6.6: nothing (or nothing usable) was kept from at least one of
         # them, so the full recordings are the only full copy: never deleted,
@@ -4639,7 +4643,12 @@ def _follow_pass(fields, events, seg_of, devices, wanted, allowed, profile,
         # cannot be the hub's. Under any other kind of device's address (or
         # one whose configuration is not recorded) nothing is kept; the check
         # only says what it saw.
-        is_hub = bool(cfg_lines) and (dev_class == 9 or 9 in config_interfaces(cfg_lines).values())
+        # A real hub: device class 9 (or unset) and EVERY interface of class 9
+        # (USB 2.0, 11.23.1). A composite device with a hub interface beside a
+        # vendor interface is not a hub (review of 1.6.6).
+        ifc = config_interfaces(cfg_lines)
+        is_hub = bool(cfg_lines) and dev_class in (9, None) and bool(ifc) \
+            and set(ifc.values()) == {9}
         best = None
         for fam in fams:
             eps = eps_for[fam]
@@ -10285,8 +10294,11 @@ def finish_session(session: dict, folder: str) -> tuple:
 
 def steps_that_kept_nothing(session: dict) -> list:
     """1.6.6: the numbers of the steps that were recorded but kept nothing in
-    any take (their full recordings are then the only copy)."""
-    recorded, kept = set(), set()
+    any take (their full recordings are then the only copy), and (review) of
+    the steps in which traffic that looks like the instrument's was seen and
+    not kept, to be safe: the check has just said the full recordings are
+    kept for that."""
+    recorded, kept, refused = set(), set(), set()
     for s in session.get("steps") or []:
         if s.get("skipped"):
             continue
@@ -10294,7 +10306,9 @@ def steps_that_kept_nothing(session: dict) -> list:
             recorded.add(s.get("number"))
         if s.get("files_xrite"):
             kept.add(s.get("number"))
-    return sorted(n for n in recorded - kept if n is not None)
+        if s.get("files_full") and (s.get("followed") or {}).get("refused"):
+            refused.add(s.get("number"))
+    return sorted(n for n in (recorded - kept) | refused if n is not None)
 
 
 def keep_full_lines(full_dir: str, steps: list) -> list:
@@ -10304,8 +10318,8 @@ def keep_full_lines(full_dir: str, steps: list) -> list:
     name = os.path.basename(full_dir)
     return _lines([
         "PLEASE KEEP THE FOLDER WITH THE FULL RECORDINGS",
-        _wrap(f"{which} nothing, so the full recordings are the only copy of what was "
-              "recorded. The tool did not delete them, and it will not offer to. Please "
+        _wrap(f"{which} nothing (or held traffic that was not kept, to be safe), so the "
+              "full recordings are the only copy of what was recorded. The tool did not delete them, and it will not offer to. Please "
               "keep this folder:", 74, ""),
         f"    {name}",
         _wrap("Do NOT send it: it holds everything that happened on those USB ports, "

@@ -374,6 +374,40 @@ class TheTable(unittest.TestCase):
         self.assertIsNone(att["followed"])
 
 
+class OnlyARealHub(unittest.TestCase):
+    """The confirmation review: a composite device (class 0xEF) with a hub
+    interface beside a vendor interface is not a hub; its payloads must not
+    reach the copy."""
+
+    def test_composite_with_a_hub_interface_is_not_followed(self):
+        import struct                                             # noqa: PLC0415
+        w = UsbPcapWriter()
+        sf.instrument(w)
+        dev = sf.HUB
+        dd = struct.pack("<BBHBBBBHHHBBBB", 18, 1, 0x0200, 0xEF, 2, 1, 64, 0x1234, 0x5678,
+                         0x0100, 1, 2, 3, 1)
+        w.control(dev, 0x80, 6, value=0x0100, length=18, reply=dd)
+        ep_hub = struct.pack("<BBBBHB", 7, 5, 0x81, 3, 1, 12)
+        ep_v = struct.pack("<BBBBHB", 7, 5, 0x86, 2, 64, 0)
+        if0 = struct.pack("<BBBBBBBBB", 9, 4, 0, 0, 1, 9, 0, 0, 0) + ep_hub
+        if1 = struct.pack("<BBBBBBBBB", 9, 4, 1, 0, 1, 0xFF, 0, 0, 0) + ep_v
+        total = 9 + len(if0) + len(if1)
+        cfg = struct.pack("<BBHBBBBB", 9, 2, total, 2, 1, 0, 0x80, 50) + if0 + if1
+        w.control(dev, 0x80, 6, value=0x0200, length=total, reply=cfg)
+        marker = b"COMPOSITE-SECRET-PAYLOAD"
+        w.vendor_in(dev, 0xC0, marker)
+        w.vendor_out(dev, 0xCA, marker)
+        w.bulk_in(dev, 0x82, marker * 4)
+        copy, att = kept(w)
+        self.assertNotIn(marker, blob(copy))
+        self.assertEqual(att["followed"]["followed"], [])
+        self.assertIn("only under a USB hub's address", att["followed"]["refused"][0]["why"])
+
+    def test_a_real_hub_is_still_followed(self):
+        _copy, att = kept(sf.swapped_step())
+        self.assertEqual(len(att["followed"]["followed"]), 1)
+
+
 class NotFollowedWithoutEvidence(unittest.TestCase):
 
     def test_no_configuration_description_no_following(self):

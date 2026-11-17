@@ -287,6 +287,20 @@ class FullRecordingsKept(unittest.TestCase):
         _lines, asked, _screen = self.finish(session, folder)
         self.assertEqual(len(asked), 1)                  # the old offer, as before
 
+    def test_a_refused_address_keeps_them_although_every_step_kept_something(self):
+        """The confirmation review: step 1 kept something, step 2 kept
+        something too but also said NOT KEPT (traffic under a keyboard's
+        address). The full recordings are kept, without the offer."""
+        session, folder, full = self.session(kept_steps={1, 2})
+        session["steps"][1]["followed"] = {"family": "i1pro2", "followed": [], "refused": [
+            {"as": "keyboard, mouse or other input device", "requests": 2, "data": 3,
+             "why": "the tool follows the instrument only under a USB hub's address"}]}
+        self.assertEqual(probe.steps_that_kept_nothing(session), [2])
+        lines, asked, _screen = self.finish(session, folder)
+        self.assertEqual(asked, [])
+        self.assertEqual(len(os.listdir(full)), 2)
+        self.assertIn("not kept, to be safe", " ".join(" ".join(lines).split()))
+
     def test_every_step_kept_something_offers_as_before(self):
         session, folder, full = self.session(kept_steps={1, 2})
         lines, asked, _screen = self.finish(session, folder)
@@ -303,6 +317,30 @@ class FullRecordingsKept(unittest.TestCase):
                 redirect_stdout(io.StringIO()):
             lines = probe.finish_recordings({"USBPcap1": full}, None)
         self.assertTrue(os.path.exists(full))
+        self.assertIn("they are the only full copy", " ".join(lines))
+
+    def test_the_table_two_buses_one_good_one_refused(self):
+        """The confirmation review's table case: bus 1 good; bus 2 holds the
+        instrument's traffic under a keyboard's address (no description of the
+        instrument there: "no-xrite"). Bus 2 says NOT KEPT, so the full
+        recordings are kept and no deletion is offered."""
+        good = sf.UsbPcapWriter()
+        sf.describe(good, 3, 0x0971, 0x2000, 0xFF, 0xFF, sf.I1PRO2_EPS)
+        sf.i1pro2_work(good, 3)
+        bus2 = sf.UsbPcapWriter(bus=2)
+        sf.keyboard(bus2)
+        sf.i1pro2_work(bus2, sf.KEYBOARD)
+        sf.keyboard_work(bus2, sf.KEYBOARD)
+        f1 = good.save(os.path.join(self.tmp.name, "c1-full.pcap"))
+        f2 = bus2.save(os.path.join(self.tmp.name, "c2-full.pcap"))
+        c2 = probe.check_capture(f2, probe.SESSION_TABLE)
+        self.assertEqual(c2["code"], "no-xrite")
+        self.assertTrue(c2["followed"]["refused"])
+        self.assertIn("it was not kept, to be safe", c2["verdict"])
+        with mock.patch.object(probe, "ask", lambda *_a, **_k: self.fail("asked")), \
+                redirect_stdout(io.StringIO()):
+            lines = probe.finish_recordings({"USBPcap1": f1, "USBPcap2": f2}, None)
+        self.assertTrue(os.path.exists(f1) and os.path.exists(f2))
         self.assertIn("they are the only full copy", " ".join(lines))
 
     def test_the_table_recording_keeps_them_when_a_check_is_not_good(self):
