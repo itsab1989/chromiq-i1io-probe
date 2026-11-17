@@ -21,6 +21,7 @@ that shape from INVENTED bytes (tests/synth_follow.py) and prove:
     python3 -m unittest discover -s tests -v
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -127,6 +128,39 @@ class FollowsTheInstrument(unittest.TestCase):
         self.assertIn("instrument family: i1Pro 2 (Rev E)", text)
         self.assertIn("0xD4 trigger measurement", text)
         self.assertIn("4 readings", text)
+
+    def test_the_hub_at_the_instruments_address_does_not_hide_the_analysis(self):
+        """The other half of the swap (his step 2): the hub's traffic at the
+        instrument's address. Nothing of the instrument's own work was kept
+        there, so nothing can hide: decoded values, never raw contents."""
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = os.path.join(tmp, "instrument-session-x")
+            full = folder + probe.FULL_SUFFIX
+            os.makedirs(folder)
+            os.makedirs(full)
+            fn = "step2-calibrate-take1-USBPcap1-full.pcap"
+            sf.swapped_step().save(os.path.join(full, fn))
+            entry = {"number": 2, "key": "calibrate", "title": "calibrate", "take": 1,
+                     "files_full": [fn]}
+            probe.check_step_files(entry, full, folder, "i1pro2")
+            self.assertTrue(entry["explained"])
+            self.assertEqual(set(entry["left_out"]), {"hub", "endpoint"})
+            with open(os.path.join(folder, "session.json"), "w", encoding="utf-8") as fh:
+                json.dump({"kind": probe.SESSION_KIND, "family": "i1pro2", "steps": [entry]},
+                          fh)
+            text = probe.summarize_session([folder])
+        self.assertNotIn(probe.WITHHELD_TEXT[:40], text)
+        self.assertIn("decoded values only", " ".join(text.split()))
+        self.assertIn("0xD4 trigger measurement", text)
+
+    def test_own_work_at_the_described_address_keeps_withholding(self):
+        """When the instrument also worked at its described address, the
+        other device's traffic there may hide among it: counts only."""
+        w = sf.swapped_step()
+        sf.i1pro2_work(w, sf.INSTR, readings=1)
+        _copy, att = kept(w)
+        self.assertFalse(att["explained"])
+        self.assertTrue(probe.hide_contents(att["left_out"], att["explained"]))
 
     def _save(self, w):
         tmp = tempfile.TemporaryDirectory(prefix="probe-test-")

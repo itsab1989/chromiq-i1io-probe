@@ -4582,6 +4582,16 @@ def _follow_pass(fields, events, seg_of, devices, wanted, allowed, profile,
     candidates = {s for s, info in devices.items()
                   if s not in wanted and s[1] != 0 and info.get("vid")
                   and info.get("vid") not in XRITE_VIDS}
+    # The instrument's own configuration description, as recorded at its own
+    # address. The measuring program fetches it again when it starts, and
+    # under a stale address that copy lands at the other device's address:
+    # it is the instrument's (byte for byte), not that device's.
+    inst_cfgs = {ev["in"] for s in wanted for ev in by_seg.get(s, [])
+                 if ev["kind"] == "control" and ev["rt"] == 0x80 and ev["req"] == 6
+                 and ev["wValue"] >> 8 == 2 and len(ev["in"]) >= 9 and ev["in"][1] == 2}
+
+    def instruments_cfg(blob: bytes) -> bool:
+        return any(c.startswith(blob) for c in inst_cfgs)
     if not candidates:
         return out
     groups_of: dict = {}
@@ -4599,6 +4609,8 @@ def _follow_pass(fields, events, seg_of, devices, wanted, allowed, profile,
             if ev["kind"] != "control" or ev["rt"] != 0x80 or ev["req"] != 6:
                 continue
             if ev["wValue"] >> 8 == 2 and len(ev["in"]) >= 9 and ev["in"][1] == 2:
+                if instruments_cfg(ev["in"]):
+                    continue                    # the instrument's own, fetched again
                 lines = parse_config_descriptor(ev["in"])
                 own.update(config_endpoints(lines))
                 cfg_lines = cfg_lines or lines
@@ -4612,7 +4624,8 @@ def _follow_pass(fields, events, seg_of, devices, wanted, allowed, profile,
             outside = {(ev["bus"], ev["dev"]) for ev in evs}
             bot_ids, bot_seen, _pairs = _bot_drops(
                 [ev for ev in evs if ev["kind"] == "data" and ev["ep"] not in own], outside)
-            tally = {"requests": [], "data": [], "overlap": 0, "lines": 0, "conflict": ""}
+            tally = {"requests": [], "data": [], "overlap": 0, "lines": 0, "conflict": "",
+                     "own_description": []}
             if bot_seen:
                 tally["conflict"] = ("a USB disk's commands were seen there on endpoints "
                                      "that device does not have")
@@ -4626,9 +4639,14 @@ def _follow_pass(fields, events, seg_of, devices, wanted, allowed, profile,
                         gev.append(ev)
                 if kind == "control" or not ep & 0x7F:
                     ctl = [e for e in gev if e["kind"] == "control"]
-                    if ctl and _follow_request(ctl[0], fam) \
-                            and set(g) <= set(ctl[0]["_ri"]) | {ri for ri in g if not fields[ri][3]}:
+                    whole = ctl and set(g) <= set(ctl[0]["_ri"]) | {
+                        ri for ri in g if not fields[ri][3]}
+                    if whole and _follow_request(ctl[0], fam):
                         tally["requests"].append(g)
+                    elif whole and ctl[0]["rt"] == 0x80 and ctl[0]["req"] == 6 \
+                            and ctl[0]["wValue"] >> 8 == 2 and len(ctl[0]["in"]) >= 9 \
+                            and instruments_cfg(ctl[0]["in"]):
+                        tally["own_description"].append(g)
                     continue
                 if ep not in eps or ep == 0xFF:
                     continue
@@ -4677,7 +4695,8 @@ def _follow_pass(fields, events, seg_of, devices, wanted, allowed, profile,
             item["why"] = why
             refused.append(item)
             continue
-        keep = {ri for g in tally["requests"] + tally["data"] for ri in g}
+        keep = {ri for g in tally["requests"] + tally["data"] + tally["own_description"]
+                for ri in g}
         item["records"] = len(keep)
         out["keep"] |= keep
         followed.append(item)
@@ -4966,6 +4985,23 @@ def attribute_records(linktype: int, recs, profile: str | None = None,
             eps = allowed.get(s) or {}
             if pair is None or pair & set(eps) or not foreign_eps <= pair:
                 explained = False
+    # 1.6.6: the address mix-up. When the instrument's own traffic was
+    # followed to another address and nothing of its own work was kept at its
+    # described address (only standard requests on endpoint 0, such as its
+    # description), the other device's traffic there cannot hide among the
+    # instrument's: at that address there is nothing of the instrument's to
+    # hide among, and the followed traffic leaves out the other device's own
+    # endpoints and requests (_follow_pass). The analysis then shows decoded
+    # values, never raw contents (REMOVED_TEXT), as for the disk above.
+    if followed and followed.get("followed") and left \
+            and not set(left) & SHARED_ENDPOINT_KINDS and not explained:
+        own_work = any(
+            seg_for_event(ev) in wanted and all(keep[ri] for ri in ev["_ri"])
+            and (ev["kind"] == "data" or (ev["rt"] >> 5) & 3 != 0)
+            for ev in events)
+        if not own_work:
+            explained = True
+            result["swap"] = True
     result["explained"] = explained
     result["devices"] = {addr(s): devices[s] for s in wanted}
     result["followed"] = followed
@@ -4996,8 +5032,9 @@ PROVEN_FOREIGN = frozenset({"storage", "hid", "hub", "description", "endpoint",
 SHARED_ENDPOINT_KINDS = frozenset({"shared-endpoint", "button"})
 
 REMOVED_TEXT = ("Another USB device's traffic at this instrument's address was removed "
-                "from this step (a USB disk on endpoints the instrument does not have), so "
-                "raw contents are not shown: decoded values only.")
+                "from this step (traffic that cannot be the instrument's: on endpoints it "
+                "does not have, or another kind of device's own requests), so raw contents "
+                "are not shown: decoded values only.")
 HIDDEN_CELL = "contents not shown (another device shared this address)"
 
 WITHHELD_TEXT = ("Another USB device shared this instrument's address in this recording, "
@@ -5037,8 +5074,10 @@ def left_out_text(left: dict, explained: bool = False, swapped: bool = False) ->
         return (f"{_n(total, 'transfer', 'transfers')} of another device were recorded under "
                 "the instrument's own USB address (" + ", ".join(kinds) + ") and were left "
                 "out. That is the other half of the same address mix-up (see FOLLOWED). "
-                "Because of it, the analysis shows only counts and sizes for this step, "
-                "not its contents.")
+                + ("Because of it, the analysis shows only counts and sizes for this step, "
+                   "not its contents." if hide_contents(left, explained) else
+                   "Because of it, the analysis shows decoded values for this step, never "
+                   "raw contents."))
     if not foreign_seen(left):
         # 1.6.2: nothing here proves another device
         return ("A few records could not be matched to the instrument and were left out "
