@@ -2897,11 +2897,13 @@ def finish_recordings(files: dict, record: list | None = None, ask_delete: bool 
     lines = ["RECORDING CHECK"]
     send = []
     full = []
+    codes = []                  # 1.6.6 review: each recording's check
     for iface, path in files.items():
         if not os.path.exists(path):
             continue
         full.append(path)
         check = check_capture(path, SESSION_TABLE)
+        codes.append(check["code"])
         lines.append(f"{iface}: {check['packets']} packets, "
                      f"{check['xrite_packets']} of them from X-Rite devices")
         lines.append("  " + check["verdict"])
@@ -2952,13 +2954,19 @@ def finish_recordings(files: dict, record: list | None = None, ask_delete: bool 
     else:
         lines.append("No X-Rite traffic was found in any recording, so there is nothing "
                      "useful to send. The report on its own still helps.")
-    if full and not send:
-        # 1.6.6: nothing was kept, so the full recordings are the only copy:
-        # never deleted, and their deletion is not offered
-        lines.append("The full recordings were kept, because nothing could be kept from "
-                     "them: they are the only copy. Please keep them, and do NOT send them "
-                     "(they hold everything on those USB ports, possibly what you typed). "
-                     "A newer version of this tool may be able to read them again.")
+    # A recording whose check is not good keeps the full recordings. A bus
+    # without any X-Rite device ("no-xrite", or nothing at all) is normal
+    # beside a good one (one recording per bus), and does not count then.
+    good = [c for c in codes if c in ("ok", "all-zero")]
+    unusable = not good or any(c not in ("ok", "all-zero", "no-xrite", "empty") for c in codes)
+    if full and (not send or unusable):
+        # 1.6.6: nothing (or nothing usable) was kept from at least one of
+        # them, so the full recordings are the only full copy: never deleted,
+        # and their deletion is not offered
+        lines.append("The full recordings were kept, because not everything could be kept "
+                     "from them: they are the only full copy. Please keep them, and do NOT "
+                     "send them (they hold everything on those USB ports, possibly what you "
+                     "typed). A newer version of this tool may be able to read them again.")
     elif full and not ask_delete:
         lines.append("The full recordings were kept (the window was closed). Please do not "
                      "send them; delete them when you no longer need them.")
@@ -4625,6 +4633,13 @@ def _follow_pass(fields, events, seg_of, devices, wanted, allowed, profile,
             elif ev["wValue"] >> 8 == 1 and len(ev["in"]) >= 5 and ev["in"][1] == 1:
                 dev_class = ev["in"][4] if dev_class is None else dev_class
         as_word = _seen_class(dict(devices[s], config=cfg_lines), dev_class, profile)
+        # 1.6.6 review, the strict rule: followed only under an address the
+        # recording's own list gives to a USB HUB. A hub has nothing but its
+        # own status endpoint, so traffic on the instrument's endpoints there
+        # cannot be the hub's. Under any other kind of device's address (or
+        # one whose configuration is not recorded) nothing is kept; the check
+        # only says what it saw.
+        is_hub = bool(cfg_lines) and (dev_class == 9 or 9 in config_interfaces(cfg_lines).values())
         best = None
         for fam in fams:
             eps = eps_for[fam]
@@ -4689,12 +4704,18 @@ def _follow_pass(fields, events, seg_of, devices, wanted, allowed, profile,
                     tally["lines"] += 1
                 tally["data"].append(g)
             n_req, n_all = len(tally["requests"]), len(tally["requests"]) + len(tally["data"])
-            evidence = (tally["lines"] >= 1) if fam == "io" else (n_req >= 1)
+            # 1.6.6 review: a command AND a data transfer on the instrument's
+            # endpoints, so a device at its own address that merely sends vendor
+            # requests with matching numbers is never taken for the instrument
+            evidence = (tally["lines"] >= 1) if fam == "io" else (
+                n_req >= 1 and len(tally["data"]) >= 1)
             if not evidence:
                 continue
             why = ""
             if not cfg_lines:
-                why = "that device's own endpoints are not in the recording"
+                why = "that device's configuration is not in the recording"
+            elif not is_hub:
+                why = "the tool follows the instrument only under a USB hub's address"
             elif tally["conflict"]:
                 why = tally["conflict"]
             elif n_all < 2:
@@ -5166,9 +5187,10 @@ def followed_text(summary: dict | None) -> str:
             "devices new addresses after the USB recorder had started watching them (for "
             "example after sleep, or after Shut down with Fast Startup). The tool recognised "
             "the instrument by its own commands and endpoints, not by the address, and kept "
-            "this traffic in the instrument-only copy. That is very likely, but not certain, "
-            "to be all the instrument's. Nothing of the other device's own traffic was kept: "
-            "not its requests, not its description, nothing on its own endpoints.")
+            "only that: the instrument's commands and the traffic on the instrument's own "
+            "endpoints. That is very likely, but not certain, to be all the instrument's. "
+            "Nothing of the hub's own traffic was kept: not its requests, not its "
+            "description, nothing on its own status endpoint.")
         if item["overlap"]:
             parts.append(f"{_n(item['overlap'], 'transfer', 'transfers')} on an endpoint "
                          "number that the other device also has could not be told apart, "
@@ -5176,9 +5198,11 @@ def followed_text(summary: dict | None) -> str:
     for item in merged["refused"]:
         n = item["requests"] + item["data"]
         parts.append(
-            "NOT FOLLOWED: traffic that looks like the instrument's "
-            f"({_n(n, 'transfer', 'transfers')}) was also recorded under the address of "
-            f"{_a(item['as'])}, but it was not kept, because {item['why']}.")
+            "NOT KEPT: traffic that looks like the instrument's "
+            f"({_n(n, 'transfer', 'transfers')}) was seen under an address this recording "
+            f"gives to {_a(item['as'])}; it was not kept, to be safe ({item['why']}). "
+            "Please tell us about it; the full recordings are kept, so a later version "
+            "can look at it again.")
     return " ".join(parts)
 
 
@@ -8665,11 +8689,13 @@ def followed_screen_lines(followed: dict, first: bool = True) -> list:
             lines += [
                 "FOUND: YOUR INSTRUMENT'S TRAFFIC WAS UNDER ANOTHER USB ADDRESS",
                 _wrap(f"Windows recorded it under an address that its own list gives to "
-                      f"{_a(item['as'])}. That can happen after sleep, or after \"Shut "
-                      "down\" with Fast Startup. The tool now recognises the instrument by "
-                      "its own commands and endpoints and kept "
-                      f"{_n(n, 'transfer', 'transfers')} of it. Nothing of the other "
-                      "device was kept. Nothing for you to do: just carry on.", 74, "")]
+                      f"{_a(item['as'])}. That most likely happens after sleep, or after "
+                      "\"Shut down\" with Fast Startup. The tool recognises the instrument "
+                      "by its own commands and endpoints and kept "
+                      f"{_n(n, 'transfer', 'transfers')} on the instrument's own channels, "
+                      "very likely, but not certain, all the instrument's. Nothing of that "
+                      "device's own traffic was kept. Nothing for you to do: just carry on.",
+                      74, "")]
         else:
             lines.append(_wrap(f"(Followed the instrument again: {_n(n, 'transfer', 'transfers')}"
                                " under another USB address.)", 74, ""))
@@ -8678,9 +8704,13 @@ def followed_screen_lines(followed: dict, first: bool = True) -> list:
                                "endpoint number the other device has too could not be told "
                                "apart and were left out.", 74, ""))
     for item in followed.get("refused") or []:
-        lines.append(_wrap(f"Traffic that looks like your instrument's was also seen under "
-                           f"the address of {_a(item['as'])}, but it was not kept, because "
-                           f"{item['why']}.", 74, ""))
+        n = item["requests"] + item["data"]
+        lines.append(_wrap(f"Traffic that looks like your instrument's "
+                           f"({_n(n, 'transfer', 'transfers')}) was seen under an address "
+                           f"this recording gives to {_a(item['as'])}; it was not kept, to be "
+                           f"safe ({item['why']}). Please tell us about it. The full "
+                           "recordings are kept, so a later version can look at it again.",
+                           74, ""))
     return [part for line in lines for part in line.split("\n")]
 
 
@@ -10891,8 +10921,10 @@ def reprocess_session(path: str, output=None, report: bool = True) -> tuple:
                                                               profile), 64, "    "))
         refused = (entry.get("followed") or {}).get("refused") or []
         for item in refused:
-            lines.append("    " + _wrap(f"(seen but not followed under the address of "
-                                        f"{_a(item['as'])}: {item['why']})", 62, "     "))
+            lines.append("    " + _wrap(f"(traffic that looks like the instrument's was seen "
+                                        f"under an address this recording gives to "
+                                        f"{_a(item['as'])}; not kept, to be safe: "
+                                        f"{item['why']})", 62, "     "))
     session["reprocessed"] = {"version": PROBE_VERSION,
                               "at": datetime.datetime.now().isoformat(timespec="seconds"),
                               "from": os.path.basename(full),

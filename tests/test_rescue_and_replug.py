@@ -303,7 +303,36 @@ class FullRecordingsKept(unittest.TestCase):
                 redirect_stdout(io.StringIO()):
             lines = probe.finish_recordings({"USBPcap1": full}, None)
         self.assertTrue(os.path.exists(full))
-        self.assertIn("they are the only copy", " ".join(lines))
+        self.assertIn("they are the only full copy", " ".join(lines))
+
+    def test_the_table_recording_keeps_them_when_a_check_is_not_good(self):
+        """The review's table case: the instrument's description is kept
+        (a copy exists), but the check is not good (empty-step). Kept, and
+        no deletion offered."""
+        w = sf.UsbPcapWriter()
+        sf.describe(w, 4, 0x0971, 0x2004, 0, 0xFF, [(0x81, 2), (0x02, 2)])
+        sf.keyboard(w)
+        sf.keyboard_work(w, sf.KEYBOARD)
+        full = w.save(os.path.join(self.tmp.name, "b-full.pcap"))
+        self.assertEqual(probe.check_capture(full, probe.SESSION_TABLE)["code"], "empty-step")
+        with mock.patch.object(probe, "ask", lambda *_a, **_k: self.fail("asked")), \
+                redirect_stdout(io.StringIO()):
+            lines = probe.finish_recordings({"USBPcap1": full}, None)
+        self.assertTrue(os.path.exists(full))
+        self.assertIn("they are the only full copy", " ".join(lines))
+
+
+def stale_at_hub():
+    """The i1Pro 3's work under the address of a USB hub (the strict rule
+    follows only there)."""
+    w = sf.UsbPcapWriter()
+    w.describe(tae.INSTR, 0x0765, 0x6009, tae.synth.I1PRO3_ENDPOINTS)
+    tae.describe_class(w, tae.STALE, 0x05E3, 0x0610, 9, [(0x81, 3)], dev_class=9)
+    tae.describe_class(w, tae.KEYBOARD, 0x046D, 0xC31C, 3, [(0x81, 3)])
+    tae.keyboard(w)
+    tae.i1pro3_traffic(w, tae.STALE)
+    tae.keyboard(w)
+    return w
 
 
 class TheSession(tae.TheWholeSession):
@@ -318,7 +347,7 @@ class TheSession(tae.TheWholeSession):
         for _ in probe.steps_for("i1pro3"):
             answers = answers + ["", "e", "notes", "", "lights", ""]
         with mock.patch.object(probe, "candidate_dirs", lambda: [self.dir]):
-            outcome, code, screen = self.run_all(tae.stale_at_disk, answers)
+            outcome, code, screen = self.run_all(stale_at_hub, answers)
         self.assertEqual(code, 0)
         self.assertTrue(outcome["recorded"], screen[-3000:])
         self.assertEqual(screen.count("FOUND: YOUR INSTRUMENT'S TRAFFIC WAS UNDER ANOTHER USB"), 1)

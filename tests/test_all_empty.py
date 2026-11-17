@@ -151,9 +151,9 @@ class Facts(unittest.TestCase):
             self.assertNotIn(m[:8], blob, what)
 
     def test_nothing_is_kept_in_any_of_the_cases(self):
-        # 1.6.6: "stale-disk" is no longer one of them: the instrument's own
-        # commands under the disk's address are followed (see below)
-        for name, build in (("stale-undescribed", stale_undescribed), ("absent", absent),
+        # 1.6.6: under the strict rule "stale-disk" is one of them again
+        for name, build in (("stale-disk", stale_at_disk),
+                            ("stale-undescribed", stale_undescribed), ("absent", absent),
                             ("wrong-hub", wrong_hub), ("header-only", header_only)):
             with self.subTest(case=name):
                 path = self.save(build(), name + ".pcap")
@@ -167,28 +167,24 @@ class Facts(unittest.TestCase):
                     with open(dst, "rb") as fh:
                         self.assertNoMarks(fh.read(), dst)
 
-    def test_a_stale_address_at_a_disk_is_followed(self):
-        """1.6.6: the i1Pro 3's own commands under a disk's address are
-        followed; the disk's own endpoint numbers (0x81, 0x02, which the
-        i1Pro 3 has too) cannot be told apart and are left out."""
+    def test_a_stale_address_at_a_disk_is_said_not_kept(self):
+        """1.6.6, the strict rule of the review: the i1Pro 3's own commands
+        under a DISK's address are not followed (only a hub's address is),
+        so nothing is kept; the check says what it saw, counts only."""
         path = self.save(stale_at_disk(), "f.pcap")
         check = probe.check_capture(path, "i1pro3")
-        self.assertEqual(check["code"], "ok", check["verdict"])
-        self.assertIn("FOLLOWED", check["verdict"])
-        item = check["followed"]["followed"][0]
+        self.assertEqual(check["code"], "empty-step", check["verdict"])
+        self.assertEqual(check["followed"]["followed"], [])
+        item = check["followed"]["refused"][0]
         self.assertEqual(item["as"], "USB disk or memory stick")
-        self.assertEqual((item["requests"], item["data"], item["overlap"]), (2, 2, 2))
+        flat = " ".join(check["verdict"].split())
+        self.assertIn("was seen under an address this recording gives to a USB disk or "
+                      "memory stick; it was not kept, to be safe", flat)
+        self.assertNoMarks(check["verdict"], "verdict")
         dst = os.path.join(self.tmp.name, "f-instrument.pcap")
-        self.assertTrue(probe.filter_xrite_capture(path, dst, "i1pro3"))
-        _lt, recs = probe._read_pcap(dst)                               # noqa: SLF001
-        data = b"".join(d for _t, d in recs)
-        self.assertNotIn(DISK_MARK, data)
-        self.assertNotIn(KEY_MARK, data)
-        eps = {probe._record_fields(probe.LINKTYPE_USBPCAP, d)[1]          # noqa: SLF001
-               for _t, d in recs
-               if probe._record_fields(probe.LINKTYPE_USBPCAP, d)[0] == (1, STALE)}  # noqa: SLF001
-        self.assertEqual(eps & {0x81, 0x02}, set())
-        self.assertIn(0x84, eps)
+        if probe.filter_xrite_capture(path, dst, "i1pro3"):
+            with open(dst, "rb") as fh:
+                self.assertNoMarks(fh.read(), dst)
 
     def test_a_stale_address_at_a_disk(self):
         facts = self.facts(self.save(stale_at_disk(), "a.pcap"))

@@ -186,7 +186,28 @@ class OtherDevicesNeverEnterTheCopy(unittest.TestCase):
         keys = {f[0] for f in fields(copy)}
         self.assertEqual(keys, {(1, sf.INSTR), (1, sf.HUB)})
 
+    def assert_not_kept_but_said(self, att, as_word, copy):
+        """The strict rule (1.6.6 review): under another kind of device's
+        address nothing is kept, but the check says what it saw."""
+        self.assertEqual(att["followed"]["followed"], [])
+        item = att["followed"]["refused"][0]
+        self.assertEqual(item["as"], as_word)
+        self.assertIn("only under a USB hub's address", item["why"])
+        self.assertEqual({f[0] for f in fields(copy)}, {(1, sf.INSTR)})
+        text = " ".join(probe.followed_text(att["followed"]).split())
+        self.assertIn("NOT KEPT: traffic that looks like the instrument's", text)
+        self.assertIn(f"was seen under an address this recording gives to a {as_word}; "
+                      "it was not kept, to be safe", text)
+        self.assertIn("Please tell us about it", text)
+        screen = " ".join(" ".join(probe.followed_screen_lines(att["followed"])).split())
+        self.assertIn("it was not kept, to be safe", screen)
+        self.assertIn("Please tell us about it", screen)
+        for line in probe.followed_screen_lines(att["followed"]):
+            self.assertLessEqual(len("  " + line), 80, line)
+
     def test_on_a_keyboards_address_and_its_endpoint_0x84(self):
+        """Strict rule: a keyboard's address is never followed (it was
+        followed before the review, with the 0x84 overlap left out)."""
         w = UsbPcapWriter()
         sf.instrument(w)
         sf.keyboard(w, eps=[(0x84, 3)])                 # the i1Pro 2's button number
@@ -194,15 +215,10 @@ class OtherDevicesNeverEnterTheCopy(unittest.TestCase):
         sf.keyboard_work(w, sf.KEYBOARD, ep=0x84)
         copy, att = kept(w)
         self.assert_clean(copy)
-        item = att["followed"]["followed"][0]
-        self.assertEqual(item["as"], "keyboard, mouse or other input device")
-        self.assertEqual(item["overlap"], 4 + 1)       # 4 reports + the instrument's button
-        self.assertFalse(any(f[1] == 0x84 for f in fields(copy)))
-        self.assertTrue(any(f[1] == 0x82 for f in fields(copy)))
-        text = probe.followed_text(att["followed"])
-        self.assertIn("could not be told apart", text)
+        self.assert_not_kept_but_said(att, "keyboard, mouse or other input device", copy)
 
     def test_on_a_disks_address_and_its_endpoints(self):
+        """Strict rule: a disk's address is never followed."""
         w = UsbPcapWriter()
         sf.instrument(w)
         sf.disk(w, eps=[(0x82, 2), (0x01, 2)])         # the i1Pro 2's 0x82 and 0x01 too
@@ -210,9 +226,46 @@ class OtherDevicesNeverEnterTheCopy(unittest.TestCase):
         sf.disk_work(w, sf.DISK, out_ep=0x01, in_ep=0x82)
         copy, att = kept(w)
         self.assert_clean(copy)
-        self.assertFalse(any(f[1] in (0x82, 0x01) for f in fields(copy)))
-        self.assertTrue(any(f[1] == 0x85 for f in fields(copy)))
-        self.assertEqual(att["followed"]["followed"][0]["as"], "USB disk or memory stick")
+        self.assert_not_kept_but_said(att, "USB disk or memory stick", copy)
+
+    def test_a_vendor_device_alone_is_never_the_instrument(self):
+        """The reviewer's WiFi case: a non-X-Rite device at its own,
+        correct address sends vendor requests whose numbers the i1Pro uses
+        too, and no instrument works anywhere. Nothing kept, no 'OK'."""
+        for describe_hub in (True, False):
+            with self.subTest(hub=describe_hub):
+                w = UsbPcapWriter()
+                sf.instrument(w)
+                if describe_hub:
+                    sf.hub(w)
+                else:
+                    sf.describe(w, sf.HUB, 0x0E8D, 0x7961, 0, 0xFF, [(0x84, 2), (0x08, 2)])
+                for _ in range(3):
+                    w.vendor_in(sf.HUB, 0xC0, sf.BT_MARKER[:8])
+                    w.vendor_out(sf.HUB, 0xCA, sf.BT_MARKER[:4])
+                copy, att = kept(w)
+                self.assertIsNone(att["followed"])
+                self.assertNotIn(sf.BT_MARKER[:8], blob(copy))
+                with tempfile.TemporaryDirectory() as tmp:
+                    check = probe.check_capture(w.save(os.path.join(tmp, "v.pcap")), "i1pro2")
+                self.assertEqual(check["code"], "empty-step")
+
+    def test_an_undescribed_configuration_is_not_followed_but_said(self):
+        """The reviewer's s16 / s24 shape: a vendor device whose
+        configuration the recording does not hold; requests and bulk data on
+        0x82. Not kept; said."""
+        w = UsbPcapWriter()
+        sf.instrument(w)
+        sf.describe(w, sf.HUB, 0x0E8D, 0x7961, 0, 0xFF, [], config=False)
+        w.vendor_out(sf.HUB, 0xCA, sf.BT_MARKER[:4])
+        w.vendor_in(sf.HUB, 0xD9, sf.BT_MARKER[:4])
+        w.bulk_in(sf.HUB, 0x82, sf.BT_MARKER)
+        copy, att = kept(w)
+        self.assertNotIn(sf.BT_MARKER[:8], blob(copy))
+        self.assertEqual(att["followed"]["followed"], [])
+        self.assertIn("configuration is not in the recording",
+                      att["followed"]["refused"][0]["why"])
+        self.assertIn("it was not kept, to be safe", probe.followed_text(att["followed"]))
 
     def test_on_a_bluetooth_adapters_address(self):
         w = UsbPcapWriter()
@@ -330,9 +383,9 @@ class NotFollowedWithoutEvidence(unittest.TestCase):
         sf.i1pro2_work(w, sf.HUB)
         copy, att = kept(w)
         self.assertEqual(att["followed"]["followed"], [])
-        self.assertIn("own endpoints are not in the recording",
+        self.assertIn("configuration is not in the recording",
                       att["followed"]["refused"][0]["why"])
-        self.assertIn("NOT FOLLOWED", probe.followed_text(att["followed"]))
+        self.assertIn("NOT KEPT", probe.followed_text(att["followed"]))
         self.assertEqual({f[0] for f in fields(copy)}, {(1, sf.INSTR)})
 
     def test_data_without_the_familys_commands_is_not_followed(self):
