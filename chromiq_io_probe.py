@@ -2947,7 +2947,14 @@ def finish_recordings(files: dict, record: list | None = None, ask_delete: bool 
     else:
         lines.append("No X-Rite traffic was found in any recording, so there is nothing "
                      "useful to send. The report on its own still helps.")
-    if full and not ask_delete:
+    if full and not send:
+        # 1.6.6: nothing was kept, so the full recordings are the only copy:
+        # never deleted, and their deletion is not offered
+        lines.append("The full recordings were kept, because nothing could be kept from "
+                     "them: they are the only copy. Please keep them, and do NOT send them "
+                     "(they hold everything on those USB ports, possibly what you typed). "
+                     "A newer version of this tool may be able to read them again.")
+    elif full and not ask_delete:
         lines.append("The full recordings were kept (the window was closed). Please do not "
                      "send them; delete them when you no longer need them.")
     elif full:
@@ -10624,6 +10631,323 @@ def clean_paths(paths: list) -> tuple:
     return "\n".join(lines), code
 
 
+# --------------------------------------------------------------------------
+# 1.6.6: --reprocess, rescuing a session whose steps kept nothing
+#
+# A tester recorded three sessions with 1.6.5 in which every step kept
+# nothing (the instrument's traffic sat under another address, see "following
+# the instrument" above). Two of them still have their full recordings in the
+# folder ending in -FULL-do-not-send. This reads those again with the rules of
+# this version, WITHOUT any new measurement: it writes the instrument-only
+# copies, session.json, analysis.txt, a new report and the SEND-THIS zip,
+# exactly as a session does, into a NEW folder next to the old one. The full
+# recordings are only read, never changed, moved, sent or deleted.
+# --------------------------------------------------------------------------
+
+FULL_SUFFIX = "-FULL-do-not-send"
+REPROCESSED_SUFFIX = "-reprocessed"
+_FULL_NAME_RE = re.compile(r"^step(\d+)-(.+)-take(\d+)-(.+)-full\.pcap$", re.I)
+
+
+def find_full_folders() -> list:
+    """Folders ending in -FULL-do-not-send next to the tool (or on the
+    Desktop, ...) that hold full recordings, newest first."""
+    hits = []
+    seen = set()
+    for directory in candidate_dirs():
+        try:
+            names = os.listdir(directory)
+        except OSError:
+            continue
+        for name in names:
+            path = os.path.join(directory, name)
+            if not name.endswith(FULL_SUFFIX) or not os.path.isdir(path):
+                continue
+            real = os.path.realpath(path)
+            if real in seen:
+                continue
+            try:
+                if any(n.lower().endswith("-full.pcap") for n in os.listdir(path)):
+                    hits.append(path)
+                    seen.add(real)
+            except OSError:
+                continue
+    return sorted(hits, key=os.path.getmtime, reverse=True)
+
+
+def reprocess_locate(path: str) -> tuple:
+    """(session folder or None, full folder) for a path the user gave: the
+    -FULL-do-not-send folder, the session folder beside it, or a folder that
+    holds -full.pcap files. Raises ValueError with plain words."""
+    p = os.path.abspath(path.strip().strip('"').rstrip("/\\"))
+    if not os.path.isdir(p):
+        raise ValueError(f"{path}: no such folder")
+    if p.endswith(FULL_SUFFIX):
+        full = p
+        sess = p[:-len(FULL_SUFFIX)]
+    elif os.path.isdir(p + FULL_SUFFIX):
+        sess, full = p, p + FULL_SUFFIX
+    else:
+        sess, full = None, p
+    if not any(n.lower().endswith("-full.pcap") for n in os.listdir(full)):
+        raise ValueError(f"{os.path.basename(full)}: holds no full recording "
+                         "(no file ending in -full.pcap)")
+    if sess is not None and not os.path.exists(os.path.join(sess, "session.json")):
+        sess = None
+    return sess, full
+
+
+def _family_from_recordings(full: str, names: list):
+    """The session type of full recordings without a session.json: from the
+    USB description of a handheld instrument the tool knows."""
+    for name in names:
+        try:
+            lt, recs = _read_pcap(os.path.join(full, name))
+        except (OSError, ValueError):
+            continue
+        for info in device_map(capture_events(lt, recs)).values():
+            ids = (info.get("vid"), info.get("pid"))
+            prof = PROFILE_IDS.get(ids)
+            if prof == "i1pro2":
+                fam = family_for(ids[0], ids[1], info.get("config"))
+                return "i1pro" if fam == "i1pro" else "i1pro2"
+            if prof:
+                return prof
+    return None
+
+
+def _session_from_names(full: str):
+    """A session.json for full recordings whose own one is missing: the
+    steps from the file names the session gives them."""
+    steps: dict = {}
+    names = sorted(n for n in os.listdir(full) if _FULL_NAME_RE.match(n))
+    for name in names:
+        m = _FULL_NAME_RE.match(name)
+        key = (int(m.group(1)), m.group(2), int(m.group(3)))
+        steps.setdefault(key, []).append(name)
+    family = _family_from_recordings(full, names)
+    if family is None:
+        return None
+    stamp = os.path.basename(full)[:-len(FULL_SUFFIX)] if full.endswith(FULL_SUFFIX) else ""
+    session = {"kind": SESSION_KIND, "probe_version": "unknown (no session.json)",
+               "created": "", "family": family, "instrument": PROFILE_NAMES[family],
+               "program": "", "program_version": "", "recorder": "", "platform": "",
+               "steps": [], "ended": "unknown (no session.json)", "context": {},
+               "rebuilt_from_file_names": stamp or os.path.basename(full)}
+    titles = {st["key"]: st["title"] for st in steps_for(family)}
+    for (number, key, take), files in sorted(steps.items()):
+        session["steps"].append({"number": number, "key": key, "title": titles.get(key, key),
+                                 "take": take, "control": key == "noruler",
+                                 "files_full": files})
+    return session
+
+
+def reprocess_session(path: str, output=None, report: bool = True) -> tuple:
+    """--reprocess: read the full recordings of an earlier session again.
+    Returns (lines to print, exit code, {"folder", "kept_steps", ...})."""
+    lines = ["=" * 68, "  Rescuing an earlier session from its full recordings", "=" * 68, "",
+             "  " + _wrap("This reads the full recordings of an earlier session again, with "
+                          f"the rules of version {PROBE_VERSION}. It measures nothing and "
+                          "sends nothing. It writes the instrument-only copies, a new report "
+                          "and the one file to send into a NEW folder; the full recordings "
+                          "are only read, never changed or deleted.", 64, "  "), ""]
+    info = {"folder": None, "kept_steps": [], "empty_steps": [], "followed_steps": []}
+    try:
+        sess, full = reprocess_locate(path)
+    except (ValueError, OSError) as exc:
+        lines += ["  " + _wrap(str(exc), 64, "  "), "",
+                  "  " + _wrap("Please give the folder whose name ends in -FULL-do-not-send "
+                               "(or the session folder next to it).", 64, "  ")]
+        return lines, 1, info
+    session = load_session(os.path.join(sess, "session.json")) if sess else None
+    if session is None:
+        session = _session_from_names(full)
+        if session is None:
+            lines += ["  " + _wrap(f"{os.path.basename(full)}: the session.json next to it is "
+                                   "missing, and the recordings do not show which instrument "
+                                   "they are of, so nothing can be read from them. Please keep "
+                                   "the folder (do not send it) and tell us.", 64, "  ")]
+            return lines, 1, info
+        lines.append("  " + _wrap("(No session.json was found next to it; the steps were "
+                                  "taken from the file names.)", 64, "  "))
+    session = {k: v for k, v in session.items() if not k.startswith("_")}
+    profile = session.get("family")
+    if profile not in PROFILE_NAMES:
+        lines.append(f"  The session names no instrument this version knows ({profile}).")
+        return lines, 1, info
+    base = sess if sess else full[:-len(FULL_SUFFIX)] if full.endswith(FULL_SUFFIX) else full
+    folder = _unique_path(base + REPROCESSED_SUFFIX)
+    os.makedirs(folder, exist_ok=True)
+    info["folder"] = folder
+    lines += [f"  the full recordings: {os.path.basename(full)}",
+              f"  the session: {os.path.basename(sess) if sess else '(rebuilt)'}"
+              f" (made with version {session.get('probe_version', '?')})",
+              f"  the instrument: {PROFILE_NAMES[profile]}", "", "  STEP BY STEP"]
+    for entry in session.get("steps", []):
+        if entry.get("skipped"):
+            continue
+        names = [n for n in entry.get("files_full") or []
+                 if os.path.isfile(os.path.join(full, n))]
+        missing = [n for n in entry.get("files_full") or [] if n not in names]
+        label = (f"step {entry.get('number')} {entry.get('title', entry.get('key'))} "
+                 f"(take {entry.get('take', 1)})")
+        if not entry.get("files_full"):
+            continue
+        entry["files_full"] = names
+        if missing:
+            entry["missing_full"] = missing
+        if not names:
+            entry["files_xrite"] = []
+            entry["empty"] = True
+            lines.append("  " + _wrap(f"{label}: its full recording is not in the folder, "
+                                      "so nothing could be read", 64, "    "))
+            info["empty_steps"].append(entry.get("number"))
+            continue
+        activity, empty, zero, _nothing = check_step_files(entry, full, folder, profile)
+        entry["reprocessed"] = PROBE_VERSION
+        fol = (entry.get("followed") or {}).get("followed") or []
+        if entry["files_xrite"]:
+            info["kept_steps"].append(entry.get("number"))
+            what = handheld_step_verdict(entry, activity, empty, zero, profile)
+            if fol:
+                info["followed_steps"].append(entry.get("number"))
+                n = sum(i["requests"] + i["data"] for i in fol)
+                what = (f"kept {_n(activity, 'request or data transfer', 'requests and data transfers')}"
+                        f" of the instrument, {'all' if n >= activity else n} of them FOUND "
+                        "UNDER ANOTHER USB ADDRESS (one the recording gives to "
+                        + ", ".join(_a(i["as"]) for i in fol) + ") and followed there")
+            lines.append("  " + _wrap(f"{label}: {what}", 64, "    "))
+        else:
+            info["empty_steps"].append(entry.get("number"))
+            lines.append("  " + _wrap(f"{label}: still nothing that could be attributed to "
+                                      "the instrument; "
+                                      + handheld_step_verdict(entry, activity, empty, zero,
+                                                              profile), 64, "    "))
+        refused = (entry.get("followed") or {}).get("refused") or []
+        for item in refused:
+            lines.append("    " + _wrap(f"(seen but not followed under the address of "
+                                        f"{_a(item['as'])}: {item['why']})", 62, "     "))
+    session["reprocessed"] = {"version": PROBE_VERSION,
+                              "at": datetime.datetime.now().isoformat(timespec="seconds"),
+                              "from": os.path.basename(full),
+                              "original_folder": os.path.basename(sess) if sess else ""}
+    _write_session(session, folder)
+    analysis = None
+    if info["kept_steps"]:
+        try:
+            analysis = summarize_session([os.path.join(folder, "session.json")])
+            with open(os.path.join(folder, "analysis.txt"), "w", encoding="utf-8") as fh:
+                fh.write(analysis + "\n")
+        except Exception as exc:                          # noqa: BLE001
+            lines.append(f"  The analysis could not be made ({exc}); the recordings are fine.")
+    lines += ["", f"  the new folder: {os.path.basename(folder)}"]
+    info["analysis"] = analysis
+    info["session"] = session
+    info["full"] = full
+    return lines, 0, info
+
+
+def reprocess_report_body(lines: list, info: dict) -> str:
+    """The report section of a rescue: what was done, per step, the facts of
+    steps that still kept nothing, and the analysis."""
+    body = "\n".join(lines[4:] if lines[:1] == ["=" * 68] else lines)
+    session = info.get("session") or {}
+    profile = session.get("family")
+    seen = [s for s in session.get("steps", []) if s.get("seen") is not None
+            and not s.get("files_xrite")]
+    if seen:
+        body += "\n\nWHAT THE STEPS THAT STILL KEPT NOTHING HELD (counts and USB ids only)"
+        for s in seen:
+            body += (f"\n  step {s['number']} (take {s.get('take', 1)}):\n"
+                     + "\n".join("    " + l for l in facts_lines(s["seen"], profile)))
+    follows = [s for s in session.get("steps", []) if s.get("followed")]
+    if follows:
+        body += "\n\nWHAT WAS FOLLOWED TO ANOTHER USB ADDRESS (counts only)"
+        for s in follows:
+            body += (f"\n  step {s['number']} (take {s.get('take', 1)}):\n    "
+                     + _wrap(followed_text(s["followed"]), 72, "    "))
+    if info.get("analysis"):
+        body += "\n\n" + info["analysis"]
+    return body
+
+
+def run_reprocess(path: str, output=None) -> int:
+    """--reprocess (and the menu's rescue): rescue, report, the one file to
+    send, and what to do, on screen."""
+    lines, code, info = reprocess_session(path, output)
+    print("\n".join(lines))
+    if code:
+        return code
+    section("Rescued recording session (--reprocess)", reprocess_report_body(lines, info))
+    folder = info["folder"]
+    if info["kept_steps"]:
+        _END["send"] = {"folder": folder}
+    else:
+        _END["no_recording"] = ("The earlier session's full recordings were read again, but no "
+                                "step held traffic that could be attributed to the instrument.")
+        _END["report_only"] = folder
+    _END["finished"] = True
+    report = report_text(instrument=True)
+    out_path = write_report(report, output)
+    if out_path is None:
+        print("\n  Could not save the report anywhere; here it is:\n")
+        print(report)
+        return 1
+    _LAST_REPORT["path"] = out_path
+    zip_path = (make_send_zip(out_path, {"folder": folder}) if info["kept_steps"] else
+                make_send_zip(out_path, {"folder": folder}, report_only=True))
+    _END["zip"] = zip_path
+    print()
+    print("=" * 68)
+    if info["kept_steps"]:
+        steps = info["kept_steps"]
+        print("  RESCUED: " + _wrap(
+            f"{_n(len(steps), 'step', 'steps')} now hold the instrument's traffic "
+            f"(step {', '.join(str(n) for n in steps)}).", 56, "  "))
+    else:
+        print("  NOTHING COULD BE RESCUED FROM THESE RECORDINGS")
+    print("=" * 68)
+    print()
+    print("  The new report:")
+    print(f"      {out_path}")
+    if zip_path:
+        print()
+        print("  " + "=" * 66)
+        print("  SEND THIS ONE FILE" + (" (the report and the instrument-only recordings):"
+                                       if info["kept_steps"] else
+                                       " (the report and session.json, no recording):"))
+        print()
+        print(f"      {zip_path}")
+        print("  " + "=" * 66)
+    print()
+    print("  " + _wrap(f"The folder {os.path.basename(info['full'])} was only read, not "
+                       "changed. Do NOT send it. Once you have sent the file above, you may "
+                       "delete that folder yourself, or keep it.", 66, "  "))
+    if info["kept_steps"]:
+        print()
+        print(HANDHELD_SEND_WAYS)
+    print()
+    return 0
+
+
+def choose_full_folder(folders: list) -> str | None:
+    """The menu's rescue: which kept folder, when there are several."""
+    if len(folders) == 1:
+        return folders[0]
+    print("  These folders with full recordings are here (newest first):")
+    for i, path in enumerate(folders, 1):
+        print(f"    {i}. {os.path.basename(path)}")
+    for _ in range(5):
+        answer = ask(f"  Which one? Type 1 to {len(folders)}, or press Enter for 1: ").strip()
+        if not answer:
+            return folders[0]
+        if answer.isdigit() and 1 <= int(answer) <= len(folders):
+            return folders[int(answer) - 1]
+        if answer.lower() in ("q", "quit"):
+            return None
+    return None
+
+
 def manual_recording_text(folder: str, after_failure: bool = False) -> str:
     why = ("  The tool's own start of the recording did not work (twice), so here\n"
            "  is the way by hand. " if after_failure else
@@ -11140,6 +11464,12 @@ def main(argv: list | None = None) -> int:
                              "a recording made with version 1.6.1 or earlier: only the "
                              "instrument's traffic, by this version's rules. The original "
                              "is not changed")
+    parser.add_argument("--reprocess", nargs="?", const="", default=None, metavar="FOLDER",
+                        help="rescue an earlier session whose steps kept nothing: read its "
+                             "full recordings (the folder ending in -FULL-do-not-send) again "
+                             "with this version's rules and make the file to send. Measures "
+                             "nothing; the full recordings are not changed. Without FOLDER, "
+                             "the newest such folder next to the tool")
     parser.add_argument("--steps", default=None, metavar="LIST",
                         help="handheld session: record only these steps, for example "
                              "--steps 7,9 (to repeat steps of an earlier session)")
@@ -11157,6 +11487,11 @@ def main(argv: list | None = None) -> int:
     parser.add_argument("--no-pause", action="store_true",
                         help="never wait for Enter at the end (the launchers use this; "
                              "piped or redirected runs never wait anyway)")
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if len(argv) == 1 and not argv[0].startswith("-") and \
+            argv[0].rstrip("/\\").endswith(FULL_SUFFIX) and os.path.isdir(argv[0]):
+        # 1.6.6: a -FULL-do-not-send folder dropped onto the tool
+        argv = ["--reprocess", argv[0]]
     args = parser.parse_args(argv)
     REDACT = not args.no_redact
     new_salt()                  # 1.6.3: every run its own (see _SALT)
@@ -11201,6 +11536,25 @@ def main(argv: list | None = None) -> int:
         text, code = clean_paths(args.clean)
         print(text)
         return code
+
+    if args.reprocess is not None:
+        target = args.reprocess
+        if not target:
+            folders = find_full_folders()
+            if not folders:
+                print("No folder ending in -FULL-do-not-send was found next to the tool.\n"
+                      "Pass it like this:\n"
+                      "    --reprocess path/to/instrument-session-<date>-FULL-do-not-send")
+                return 1
+            target = choose_full_folder(folders)
+            if target is None:
+                return 1
+        section("Environment", json.dumps({
+            "probe_version": PROBE_VERSION,
+            "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "platform": platform.platform(), "python": sys.version.split()[0],
+            "redacted": REDACT, "mode": "--reprocess (no new measurement)"}, indent=2))
+        return run_reprocess(target, args.output)
 
     if args.analyze is not None:
         paths = args.analyze or find_session_folders() or find_captures()
@@ -11285,7 +11639,13 @@ def main(argv: list | None = None) -> int:
     choice, summary = choose_what_to_do(args, summary)
     section("What the user chose", {1: "1: record an i1iO table",
                                     2: "2: record a handheld instrument or an i1iSis",
-                                    3: "3: nothing more, just the report"}[choice])
+                                    3: "3: nothing more, just the report",
+                                    4: "4: rescue an earlier session"}[choice])
+    if choice == 4:
+        target = choose_full_folder(find_full_folders())
+        if target is None:
+            return finish_report(args, system, mode="report")
+        return run_reprocess(target, args.output)
     ids = detected_ids(summary)
     known, here = plugged_in_now(ids)
     if choice == 3:
@@ -11416,7 +11776,8 @@ def device_name(key) -> str:
     return f"an X-Rite device this tool does not know ({key[0]:04x}:{key[1]:04x})"
 
 
-def what_to_do_question(sug: dict, known: bool, here: list, drivers: dict) -> list:
+def what_to_do_question(sug: dict, known: bool, here: list, drivers: dict,
+                        rescue: list | None = None) -> list:
     """The lines above the question, and the question itself."""
     lines = []
     if sug["nothing"]:
@@ -11450,8 +11811,15 @@ def what_to_do_question(sug: dict, known: bool, here: list, drivers: dict) -> li
               "    2. record a handheld instrument or an i1iSis" + mark[2],
               "       (the i1Pro family, the ColorMunki, the i1Studio, the i1iSis",
               "       chart readers)",
-              "    3. nothing more: just make the report" + mark[3],
-              "    a. look again (after plugging something in)"]
+              "    3. nothing more: just make the report" + mark[3]]
+    if rescue:
+        # 1.6.6: an earlier session's full recordings lie next to the tool
+        lines += ["    4. rescue an earlier session: read its full recordings again",
+                  "       and make the file to send (no new measuring)",
+                  "       (" + _wrap(f"{os.path.basename(rescue[0])}"
+                                    + (f" and {len(rescue) - 1} more" if len(rescue) > 1
+                                       else "") + ")", 60, "        ")]
+    lines += ["    a. look again (after plugging something in)"]
     return lines
 
 
@@ -11463,6 +11831,10 @@ def choose_what_to_do(args, summary: str) -> tuple:
         return 2, summary
     if args.io or args.annotate or args.skip_annotate:
         return 1, summary
+    try:
+        rescue = find_full_folders()             # 1.6.6
+    except Exception:                                     # noqa: BLE001
+        rescue = []
     for _ in range(30):                                   # bounded, never endless
         ids = detected_ids(summary)
         known, here = plugged_in_now(ids)
@@ -11471,15 +11843,17 @@ def choose_what_to_do(args, summary: str) -> tuple:
         print("STEP 3 of 3: what would you like to do?")
         print("-" * 68)
         print()
-        print("\n".join(what_to_do_question(sug, known, here, _windows_driver_words())))
+        print("\n".join(what_to_do_question(sug, known, here, _windows_driver_words(),
+                                             rescue=rescue)))
         print()
-        answer = ask(f"  Type 1, 2 or 3 (or  a  to look again), "
+        numbers = "1, 2, 3 or 4" if rescue else "1, 2 or 3"
+        answer = ask(f"  Type {numbers} (or  a  to look again), "
                      f"or just press Enter for {sug['choice']}: ",
                      interruptible=True).strip().lower()
         print()
         if answer == "":
             return sug["choice"], summary
-        if answer in ("1", "2", "3"):
+        if answer in ("1", "2", "3") or (rescue and answer == "4"):
             return int(answer), summary
         if answer in ("q", "quit"):
             return 3, summary
@@ -11494,7 +11868,7 @@ def choose_what_to_do(args, summary: str) -> tuple:
             elif "no_instrument" in _CAUSES:
                 _CAUSES.remove("no_instrument")
             continue
-        print(f"  \"{answer}\" is not one of the choices. Please type 1, 2 or 3,")
+        print(f"  \"{answer}\" is not one of the choices. Please type {numbers},")
         print("  or  a  to look again.")
         print()
     return 3, summary
