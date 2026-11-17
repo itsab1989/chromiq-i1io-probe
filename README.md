@@ -52,6 +52,16 @@ It takes about **two minutes**, and you do **not** need to be technical.
 > wherever we can, and treat it as private meanwhile.
 > [Why it happened](#which-traffic-is-the-instruments-since-162).
 
+> **If a session with 1.6.5 or older kept nothing although everything was
+> recorded (1.6.6):** the tool could lose track of the instrument after
+> Windows had given it a new USB address (most likely after sleep, or after
+> "Shut down" with Fast Startup). 1.6.6 follows the instrument by its own
+> traffic instead. If you still have the folder ending in
+> `-FULL-do-not-send`, 1.6.6 can rescue that session without measuring
+> again: start it next to that folder and choose **4. rescue an earlier
+> session** ([how](#rescuing-an-earlier-session---reprocess-since-166)).
+> Never send that folder itself.
+
 > **If every step of a session says it kept nothing (1.6.3):** a tester's
 > screenshot showed this once, on Windows with an i1Pro 3, although the same
 > PC recorded fine before and after. Why it happens is **not known yet**.
@@ -454,6 +464,24 @@ more. When no step of a session kept anything, the tool still writes ONE
 small file, `SEND-THIS-<date>-report-only.zip`, with only the report and
 `session.json`. They hold no recording, and they help us find out why.
 
+**Unplugging and plugging the instrument in again between steps is safe
+(since 1.6.6).** The tool finds it again by itself, also at a new USB
+address.
+
+**If the instrument's traffic is under another USB address (since 1.6.6).**
+On Windows the recorder can name the instrument with an old address after
+Windows has given it a new one (most likely after sleep, or after "Shut
+down" with Fast Startup). The tool then finds the instrument by its own
+commands and endpoints instead, keeps only that, and says so after the
+step ("FOUND: your instrument's traffic was under another USB address").
+Nothing for you to do. How it decides is in "Which traffic is the
+instrument's" below.
+
+**When a step kept nothing, keep the full recordings (since 1.6.6).** The
+tool no longer deletes the folder ending in `-FULL-do-not-send`, and no
+longer offers to, when any step kept nothing: a newer version may be able
+to read it again. Never send that folder.
+
 **On Windows, if the check says "USB recorder attached to your instrument:
 no" (since 1.6.5):** USBPcap joins a USB device only when Windows sets it up.
 Close the tool, unplug the instrument, restart Windows with "Restart" (not
@@ -461,6 +489,29 @@ Close the tool, unplug the instrument, restart Windows with "Restart" (not
 If the first step records only the instrument's USB description, the tool
 says so at once and asks you to check that the measuring program shows the
 instrument as connected.
+
+### Rescuing an earlier session (`--reprocess`, since 1.6.6)
+
+If an earlier session kept nothing and you still have its folder ending in
+`-FULL-do-not-send`, version 1.6.6 or newer can read it again, without any
+new measurement:
+
+1. Put the new tool into the folder where the earlier session's folders
+   are (the `instrument-session-<date>` folder and the one ending in
+   `-FULL-do-not-send`), or move those two folders next to the tool.
+2. Start the tool as usual. At "What would you like to do?" choose
+   **4. rescue an earlier session** (it is shown only when such a folder is
+   there). If there are several, it asks which one.
+
+   Or drop the `-FULL-do-not-send` folder onto the tool, or run it with
+   `--reprocess` and the folder's name, for example
+   `chromiq-io-probe-windows.exe --reprocess "instrument-session-20261117-083631-FULL-do-not-send"`.
+3. It says per step what it found, writes a new folder ending in
+   `-reprocessed` with the instrument-only copies, `session.json` and
+   `analysis.txt`, a new report, and ONE file to send:
+   `SEND-THIS-<date>.zip` (or `-report-only.zip` if still nothing could be
+   kept). The full recordings are only read: not changed, not moved, not
+   sent. Once you have sent the zip, you may delete that folder yourself.
 
 ### What it needs
 
@@ -547,7 +598,9 @@ instrument as connected.
   shows none of your family, and the tool then says so after the step. Only
   that copy goes into the session folder (`instrument-session-<date>`);
   the full recordings sit in a separate folder ending in `-FULL-do-not-send`,
-  and the tool offers to delete them at the end.
+  and the tool offers to delete them at the end (since 1.6.6 only when
+  every step kept something; otherwise it asks you to keep them, so a newer
+  version can read them again).
 - Your one-line notes for each step, the program name and version, and the
   checks above, in `session.json`.
 - `analysis.txt`: the tool's own reading of the recordings (see `--analyze`).
@@ -828,6 +881,14 @@ Useful options:
   shared the instrument's address. Since 1.6.3 it also counts the i1Pro 3's
   ruler travel per scan, lists every swipe with the time its readings took,
   and leaves the dual scan out of the "only with the ruler" comparison.
+- `--reprocess [FOLDER]` (1.6.6): rescue an earlier session whose steps
+  kept nothing. FOLDER is the folder ending in `-FULL-do-not-send` (or the
+  session folder next to it); without it, the newest such folder next to
+  the tool. It reads the full recordings again with this version's rules,
+  measures nothing, and writes a new `...-reprocessed` folder, a new report
+  and the `SEND-THIS` zip. The full recordings are not changed. Dropping
+  such a folder onto the tool does the same, and so does choice 4 in the
+  tool's menu.
 - `--clean ZIP_OR_FOLDER ...` (1.6.2): for files made with version 1.6.1 or
   older. Writes a cleaned copy of a `SEND-THIS-....zip` (as
   `...-cleaned.zip`), a session folder (as `...-cleaned`) or a single
@@ -900,6 +961,38 @@ recording exactly like the instrument. Its traffic can still end up in the
 recording files, for example a USB 3 "UAS" disk, a printer, a phone or a
 USB-serial adapter, and so can another device's vendor requests. If the tool
 sees nothing else of that device, the analysis can show some of it too.
+
+**Following the instrument to another address (since 1.6.6).** The same
+stale address can also hide the instrument itself: its own traffic is then
+recorded under an address that the recording's device list gives to another
+device, and nothing is left at the instrument's own address but its
+description. A tester's three sessions showed exactly that (the other
+device was a USB hub, and a little of the hub's traffic sat at the
+instrument's address: a swap). The tool now follows the instrument there
+when ALL of these hold:
+
+1. the other device is described in the recording, including its own
+   endpoints, and it is not an X-Rite device;
+2. at least one of the instrument family's own commands (request numbers
+   the analysis decodes; for the i1iO table a command line with a correct
+   checksum) and at least two such transfers in all were sent there;
+3. nothing there looks like the other device's traffic on endpoints it does
+   not have: no disk command or status, no keyboard report on the
+   instrument's button endpoint.
+
+It then keeps only the instrument's commands and the transfers on the
+instrument's endpoints that the other device does not have itself (and the
+instrument's own configuration description when the program fetches it
+again there). Never the other device's standard or class requests, its
+description, or anything on its own endpoints. A keyboard, a disk or a
+Bluetooth adapter sends nothing anywhere else, so none of its traffic can
+enter the copy. Transfers on an endpoint number both devices have are left
+out and counted. The step's check names the kind of device whose address it
+was and the counts, and says that this is very likely, not certain, all
+the instrument's. When nothing of the instrument's own work was kept at its
+own address, the other device's traffic there cannot hide among it, so the
+analysis shows decoded values (never raw bytes) instead of withholding the
+step.
 
 **So, while you record:** unplug every other USB device you can from that
 computer, or at least from the same hub or dock. Not only disks and memory

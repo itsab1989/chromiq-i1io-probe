@@ -46,6 +46,11 @@ USAGE
 
         python3 chromiq_io_probe.py --isis
 
+    Rescue an earlier session whose steps kept nothing, from the full
+    recordings it kept (no new measurement; 1.6.6):
+
+        python3 chromiq_io_probe.py --reprocess instrument-session-<date>-FULL-do-not-send
+
     Check recordings, or a session folder, before sending them:
 
         python3 chromiq_io_probe.py --analyze instrument-session-<date>
@@ -84,7 +89,7 @@ import tempfile
 import threading
 import time
 
-PROBE_VERSION = "1.6.5"
+PROBE_VERSION = "1.6.6"
 
 ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/129"   # the i1iO only
 NEW_ISSUE_URL = "https://github.com/itsab1989/ChromIQ/issues/new"
@@ -9754,6 +9759,10 @@ def run_instrument_session(recorder, folder: str, profile: str, program: str = "
                 verdict = verdict.replace(" Please repeat it.", "")
                 print("  CHECK: " + _wrap(verdict, 64, "  "))
                 print()
+                if (entry.get("followed") or {}).get("refused"):
+                    for line in followed_screen_lines(entry["followed"]):
+                        print("  " + line)
+                    print()
                 if nothing and not empty and entry.get("seen") is not None:
                     # 1.6.6: what the recording did hold, counts and ids only
                     for line in facts_lines(entry["seen"], profile):
